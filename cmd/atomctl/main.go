@@ -30,7 +30,16 @@ const usage = `用法:
   atomctl resolve <任务ID> done|failed
                                  裁决一个执行中断、状态不明的不可逆操作：
                                  done 表示已生效，failed 表示未生效
+  atomctl reply <任务ID> <内容>  回答任务的提问，或随时给它补充材料
   atomctl emit <主题> [JSON]     发布一个事件，唤醒订阅命中的等待任务
+
+  atomctl memory list            查看全部记忆
+  atomctl memory pending         查看助手提炼出来、等你确认的记忆与流程
+  atomctl memory confirm <ID>    确认一条，让它生效
+  atomctl memory dismiss <ID>    否决一条
+
+  atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / all
+  atomctl import <文件>          导入。已存在的数据不会被覆盖
 
 环境变量: ATOM_DSN（必填）
 `
@@ -102,6 +111,23 @@ func run(args []string) error {
 			return fmt.Errorf("resolve 需要任务 ID 和 done 或 failed")
 		}
 		return kernel.Resolve(ctx, st, args[1], args[2] == "done")
+	case "reply":
+		if len(args) < 3 {
+			return fmt.Errorf("reply 需要任务 ID 和回复内容")
+		}
+		return reply(ctx, st, args[1], args[2])
+	case "memory":
+		return memoryCmd(ctx, st, args[1:])
+	case "export":
+		if len(args) < 3 {
+			return fmt.Errorf("export 需要板块（memory / tasks / events / all）和文件路径")
+		}
+		return exportCmd(ctx, st, args[1], args[2])
+	case "import":
+		if len(args) < 2 {
+			return fmt.Errorf("import 需要一个导出文件的路径")
+		}
+		return importCmd(ctx, st, args[1])
 	case "emit":
 		if len(args) < 2 {
 			return fmt.Errorf("emit 需要一个事件主题")
@@ -129,6 +155,37 @@ func create(ctx context.Context, st *pg.Store, title, goal string) error {
 		return err
 	}
 	fmt.Println(t.ID)
+	return nil
+}
+
+// reply 对一个任务说话：回答它的提问，或者随时补充材料。
+//
+// 任务不必正好在等——长程任务是断断续续推进的，今天补一份、过几天再补一份都可以。
+//
+// CLI 是用户亲手使用的渠道，所以消息的信任等级走 ChannelByUser。
+// 将来接入其他消息渠道时，等级必须由渠道的来历决定，见 core.ChannelOrigin。
+func reply(ctx context.Context, st *pg.Store, taskID, text string) error {
+	payload, err := json.Marshal(map[string]string{"task_id": taskID, "text": text})
+	if err != nil {
+		return fmt.Errorf("序列化回复失败: %w", err)
+	}
+	t, err := st.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if t.State.Terminal() {
+		return fmt.Errorf("任务 %s 已经结束（%s），不能再补充内容", taskID, t.State)
+	}
+	e := event.New(event.TopicUserMessage, payload, core.ChannelByUser.MessageTrust(), "atomctl")
+	woken, err := event.NewBus(st.Events(), st).Deliver(ctx, taskID, e)
+	if err != nil {
+		return err
+	}
+	if woken {
+		fmt.Println("已送达，任务继续执行")
+	} else {
+		fmt.Println("已收下，任务下一次推进时会看到")
+	}
 	return nil
 }
 
