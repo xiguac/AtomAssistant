@@ -42,7 +42,17 @@ type Decision struct {
 	CostCents int64
 	// CostMicros 是不足一分的开销，单位为百万分之一元。见 Cost.Micros。
 	CostMicros int64
+
+	// Then 是紧接着要做的后续步骤，只允许无副作用或只读的。
+	//
+	// 查五个周末的天气不该问五次模型：每问一次都要把整个上下文重发一遍，
+	// 那才是长任务里最贵的开销。写操作不能进这里——每一个写操作之前，
+	// 模型都应该先看到前一步的结果再决定。
+	Then []Decision
 }
+
+// MaxBatch 是一次决策里最多能带的后续步骤数。
+const MaxBatch = 8
 
 // Planner 决定任务的下一步。实现可以是一次 LLM 推理，也可以是固定流程。
 type Planner interface {
@@ -292,10 +302,48 @@ func (e *Engine) advance(ctx context.Context, t *core.Task) error {
 		}
 		return e.transition(ctx, t, core.StateWaiting, orDefault(d.Reason, "等待外部条件"))
 	case DecideStep:
-		return e.runStep(ctx, t, history, d)
+		if err := e.runStep(ctx, t, history, d); err != nil {
+			return err
+		}
+		return e.runBatch(ctx, t, d.Then)
 	default:
 		return e.failTask(ctx, t, fmt.Sprintf("未知的决策类型 %q", d.Kind))
 	}
+}
+
+// runBatch 依次执行一次决策里附带的后续只读步骤。
+//
+// 每一步照样先落 pending 再执行，所以中途崩溃不丢状态；剩下没跑的不会被记住，
+// 重启后由 Planner 看着已有的结果重新决定——它们只是查询，重查没有代价。
+// 任何一步让任务离开了 running（失败退避、超预算），后面的就不再做。
+func (e *Engine) runBatch(ctx context.Context, t *core.Task, then []Decision) error {
+	if len(then) > MaxBatch {
+		then = then[:MaxBatch]
+	}
+	for _, d := range then {
+		if t.State != core.StateRunning {
+			return nil
+		}
+		if d.Kind != DecideStep || !readOnly(d.SideEffect) {
+			// Planner 的实现有义务不把写操作放进来；真放进来了就跳过，绝不执行。
+			continue
+		}
+		if done, err := e.checkLimits(ctx, t); err != nil || done {
+			return err
+		}
+		history, err := e.store.ListSteps(ctx, t.ID)
+		if err != nil {
+			return err
+		}
+		if err := e.runStep(ctx, t, history, d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readOnly(s core.SideEffect) bool {
+	return s == core.SideEffectNone || s == core.SideEffectReadOnly
 }
 
 // runStep 执行一个新步骤：先落 pending，再执行，最后落终态。

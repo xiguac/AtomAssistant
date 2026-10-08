@@ -299,3 +299,35 @@ func TestPlanner_输出不可用时当场重问一次并合并用量(t *testing.
 		t.Fatal("上游错误应原样返回")
 	}
 }
+
+func TestPlanner_批量查询只接受只读工具(t *testing.T) {
+	task := core.NewTask("t", "g", core.TrustUser)
+	decide := func(reply string) (kernel.Decision, error) {
+		m := &fakeModel{replies: []string{reply}}
+		return NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{}).
+			Decide(context.Background(), task, nil)
+	}
+
+	d, err := decide(`{"action":"tool","tool":"demo.weather","params":{"city":"苏州"},
+		"more":[{"tool":"demo.weather","params":{"city":"南京"}},{"tool":"plan.update","params":{"items":[]}}]}`)
+	if err != nil {
+		t.Fatalf("只读的批量查询应被接受: %v", err)
+	}
+	if len(d.Then) != 2 || d.Then[0].ToolName != "demo.weather" || string(d.Then[0].Input) != `{"city":"南京"}` {
+		t.Fatalf("后续步骤解析不对: %+v", d.Then)
+	}
+	// 后续步骤的副作用等级同样取自目录。
+	if d.Then[0].SideEffect != core.SideEffectReadOnly || d.Then[1].SideEffect != core.SideEffectNone {
+		t.Fatalf("副作用等级应取自目录: %+v", d.Then)
+	}
+
+	// 写操作混进批量：整个决策作废，而不是悄悄执行或悄悄丢掉。
+	if _, err := decide(`{"action":"tool","tool":"demo.weather","params":{},
+		"more":[{"tool":"demo.book","params":{}}]}`); err == nil || !strings.Contains(err.Error(), "demo.book") {
+		t.Fatalf("批量里的写操作应被拒绝并指出是哪个: %v", err)
+	}
+	if _, err := decide(`{"action":"tool","tool":"demo.weather","params":{},
+		"more":[{"tool":"不存在","params":{}}]}`); err == nil {
+		t.Fatal("批量里不存在的工具应被拒绝")
+	}
+}

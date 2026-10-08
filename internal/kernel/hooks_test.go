@@ -196,3 +196,68 @@ func TestAdvance_收件箱里的消息在决策前写进日志(t *testing.T) {
 		t.Fatalf("消息写进日志后应标记已送达，实际 %v", inbox.delivered)
 	}
 }
+
+func TestAdvance_一次决策连续执行多个只读查询(t *testing.T) {
+	ctx := context.Background()
+	st := memory.New()
+	task := runningTask(t, st, core.TrustUser)
+
+	query := func(date string) Decision {
+		return Decision{
+			Kind: DecideStep, Type: core.StepTool, ToolName: "weather.forecast",
+			SideEffect: core.SideEffectReadOnly, Input: json.RawMessage(`{"date":"` + date + `"}`),
+		}
+	}
+	first := query("10-10")
+	first.Then = []Decision{
+		query("10-17"),
+		// Planner 的实现不该把写操作放进来；真放进来了，内核必须跳过而不是执行。
+		{Kind: DecideStep, Type: core.StepTool, ToolName: "ride.book", SideEffect: core.SideEffectIrreversible},
+		query("10-24"),
+	}
+	planner := &scriptedPlanner{script: []Decision{first}}
+	act := &recordingActuator{result: Result{Output: json.RawMessage(`{"ok":true}`), Trust: core.TrustConnector}}
+	e := NewEngine(st, planner, act)
+
+	if err := e.Advance(ctx, task.ID); err != nil {
+		t.Fatalf("推进失败: %v", err)
+	}
+	steps, _ := st.ListSteps(ctx, task.ID)
+	if planner.calls != 1 || len(steps) != 3 {
+		t.Fatalf("一次决策应执行 3 个查询，实际决策 %d 次、步骤 %d 条", planner.calls, len(steps))
+	}
+	for i, s := range steps {
+		if s.Seq != i+1 || s.Status != core.StepDone || s.ToolName != "weather.forecast" {
+			t.Fatalf("步骤 %d 不对: %+v", i+1, s)
+		}
+	}
+	// 每一步有自己的幂等键，都按规矩先落库再执行。
+	if len(act.keys) != 3 || act.keys[0] == act.keys[1] {
+		t.Fatalf("每个查询都应独立执行: %v", act.keys)
+	}
+}
+
+func TestAdvance_批量查询中一步失败后面的不再执行(t *testing.T) {
+	ctx := context.Background()
+	st := memory.New()
+	task := runningTask(t, st, core.TrustUser)
+	query := Decision{
+		Kind: DecideStep, Type: core.StepTool, ToolName: "weather.forecast",
+		SideEffect: core.SideEffectReadOnly,
+	}
+	first := query
+	first.Then = []Decision{query, query}
+	act := &recordingActuator{err: errors.New("上游不可用")}
+	e := NewEngine(st, &scriptedPlanner{script: []Decision{first}}, act)
+
+	if err := e.Advance(ctx, task.ID); err != nil {
+		t.Fatalf("推进失败: %v", err)
+	}
+	// 第一步失败后任务进入退避等待，剩下两个不该再打一个已经不通的上游。
+	if len(act.keys) != 1 {
+		t.Fatalf("失败后应停止这一批，实际执行了 %d 次", len(act.keys))
+	}
+	if got := mustGet(t, st, task.ID); got.State != core.StateWaiting {
+		t.Fatalf("期望退避等待，实际 %s", got.State)
+	}
+}

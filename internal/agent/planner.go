@@ -32,11 +32,19 @@ const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责
   "action": "tool" | "ask" | "wait" | "finish" | "fail",
   "tool": "工具全名，action=tool 时必填",
   "params": {},
+  "more": [{"tool": "工具全名", "params": {}}],
   "question": "action=ask 时必填，要问用户的一个问题",
   "wait_seconds": 数字，action=wait 时必填,
   "wait_event": "可选。事件订阅表达式，action=wait 时填写表示等这个事件",
   "reason": "一句话说明理由，会展示给用户；action=finish 时写完整的结论或建议"
 }
+
+一次做多个查询（more）：
+- action=tool 时，可以在 more 里再列出最多 8 个**互不依赖的查询**，它们会紧接着依次执行，
+  全部结果一起回到你面前。要查好几个日期的天气、好几条线路的票价时，一次列全，不要一个一个来。
+- more 里只能放查询类工具。会改动东西、花钱、发消息的工具必须单独作为一步，
+  而且要等看到前面的结果之后再决定。
+- 后一个查询要用到前一个的结果时，不要放进 more，分两步做。
 
 向用户提问（ask）：
 - 只在缺少的信息会改变结论、且记忆和历史里都找不到时才问。能从记忆里知道的不要再问。
@@ -221,8 +229,38 @@ type modelDecision struct {
 	Params      json.RawMessage `json:"params"`
 	WaitSeconds int64           `json:"wait_seconds"`
 	WaitEvent   string          `json:"wait_event"`
+	More        []modelCall     `json:"more"`
 	Question    string          `json:"question"`
 	Reason      string          `json:"reason"`
+}
+
+// modelCall 是 more 里的一个附带查询。
+type modelCall struct {
+	Tool   string          `json:"tool"`
+	Params json.RawMessage `json:"params"`
+}
+
+// toolDecision 把一次工具调用校验成决策。副作用等级取自目录，不采信模型自报。
+func (p *Planner) toolDecision(name string, params json.RawMessage, reason string) (kernel.Decision, error) {
+	if name == "" {
+		return kernel.Decision{}, fmt.Errorf("agent: 没有指定工具")
+	}
+	info, err := p.lookup(name)
+	if err != nil {
+		return kernel.Decision{}, fmt.Errorf("agent: 模型选了不存在的工具 %q: %w", name, err)
+	}
+	if len(params) == 0 {
+		params = json.RawMessage(`{}`)
+	}
+	return kernel.Decision{
+		Kind:     kernel.DecideStep,
+		Type:     core.StepTool,
+		ToolName: info.Name,
+		// 副作用等级来自用户授权时的声明，不采信模型自报。
+		SideEffect: info.SideEffect,
+		Input:      params,
+		Reason:     reason,
+	}, nil
 }
 
 // Decide 询问模型下一步做什么，并把回答校验成内核能执行的决策。
@@ -356,26 +394,26 @@ func (p *Planner) validate(t *core.Task, md modelDecision) (kernel.Decision, err
 			Reason: md.Reason,
 		}, nil
 	case "tool":
-		if md.Tool == "" {
-			return kernel.Decision{}, fmt.Errorf("agent: action=tool 但未指定工具")
-		}
-		info, err := p.lookup(md.Tool)
+		d, err := p.toolDecision(md.Tool, md.Params, md.Reason)
 		if err != nil {
-			return kernel.Decision{}, fmt.Errorf("agent: 模型选了不存在的工具 %q: %w", md.Tool, err)
+			return kernel.Decision{}, err
 		}
-		params := md.Params
-		if len(params) == 0 {
-			params = json.RawMessage(`{}`)
+		if len(md.More) > kernel.MaxBatch {
+			return kernel.Decision{}, fmt.Errorf("agent: more 最多 %d 项，实际 %d 项", kernel.MaxBatch, len(md.More))
 		}
-		return kernel.Decision{
-			Kind:     kernel.DecideStep,
-			Type:     core.StepTool,
-			ToolName: info.Name,
-			// 副作用等级来自用户授权时的声明，不采信模型自报。
-			SideEffect: info.SideEffect,
-			Input:      params,
-			Reason:     md.Reason,
-		}, nil
+		for _, c := range md.More {
+			next, err := p.toolDecision(c.Tool, c.Params, md.Reason)
+			if err != nil {
+				return kernel.Decision{}, err
+			}
+			// 这是硬规则，不是建议：写操作放进批量里，模型就能在没看到前一步结果的情况下连着改东西。
+			if next.SideEffect != core.SideEffectNone && next.SideEffect != core.SideEffectReadOnly {
+				return kernel.Decision{}, fmt.Errorf(
+					"agent: more 里只能放查询，%s 会产生副作用（%s），必须单独作为一步", next.ToolName, next.SideEffect)
+			}
+			d.Then = append(d.Then, next)
+		}
+		return d, nil
 	default:
 		return kernel.Decision{}, fmt.Errorf("agent: 未知的 action %q", md.Action)
 	}
