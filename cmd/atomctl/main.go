@@ -38,7 +38,13 @@ const usage = `用法:
   atomctl memory confirm <ID>    确认一条，让它生效
   atomctl memory dismiss <ID>    否决一条
 
-  atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / all
+  atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
+  atomctl vault put <名字> <用途说明> [工具,工具...]
+                                 存入一条敏感信息。值从标准输入读取，不出现在命令行里
+  atomctl vault list             列出条目的名字、用途与授权的工具（看不到值）
+  atomctl vault rm <名字>        删除一条
+
+  atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / vault / all
   atomctl import <文件>          导入。已存在的数据不会被覆盖
 
 环境变量: ATOM_DSN（必填）
@@ -118,9 +124,11 @@ func run(args []string) error {
 		return reply(ctx, st, args[1], args[2])
 	case "memory":
 		return memoryCmd(ctx, st, args[1:])
+	case "vault":
+		return vaultCmd(ctx, st, cfg.VaultKey, args[1:])
 	case "export":
 		if len(args) < 3 {
-			return fmt.Errorf("export 需要板块（memory / tasks / events / all）和文件路径")
+			return fmt.Errorf("export 需要板块（memory / tasks / events / vault / all）和文件路径")
 		}
 		return exportCmd(ctx, st, args[1], args[2])
 	case "import":

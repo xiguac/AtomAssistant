@@ -21,6 +21,7 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomhelper/internal/vault"
 )
 
 var (
@@ -91,6 +92,13 @@ type CallResult struct {
 	Trust core.TrustLevel
 }
 
+// SecretInjector 在调用工具的那一刻把参数里的保险库句柄换成明文，由 *vault.Vault 实现。
+//
+// 网关是明文唯一出现的地方：换好的参数直接交给工具，返回内容清掉明文之后才往回传。
+type SecretInjector interface {
+	Inject(ctx context.Context, tool string, params json.RawMessage) (*vault.Injection, error)
+}
+
 // AuditSink 接收网关产生的审计记录。
 type AuditSink interface {
 	ToolCall(ctx context.Context, taskID, tool string, trust core.TrustLevel, detail string) error
@@ -110,6 +118,7 @@ type Gateway struct {
 	guard    *policy.Guard
 	registry *policy.Registry
 	audit    AuditSink
+	secrets  SecretInjector
 
 	clientName    string
 	clientVersion string
@@ -121,6 +130,8 @@ type Options struct {
 	Registry *policy.Registry
 	Audit    AuditSink
 	Version  string
+	// Secrets 为 nil 时参数里的保险库句柄不会被替换，原样交给工具。
+	Secrets SecretInjector
 }
 
 // New 构造网关。
@@ -138,6 +149,7 @@ func New(opts Options) (*Gateway, error) {
 		guard:         opts.Guard,
 		registry:      opts.Registry,
 		audit:         opts.Audit,
+		secrets:       opts.Secrets,
 		clientName:    "atomhelper",
 		clientVersion: v,
 	}, nil
@@ -282,6 +294,22 @@ func (g *Gateway) Call(ctx context.Context, req CallRequest) (CallResult, error)
 		return CallResult{}, fmt.Errorf("%w: %s", ErrNotConnected, info.Server)
 	}
 
+	// 句柄替换排在出口管控之后：管控看到的是句柄，分级与裁剪都不接触明文；
+	// 能不能用这一条由保险库自己的授权名单决定。
+	var injection *vault.Injection
+	if g.secrets != nil {
+		injection, err = g.secrets.Inject(ctx, req.Tool, trimmed)
+		if err != nil {
+			g.auditCall(ctx, req, core.TrustExternal, fmt.Sprintf("保险库拒绝: %v", err))
+			return CallResult{}, err
+		}
+		trimmed = injection.Params
+		if len(injection.Used) > 0 {
+			// 审计只记用了哪几条，不记值。
+			g.auditCall(ctx, req, core.TrustSystem, "使用保险库条目: "+strings.Join(injection.Used, ", "))
+		}
+	}
+
 	args, err := decodeArgs(trimmed)
 	if err != nil {
 		return CallResult{}, err
@@ -299,7 +327,8 @@ func (g *Gateway) Call(ctx context.Context, req CallRequest) (CallResult, error)
 		return CallResult{}, fmt.Errorf("%w: %s: %w", ErrToolFailed, req.Tool, err)
 	}
 	if res.IsError {
-		msg := textOf(res)
+		// 报错信息同样可能回显入参，先清掉明文再往外传。
+		msg := redactText(injection, textOf(res))
 		g.auditCall(ctx, req, core.TrustExternal, "工具返回错误: "+msg)
 		return CallResult{}, fmt.Errorf("%w: %s: %s", ErrToolFailed, req.Tool, msg)
 	}
@@ -308,6 +337,8 @@ func (g *Gateway) Call(ctx context.Context, req CallRequest) (CallResult, error)
 	if err != nil {
 		return CallResult{}, err
 	}
+	// 工具常把入参原样回显。明文不清掉就会顺着返回值进步骤日志和下一轮提示词。
+	out = injection.Redact(out)
 	g.auditCall(ctx, req, trust, fmt.Sprintf("成功，副作用=%s", info.SideEffect))
 	return CallResult{Output: out, Trust: trust}, nil
 }
@@ -331,6 +362,22 @@ func normalize(res *mcp.CallToolResult, ceiling core.TrustLevel) (json.RawMessag
 		return nil, core.TrustExternal, fmt.Errorf("mcpgw: 序列化文本返回失败: %w", err)
 	}
 	return b, core.EffectiveTrust(ceiling, true), nil
+}
+
+// redactText 清掉一段纯文本里的保险库明文。
+func redactText(inj *vault.Injection, text string) string {
+	if inj == nil {
+		return text
+	}
+	quoted, err := json.Marshal(text)
+	if err != nil {
+		return "[工具返回内容无法处理，已隐藏]"
+	}
+	var out string
+	if err := json.Unmarshal(inj.Redact(quoted), &out); err != nil {
+		return "[工具返回内容含保险库条目，已整体隐藏]"
+	}
+	return out
 }
 
 func textOf(res *mcp.CallToolResult) string {

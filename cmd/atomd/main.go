@@ -23,6 +23,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomhelper/internal/vault"
 )
 
 func main() {
@@ -66,7 +67,7 @@ func run(migrateOnly, checkOnly bool) error {
 		return nil
 	}
 
-	parts, err := build(initCtx, file, st, log)
+	parts, err := build(initCtx, cfg, file, st, log)
 	if err != nil {
 		return err
 	}
@@ -114,7 +115,7 @@ type parts struct {
 }
 
 // build 按配置装出各个部件。
-func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logger) (*parts, error) {
+func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.Store, log *slog.Logger) (*parts, error) {
 	if file == nil {
 		log.Warn("未设置 ATOM_CONFIG，运行在 demo 模式，不会产生任何真实副作用")
 		return &parts{planner: demo.Planner{}, actuator: demo.Actuator{}, close: func() {}}, nil
@@ -130,7 +131,17 @@ func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logge
 	}
 	guard := policy.NewGuard(policy.NewClassifier(), registry)
 
+	// 保险库：明文只在网关调用工具的那一刻出现，模型与日志只见句柄。
+	safe, err := vault.Open(st.Vault(), cfg.VaultKey)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.VaultKey == "" {
+		log.Warn("未设置 ATOM_VAULT_KEY，保险库处于锁定状态，引用保险库条目的工具调用会被拒绝")
+	}
+
 	gw, err := mcpgw.New(mcpgw.Options{
+		Secrets:  safe,
 		Guard:    guard,
 		Registry: registry,
 		Audit:    agent.NewStoreAudit(st),
@@ -173,7 +184,7 @@ func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logge
 		planner: agent.NewPlanner(router, gw, agent.PlannerOptions{
 			ReplyStyle:  file.Reply.Style,
 			ReplyCustom: file.Reply.Custom,
-		}).WithMemory(mem),
+		}).WithMemory(mem).WithVault(safe),
 		actuator: agent.NewActuator(gw, router).WithMemory(mem),
 		approver: approver,
 		// 任务完成后提炼记忆与流程，经写入管线落库。

@@ -29,6 +29,10 @@ type Config struct {
 	// ConfigPath 指向 YAML 配置文件。为空时 atomd 跑在 demo 模式下，
 	// 不接任何真实模型与工具。
 	ConfigPath string
+
+	// VaultKey 是保险库密钥（base64 编码的 32 字节）。只从环境变量来，
+	// 不进配置文件也不进数据库。为空时保险库处于锁定状态。
+	VaultKey string
 }
 
 // Load 从环境变量读取配置。
@@ -41,6 +45,7 @@ func Load() (*Config, error) {
 		Owner:      os.Getenv("ATOM_OWNER"),
 		LogLevel:   envString("ATOM_LOG_LEVEL", "info"),
 		ConfigPath: os.Getenv("ATOM_CONFIG"),
+		VaultKey:   os.Getenv("ATOM_VAULT_KEY"),
 	}
 	if c.DSN == "" {
 		return nil, fmt.Errorf("config: 必须设置 ATOM_DSN")
