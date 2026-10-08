@@ -394,6 +394,68 @@ func TestAdvance_决策用量计入预算(t *testing.T) {
 	}
 }
 
+// recordingSubscriber 记录订阅请求，可配置为失败。
+type recordingSubscriber struct {
+	wakes []*core.WakeCondition
+	err   error
+}
+
+func (s *recordingSubscriber) Subscribe(_ context.Context, _ string, w *core.WakeCondition) error {
+	s.wakes = append(s.wakes, w)
+	return s.err
+}
+
+func TestAdvance_等待事件时先登记订阅再进入等待(t *testing.T) {
+	ctx := context.Background()
+	at := time.Now().UTC().Add(time.Hour)
+	waitEvent := Decision{
+		Kind: DecideWait,
+		Wake: &core.WakeCondition{Kind: core.WakeEvent, Expr: `topic == "a.b"`, At: &at},
+	}
+
+	st := memory.New()
+	task := runningTask(t, st, core.TrustUser)
+	subs := &recordingSubscriber{}
+	e := NewEngine(st, &scriptedPlanner{script: []Decision{waitEvent}}, &recordingActuator{}).WithSubscriber(subs)
+	if err := e.Advance(ctx, task.ID); err != nil {
+		t.Fatalf("推进失败: %v", err)
+	}
+	if len(subs.wakes) != 1 || subs.wakes[0].Expr != `topic == "a.b"` {
+		t.Fatalf("应登记一条订阅，实际 %+v", subs.wakes)
+	}
+	got := mustGet(t, st, task.ID)
+	if got.State != core.StateWaiting || got.Wake == nil || got.Wake.Kind != core.WakeEvent {
+		t.Fatalf("期望等待事件，实际 state=%s wake=%+v", got.State, got.Wake)
+	}
+
+	// 订阅登记失败：不能让任务睡下去等一个没人会发的唤醒。
+	st = memory.New()
+	task = runningTask(t, st, core.TrustUser)
+	e = NewEngine(st, &scriptedPlanner{script: []Decision{waitEvent}}, &recordingActuator{}).
+		WithSubscriber(&recordingSubscriber{err: errors.New("表达式不合法")})
+	if err := e.Advance(ctx, task.ID); err != nil {
+		t.Fatalf("推进失败: %v", err)
+	}
+	got = mustGet(t, st, task.ID)
+	if got.Wake == nil || got.Wake.Kind != core.WakeTime {
+		t.Fatalf("订阅失败应按决策失败处理并定时重试，实际 wake=%+v", got.Wake)
+	}
+	if steps, _ := st.ListSteps(ctx, task.ID); len(steps) != 1 || steps[0].Status != core.StepFailed {
+		t.Fatalf("订阅失败应留下失败记录，实际 %+v", steps)
+	}
+
+	// 没有接入事件总线：直接失败，而不是静默退化成永久等待。
+	st = memory.New()
+	task = runningTask(t, st, core.TrustUser)
+	e = NewEngine(st, &scriptedPlanner{script: []Decision{waitEvent}}, &recordingActuator{})
+	if err := e.Advance(ctx, task.ID); err != nil {
+		t.Fatalf("推进失败: %v", err)
+	}
+	if got := mustGet(t, st, task.ID); got.State != core.StateFailed {
+		t.Fatalf("期望 failed，实际 %s", got.State)
+	}
+}
+
 // failingPlanner 每次决策都失败。
 type failingPlanner struct{ calls int }
 

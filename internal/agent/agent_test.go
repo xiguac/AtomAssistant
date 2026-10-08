@@ -108,6 +108,33 @@ func TestPlanner_解析工具决策(t *testing.T) {
 	}
 }
 
+func TestPlanner_等待事件的表达式在决策时校验(t *testing.T) {
+	m := &fakeModel{replies: []string{
+		`{"action":"wait","wait_seconds":3600,"wait_event":"topic == \"mail.received\"","reason":"等回信"}`,
+		`{"action":"wait","wait_seconds":3600,"wait_event":"topic = 邮件","reason":"等回信"}`,
+	}}
+	p := NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{})
+	task := core.NewTask("t", "g", core.TrustUser)
+
+	d, err := p.Decide(context.Background(), task, nil)
+	if err != nil {
+		t.Fatalf("决策失败: %v", err)
+	}
+	if d.Kind != kernel.DecideWait || d.Wake.Kind != core.WakeEvent ||
+		d.Wake.Expr != `topic == "mail.received"` {
+		t.Fatalf("应解析为事件等待: %+v", d.Wake)
+	}
+	// 等不到事件也要有醒来的时候。
+	if d.Wake.At == nil {
+		t.Fatal("事件等待必须带兜底超时")
+	}
+
+	// 语法错误的表达式不能变成一条永远匹配不上的订阅。
+	if _, err := p.Decide(context.Background(), task, nil); err == nil {
+		t.Fatal("非法的 wait_event 应被拒绝")
+	}
+}
+
 func TestPlanner_副作用等级不采信模型自报(t *testing.T) {
 	// 模型试图把一个不可逆工具说成只读。
 	m := &fakeModel{replies: []string{

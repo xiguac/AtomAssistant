@@ -84,6 +84,13 @@ type Actuator interface {
 	Execute(ctx context.Context, t *core.Task, s *core.Step) (Result, error)
 }
 
+// Subscriber 为等待事件的任务登记订阅，由事件总线实现。
+//
+// Subscriber 为 nil 时任务不能等待事件，只能等时间。
+type Subscriber interface {
+	Subscribe(ctx context.Context, taskID string, w *core.WakeCondition) error
+}
+
 var (
 	// ErrNeedsReconciliation 表示有一个不可逆步骤状态不明，必须由用户裁决。
 	ErrNeedsReconciliation = errors.New("kernel: 不可逆步骤状态不明，需人工确认")
@@ -97,6 +104,7 @@ type Engine struct {
 	planner  Planner
 	act      Actuator
 	approver Approver
+	subs     Subscriber
 	now      func() time.Time
 }
 
@@ -108,6 +116,12 @@ func NewEngine(s store.TaskStore, p Planner, a Actuator) *Engine {
 // WithApprover 接入审批策略。
 func (e *Engine) WithApprover(a Approver) *Engine {
 	e.approver = a
+	return e
+}
+
+// WithSubscriber 接入事件总线，允许任务等待事件。
+func (e *Engine) WithSubscriber(s Subscriber) *Engine {
+	e.subs = s
 	return e
 }
 
@@ -179,6 +193,19 @@ func (e *Engine) Advance(ctx context.Context, taskID string) error {
 	case DecideWait:
 		if d.Wake == nil {
 			return e.failTask(ctx, t, "Planner 要求等待但未给出唤醒条件")
+		}
+		if d.Wake.Kind == core.WakeEvent {
+			if e.subs == nil {
+				return e.failTask(ctx, t, "Planner 要求等待事件，但未接入事件总线")
+			}
+			// 订阅先于进入等待：反过来的话，任务已经睡了而订阅还没建，
+			// 这段时间里到来的事件叫不醒任何人。
+			if err := e.subs.Subscribe(ctx, t.ID, d.Wake); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				return e.recordPlannerFailure(ctx, t, history, fmt.Errorf("登记事件订阅失败: %w", err))
+			}
 		}
 		t.Wake = d.Wake
 		if err := e.store.UpdateTaskRuntime(ctx, t); err != nil {

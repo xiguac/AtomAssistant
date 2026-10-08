@@ -15,6 +15,7 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 )
@@ -28,6 +29,7 @@ const usage = `用法:
   atomctl resolve <任务ID> done|failed
                                  裁决一个执行中断、状态不明的不可逆操作：
                                  done 表示已生效，failed 表示未生效
+  atomctl emit <主题> [JSON]     发布一个事件，唤醒订阅命中的等待任务
 
 环境变量: ATOM_DSN（必填）
 `
@@ -99,6 +101,15 @@ func run(args []string) error {
 			return fmt.Errorf("resolve 需要任务 ID 和 done 或 failed")
 		}
 		return kernel.Resolve(ctx, st, args[1], args[2] == "done")
+	case "emit":
+		if len(args) < 2 {
+			return fmt.Errorf("emit 需要一个事件主题")
+		}
+		var payload json.RawMessage
+		if len(args) > 2 {
+			payload = json.RawMessage(args[2])
+		}
+		return emit(ctx, st, args[1], payload)
 	default:
 		return fmt.Errorf("未知命令 %q", args[0])
 	}
@@ -118,6 +129,15 @@ func create(ctx context.Context, st *pg.Store, title, goal string) error {
 	}
 	fmt.Println(t.ID)
 	return nil
+}
+
+func emit(ctx context.Context, st *pg.Store, topic string, payload json.RawMessage) error {
+	// 与 create 一致：从 CLI 发出的事件视为用户直接输入。
+	// 连接器与 Webhook 产生的事件必须按各自来源标注更低的信任等级。
+	e := event.New(topic, payload, core.TrustUser, "atomctl")
+	woken, err := event.NewBus(st.Events(), st).Publish(ctx, e)
+	fmt.Printf("事件 %s 已发布，唤醒 %d 个任务\n", e.ID, woken)
+	return err
 }
 
 func show(ctx context.Context, st *pg.Store, id string) error {

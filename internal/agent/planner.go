@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
@@ -29,8 +30,17 @@ const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责
   "tool": "工具全名，action=tool 时必填",
   "params": {},
   "wait_seconds": 数字，action=wait 时必填,
+  "wait_event": "可选。事件订阅表达式，action=wait 时填写表示等这个事件",
   "reason": "一句话说明理由，会展示给用户"
 }
+
+等待有两种：
+- 只填 wait_seconds：等这么多秒后继续。
+- 同时填 wait_event：等到事件发生就继续，wait_seconds 是等不到时的超时。
+  事件发生时它的内容会作为一条步骤输出出现在历史里；历史里没有它，说明是超时醒来的。
+  表达式语法：字段只有 topic、source、payload.字段路径；
+  运算符 == != > >= < <= CONTAINS，用 AND / OR / NOT 和括号组合；字符串用双引号。
+  例：topic == "calendar.event.created" AND payload.attendees CONTAINS "客户张总"
 
 规则：
 - 只能使用下面列出的工具，名字必须完全一致。
@@ -111,6 +121,7 @@ type modelDecision struct {
 	Tool        string          `json:"tool"`
 	Params      json.RawMessage `json:"params"`
 	WaitSeconds int64           `json:"wait_seconds"`
+	WaitEvent   string          `json:"wait_event"`
 	Reason      string          `json:"reason"`
 }
 
@@ -170,6 +181,18 @@ func (p *Planner) validate(md modelDecision) (kernel.Decision, error) {
 			d = p.opts.MaxWait
 		}
 		at := p.now().Add(d)
+		if expr := strings.TrimSpace(md.WaitEvent); expr != "" {
+			// 表达式是模型写的，语法错误要在这里拦下并反馈给它，
+			// 而不是登记一条永远匹配不上的订阅。
+			if _, err := event.Parse(expr); err != nil {
+				return kernel.Decision{}, fmt.Errorf("agent: wait_event 不合法: %w", err)
+			}
+			return kernel.Decision{
+				Kind:   kernel.DecideWait,
+				Wake:   &core.WakeCondition{Kind: core.WakeEvent, Expr: expr, At: &at},
+				Reason: md.Reason,
+			}, nil
+		}
 		return kernel.Decision{
 			Kind:   kernel.DecideWait,
 			Wake:   &core.WakeCondition{Kind: core.WakeTime, At: &at},

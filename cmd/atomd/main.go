@@ -17,6 +17,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/agent"
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/demo"
+	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
@@ -76,7 +77,9 @@ func run(migrateOnly, checkOnly bool) error {
 		return nil
 	}
 
-	engine := kernel.NewEngine(st, planner, actuator)
+	// 事件与任务同库：订阅在数据库里，进程重启不丢。
+	engine := kernel.NewEngine(st, planner, actuator).
+		WithSubscriber(event.NewBus(st.Events(), st))
 	if approver != nil {
 		engine = engine.WithApprover(approver)
 	}

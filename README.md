@@ -27,9 +27,23 @@
 | `internal/config` | 环境变量 + YAML 配置，非法值直接报错不静默回退 | P0/P1 |
 | `cmd/atomd` `cmd/atomctl` | 常驻服务与运维 CLI | P0 |
 
-| `internal/event` | 事件、订阅、订阅表达式的解析与求值（尚未接入调度器） | P3 |
+| `internal/event` | 事件总线：事件与订阅持久化、订阅表达式、命中即唤醒等待任务 | P3 |
 
-**尚未开始**：事件的持久化与分发（P3 余下部分）、连接器（P4）、App（P5）。
+**P3 尚缺**：事件来源目前只有 `atomctl emit`，定时器与 Webhook 入口还没做。
+**尚未开始**：连接器（P4）、App（P5）。
+
+### 事件唤醒
+
+任务可以等一个事件而不是等一段时间。规划器给出订阅表达式和兜底超时，
+事件命中时任务被唤醒，事件内容作为一条步骤写进它的日志——信任等级沿用事件自身的，
+一封邮件能把任务叫醒，但它的正文进了上下文依然是不可信材料。
+
+```
+topic == "mail.received" AND payload.from CONTAINS "张总"
+```
+
+字段只有 `topic`、`source`、`payload.路径`；运算符 `== != > >= < <= CONTAINS`，
+用 `AND / OR / NOT` 和括号组合。不支持函数调用与正则。
 
 ### 记忆系统的几条规则
 
@@ -72,6 +86,8 @@ go run ./cmd/atomctl approve <任务ID>          # 按原参数执行
 go run ./cmd/atomctl reject <任务ID> "理由"     # 不执行，交回规划器
 # 任务因不可逆操作执行中断而挂起时
 go run ./cmd/atomctl resolve <任务ID> done|failed
+# 发布一个事件，唤醒订阅命中的等待任务
+go run ./cmd/atomctl emit mail.received '{"from":"客户张总"}'
 ```
 
 demo 流程依次经过：一次推理 → 一次只读查询 → 等待 10 秒 → 一次不可逆操作 → 完成，
