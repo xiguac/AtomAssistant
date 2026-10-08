@@ -39,6 +39,14 @@ type Actuator struct {
 	model  Completer
 	memory MemoryProvider
 	payer  Payer
+	// resources 非空时启用付费资源（HTTP 402）。
+	resources PaidResources
+}
+
+// WithPaidResources 接入付费资源。必须同时接入 Payer。
+func (a *Actuator) WithPaidResources(r PaidResources) *Actuator {
+	a.resources = r
+	return a
 }
 
 // WithPayer 接入付款能力。
@@ -116,6 +124,14 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		}
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if isResourceTool(s.ToolName) {
+		out, err := a.runResource(ctx, t, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 网络上取回来的内容，无论付没付钱，都是第三方写的。
+		return kernel.Result{Output: out, Trust: core.TrustExternal}, nil
 	}
 	if isPayTool(s.ToolName) {
 		out, err := a.runPay(ctx, t, s)

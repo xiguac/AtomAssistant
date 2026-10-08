@@ -18,6 +18,8 @@ type fakePayer struct {
 	session, link string
 	intent        pay.Intent
 	queried       string
+	body          string
+	fetchBody     string
 }
 
 func (f *fakePayer) Submit(_ context.Context, session, link string, intent pay.Intent) (string, error) {
@@ -28,6 +30,17 @@ func (f *fakePayer) Submit(_ context.Context, session, link string, intent pay.I
 func (f *fakePayer) Query(_ context.Context, orderNo string) (string, error) {
 	f.queried = orderNo
 	return "支付成功", nil
+}
+
+func (f *fakePayer) PayResource(_ context.Context, session, file, url, purpose, body string) (string, error) {
+	f.session, f.link, f.intent.Service, f.body = session, url, purpose, body
+	f.queried = file
+	return "支付待确认\n订单号：20261008008282214600990000520587\n支付方式：\nhttps://u.alipay.cn/_abc", nil
+}
+
+func (f *fakePayer) FetchPaid(_ context.Context, orderNo, url, body string) (string, error) {
+	f.queried, f.link, f.fetchBody = orderNo, url, body
+	return "资源响应体：今天沟通运在线", nil
 }
 
 const submitReply = `{"action":"tool","tool":"pay.alipay_submit","params":{

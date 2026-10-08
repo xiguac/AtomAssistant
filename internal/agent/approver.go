@@ -68,6 +68,11 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 		MaxPrivacy:  maxPrivacy,
 	}, usage, now)
 
+	// 金额无从核实的付款不适用任何自动放行规则。拒绝的结论不受影响。
+	if unverifiableAmount(d.ToolName) && decision.Outcome == policy.OutcomeAuto {
+		return kernel.ApprovalManual, "这笔付款的金额无法由系统核实，必须由你确认", nil
+	}
+
 	switch decision.Outcome {
 	case policy.OutcomeAuto:
 		// 自动放行的动作要计入累计，否则帽子形同虚设。

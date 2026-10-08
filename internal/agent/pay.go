@@ -18,6 +18,15 @@ import (
 type Payer interface {
 	Submit(ctx context.Context, sessionID, paymentLink string, intent pay.Intent) (string, error)
 	Query(ctx context.Context, orderNo string) (string, error)
+	PayResource(ctx context.Context, sessionID, challengeFile, resourceURL, purpose, body string) (string, error)
+	FetchPaid(ctx context.Context, orderNo, resourceURL, body string) (string, error)
+}
+
+// PaidResources 请求付费资源并保管 402 账单，由 pay.Resources 提供。
+type PaidResources interface {
+	Request(ctx context.Context, taskID, resourceURL, body string) (pay.Response, error)
+	Challenge(taskID, resourceURL string) (file, body string, err error)
+	Check(resourceURL string) (string, error)
 }
 
 const (
@@ -25,7 +34,132 @@ const (
 	ToolPaySubmit = "pay.alipay_submit"
 	// ToolPayQuery 查询一笔付款的状态。
 	ToolPayQuery = "pay.alipay_query"
+
+	// ToolResourceRequest 请求一个可能要收费的网络资源。
+	ToolResourceRequest = "pay.resource_request"
+	// ToolResourcePay 为一个要收费的资源发起付款。
+	ToolResourcePay = "pay.resource_pay"
+	// ToolResourceFetch 在付款之后取回资源。
+	ToolResourceFetch = "pay.resource_fetch"
 )
+
+var resourceRequestTool = mcpgw.ToolInfo{
+	Name:    ToolResourceRequest,
+	Server:  "builtin",
+	RawName: "resource_request",
+	Description: `请求一个按次收费的网络资源（只能是用户允许的域名）。` +
+		`不带 body 时用 GET；接口要求提交参数时把参数作为 JSON 对象放在 body 里，用 POST 发送。` +
+		`免费的直接返回内容。返回里 needs_payment 为 true 表示对方要收费：` +
+		`这时把 body 里说的金额告诉用户想做什么，然后用 ` + ToolResourcePay + ` 发起付款，不要重复请求。`,
+	InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+		`"url":{"type":"string","description":"完整的 https 网址"},` +
+		`"body":{"type":"object","description":"可选。要提交给接口的 JSON 参数"}},"required":["url"]}`),
+	SideEffect: core.SideEffectReadOnly,
+}
+
+var resourcePayTool = mcpgw.ToolInfo{
+	Name:    ToolResourcePay,
+	Server:  "builtin",
+	RawName: "resource_pay",
+	Description: `为刚才 ` + ToolResourceRequest + ` 返回 needs_payment 的那个资源发起支付宝付款。` +
+		`url 必须和当时请求的一字不差。调用成功不等于付款成功：返回的是待确认订单，` +
+		`你必须用 ask 把"支付方式"下的链接**一字不改**地发给用户，请他在支付宝里授权；` +
+		`用户说付好了之后，用 ` + ToolResourceFetch + ` 取回内容。`,
+	InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+		`"url":{"type":"string","description":"与请求时完全相同的网址"},` +
+		`"purpose":{"type":"string","description":"用户想用这个资源做什么，一句话，不要写个人信息"}},` +
+		`"required":["url","purpose"]}`),
+	SideEffect: core.SideEffectIrreversible,
+}
+
+var resourceFetchTool = mcpgw.ToolInfo{
+	Name:    ToolResourceFetch,
+	Server:  "builtin",
+	RawName: "resource_fetch",
+	Description: `用户付款之后取回资源内容。order_no 取自 ` + ToolResourcePay +
+		` 返回内容里"订单号"或"查询单号"后面的值，url 与当时请求的一字不差。只调用一次，不要重复查询。`,
+	InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+		`"order_no":{"type":"string"},"url":{"type":"string"}},"required":["order_no","url"]}`),
+	SideEffect: core.SideEffectReadOnly,
+}
+
+// resourceTools 是允许了付费资源域名之后才出现的内置工具。
+func resourceTools(enabled bool) []mcpgw.ToolInfo {
+	if !enabled {
+		return nil
+	}
+	return []mcpgw.ToolInfo{resourceRequestTool, resourcePayTool, resourceFetchTool}
+}
+
+type resourceInput struct {
+	URL     string          `json:"url"`
+	Body    json.RawMessage `json:"body"`
+	Purpose string          `json:"purpose"`
+	OrderNo string          `json:"order_no"`
+}
+
+// runResource 执行付费资源类内置工具。
+func (a *Actuator) runResource(ctx context.Context, t *core.Task, s *core.Step) (json.RawMessage, error) {
+	if a.payer == nil || a.resources == nil {
+		return nil, fmt.Errorf("agent: 未启用付费资源")
+	}
+	var in resourceInput
+	if err := json.Unmarshal(s.Input, &in); err != nil {
+		return nil, fmt.Errorf("agent: 解析参数失败: %w", err)
+	}
+	// 每一个工具都重新校验网址：模型在两次调用之间换一个网址，不能绕过域名限制。
+	target, err := a.resources.Check(in.URL)
+	if err != nil {
+		return nil, err
+	}
+	switch s.ToolName {
+	case ToolResourceRequest:
+		body := string(in.Body)
+		if body == "null" {
+			body = ""
+		}
+		resp, err := a.resources.Request(ctx, t.ID, target, body)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{
+			"status": resp.Status, "body": resp.Body, "needs_payment": resp.NeedsPayment,
+		})
+	case ToolResourcePay:
+		// 请求体取当初存下的那一份，不采信模型此刻给的。
+		file, body, err := a.resources.Challenge(t.ID, target)
+		if err != nil {
+			return nil, err
+		}
+		out, err := a.payer.PayResource(ctx, t.ID, file, target, in.Purpose, body)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]string{"text": out})
+	case ToolResourceFetch:
+		_, body, err := a.resources.Challenge(t.ID, target)
+		if err != nil {
+			return nil, err
+		}
+		out, err := a.payer.FetchPaid(ctx, in.OrderNo, target, body)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]string{"text": out})
+	}
+	return nil, fmt.Errorf("agent: 未知的付费资源工具 %q", s.ToolName)
+}
+
+// isResourceTool 报告一个工具名是否属于付费资源类内置工具。
+func isResourceTool(name string) bool {
+	return name == ToolResourceRequest || name == ToolResourcePay || name == ToolResourceFetch
+}
+
+// unverifiableAmount 报告一个付款动作的金额是否无法由系统核实。
+//
+// 402 的账单对我们不透明，金额只出现在对方返回的自由文本里。
+// 用户配的"多少钱以下自动放行"在这里没有可靠的数字可比，所以这类付款永远要确认。
+func unverifiableAmount(tool string) bool { return tool == ToolResourcePay }
 
 var paySubmitTool = mcpgw.ToolInfo{
 	Name:    ToolPaySubmit,
@@ -131,6 +265,8 @@ func classifiable(d kernel.Decision) json.RawMessage {
 	}
 	delete(in, "payment_link")
 	delete(in, "order_no")
+	// 资源网址已经过域名白名单，带长参数是常态。
+	delete(in, "url")
 	out, err := json.Marshal(in)
 	if err != nil {
 		return d.Input
@@ -140,5 +276,5 @@ func classifiable(d kernel.Decision) json.RawMessage {
 
 // isPayTool 报告一个工具名是否属于付款类内置工具。
 func isPayTool(name string) bool {
-	return name == ToolPaySubmit || name == ToolPayQuery
+	return name == ToolPaySubmit || name == ToolPayQuery || isResourceTool(name)
 }

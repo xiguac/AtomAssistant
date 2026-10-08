@@ -212,7 +212,7 @@ func (a Alipay) run(ctx context.Context, args ...string) (string, error) {
 	cmd.Stderr = &out
 
 	err := cmd.Run()
-	text := strings.TrimSpace(out.String())
+	text := stripTerminalArt(out.String())
 	if err == nil {
 		return text, nil
 	}
@@ -226,4 +226,21 @@ func (a Alipay) run(ctx context.Context, args ...string) (string, error) {
 	}
 	// 程序跑了但报告失败。它的输出就是原因，原样带回去。
 	return text, fmt.Errorf("%w: %s", ErrFailed, text)
+}
+
+// stripTerminalArt 去掉输出里用终端控制字符画出来的二维码。
+//
+// alipay-bot 在文本模式下会把付款二维码画在终端里，几千个控制字符。
+// 这些内容对模型毫无意义，却会把真正有用的订单号和链接挤出上下文；
+// 用户要的那个链接在正文里另有一份。
+func stripTerminalArt(out string) string {
+	lines := strings.Split(out, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "\x1b[") {
+			continue
+		}
+		kept = append(kept, strings.TrimRight(line, "\r"))
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }

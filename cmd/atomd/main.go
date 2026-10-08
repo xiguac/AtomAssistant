@@ -239,6 +239,12 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		planner = planner.WithPay(true)
 		actuator = actuator.WithPayer(file.Alipay())
 		log.Info("已启用支付宝付款能力")
+		// 付费资源要另外列出允许的域名：这是让助手能主动向外发请求的唯一入口。
+		if domains := file.Payment.Alipay.ResourceDomains; len(domains) > 0 {
+			planner = planner.WithPaidResources(true)
+			actuator = actuator.WithPaidResources(file.PaidResources())
+			log.Info("已允许付费资源", "域名", domains)
+		}
 	}
 
 	return &parts{

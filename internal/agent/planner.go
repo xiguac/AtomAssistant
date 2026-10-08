@@ -154,6 +154,8 @@ type Planner struct {
 	skills  SkillProvider
 	// pay 为真表示接入了付款能力，付款工具对模型可见。
 	pay bool
+	// paidResources 为真表示允许请求付费资源。
+	paidResources bool
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -224,6 +226,12 @@ func (p *Planner) WithPay(enabled bool) *Planner {
 	return p
 }
 
+// WithPaidResources 向模型开放付费资源工具。
+func (p *Planner) WithPaidResources(enabled bool) *Planner {
+	p.paidResources = enabled
+	return p
+}
+
 // builtins 返回当前这次决策可用的内置工具。
 //
 // 清单和记忆展开只读写任务自己的东西，任何任务都能用。付款不一样：
@@ -231,7 +239,8 @@ func (p *Planner) WithPay(enabled bool) *Planner {
 // 否则一个别人写的流程，装上之后就凭空有了花钱的能力。
 func (p *Planner) builtins() []mcpgw.ToolInfo {
 	tools := builtinTools(p.memory != nil)
-	for _, t := range payTools(p.pay) {
+	gated := append(payTools(p.pay), resourceTools(p.pay && p.paidResources)...)
+	for _, t := range gated {
 		if p.permits(t.Name) {
 			tools = append(tools, t)
 		}

@@ -16,7 +16,8 @@ func TestMain(m *testing.M) {
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "submit-payment", "query-payment-status", "check-wallet",
-			"apply-wallet", "bind-wallet", "close-wallet":
+			"apply-wallet", "bind-wallet", "close-wallet",
+			"402-buyer-pay", "402-query-payment-status":
 			fakeBot(os.Args[1:])
 		}
 	}
@@ -148,5 +149,15 @@ func TestAlipay_失败与不可用分开报告(t *testing.T) {
 	slow.Timeout = 300 * time.Millisecond
 	if _, err := slow.Submit(ctx, "s", "HANG", Intent{Service: "x", AmountCents: 1, Payee: "y"}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("超时应返回 ErrUnavailable: %v", err)
+	}
+}
+
+func TestStripTerminalArt_滤掉终端二维码保留正文(t *testing.T) {
+	raw := "**订单号**：2026\r\n**支付方式**：\nhttps://u.alipay.cn/_abc\n\n" +
+		"\x1b[47m  \x1b[0m\x1b[40m  \x1b[0m\n\x1b[47m  \x1b[0m\nMEDIA: file:///C:/x.png\n"
+	got := stripTerminalArt(raw)
+	want := "**订单号**：2026\n**支付方式**：\nhttps://u.alipay.cn/_abc\n\nMEDIA: file:///C:/x.png"
+	if got != want {
+		t.Fatalf("期望\n%q\n实际\n%q", want, got)
 	}
 }

@@ -51,6 +51,23 @@ reply:
   # custom: 结论放第一句，不要用表情
 
 # ---------------------------------------------------------------
+# 付款。不写这一节，助手没有任何付款工具。
+#
+# 需要先安装支付宝官方的 alipay-bot 并开通钱包：
+#   npx -y @alipay/agent-payment@latest install
+#   atomctl pay wallet open
+#
+# resource_domains 是允许助手请求的按次收费接口（HTTP 402）的域名，逐个列出，
+# 写 example.com 同时允许它的子域名。不写则助手不能主动请求任何网址。
+# 每一笔付款都要你确认，并且要你本人在支付宝里授权。
+# ---------------------------------------------------------------
+# payment:
+#   alipay:
+#     enabled: true
+#     # command: /path/to/alipay-bot     # 不在 PATH 里时指定
+#     # resource_domains: [api.example.com]
+
+# ---------------------------------------------------------------
 # 已批准的 MCP server。transport 取值: command / http
 #
 # env 里只列出这个 server 确实需要的变量。主进程的环境不会被继承——

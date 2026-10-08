@@ -119,6 +119,14 @@ type AlipayConfig struct {
 	Command string `yaml:"command"`
 	// AgentName 是开通钱包时向支付宝报告的智能体名称，不填按"原子助手"。
 	AgentName string `yaml:"agent_name"`
+	// ResourceDomains 是允许助手请求的付费资源域名（HTTP 402）。
+	// 不填则助手不能主动请求任何网址。写 example.com 同时允许它的子域名。
+	ResourceDomains []string `yaml:"resource_domains"`
+}
+
+// PaidResources 按配置构造付费资源客户端。
+func (f *File) PaidResources() pay.Resources {
+	return pay.Resources{Domains: f.Payment.Alipay.ResourceDomains}
 }
 
 // Alipay 按配置构造支付宝付款客户端。

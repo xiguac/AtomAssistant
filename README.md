@@ -30,6 +30,7 @@
 | `internal/schedule` | 定时任务：到点创建任务，停机不补跑，上一次没结束不叠加 | P3 |
 | `internal/webhook` | 外部系统投递事件的 HTTP 入口，令牌鉴权，内容一律按外部对待 | P3 |
 | `internal/vault` | 隔离保险库：敏感信息只进不出，模型与日志只见句柄 | — |
+| `internal/pay` | 支付宝 Agent 支付：收银台付款、按次收费的资源（HTTP 402） | — |
 | `internal/skill` `internal/skillscan` | Skill 安装器、运行时工具集收窄、安装前扫描闸门 | P9（本地安装部分） |
 
 **尚未开始**：连接器（P4）、App（P5）、MCP 与 Skill 市场（P8/P9 的分发部分）。
@@ -74,6 +75,44 @@ topic == "mail.received" AND payload.from CONTAINS "张总"
   相似度召回失败一次就是事故。它们也永不被遗忘机制归档。
 - **冲突不默默覆盖**：先做交叉验证，再按冲突类型分级处置。用户执意覆盖时旧值转入
   版本链而非删除。
+
+### 付款
+
+助手可以用支付宝付款，接的是支付宝的 [Agent 支付](https://aipay.alipay.com/products/agent-pay)。
+支付宝没有给智能体开放 HTTP 接口，付款方的能力都在它官方的命令行程序 `alipay-bot` 里，
+这里把助手用得到的几个子命令包成了内置工具。
+
+```bash
+npx -y @alipay/agent-payment@latest install   # 安装官方的 alipay-bot（支付宝提供）
+atomctl pay wallet open                        # 开通 AI 钱包，按提示在支付宝里授权
+atomctl pay wallet status
+```
+
+然后在配置里打开：
+
+```yaml
+payment:
+  alipay:
+    enabled: true
+    resource_domains: [api.example.com]   # 可选：允许助手请求的按次收费接口
+```
+
+两种付款场景：
+
+- **收银台付款**：别的工具下单后返回了支付宝收银台链接，助手用 `pay.alipay_submit` 发起付款。
+- **按次收费的资源**：助手请求一个接口，对方回 HTTP 402 要求付费，助手用 `pay.resource_pay` 付款后取回内容。
+  只能请求你在 `resource_domains` 里逐个列出的域名——这是助手唯一能主动向外发请求的地方。
+
+每一笔钱过两道关：
+
+1. **你在这里确认**。发起付款是不可逆操作，默认每一笔都要 `atomctl approve`。
+   收银台付款可以配"多少钱以下自动放行"；按次收费的资源金额无法由系统核实，永远要确认。
+   由邮件、网页这类外部内容驱动的付款，无论金额多小都要确认。
+2. **你在支付宝里授权**。助手拿到的只是一个待确认订单和一个链接，它把链接原样交给你，
+   你点开授权之后钱才付出去。
+
+钱包的开通、绑定、关闭只能用 `atomctl pay wallet` 操作，不是助手的工具。
+按 Skill 执行的任务，只有 Skill 明确声明了付款工具才能付款。
 
 ### 保险库
 
@@ -121,6 +160,8 @@ atomctl run weekend.weather "这周末天气"     # 让一个任务按它执行
 5. **只有你亲手配置的渠道才算你本人**——助手代你开通的消息渠道一律按外部内容对待，
    直到你在后台确认它。
 6. **Skill 安装前必须过扫描，扫描没跑成等于不通过。**
+7. **付款能力不能自己给自己**——开通钱包、列出可请求的域名都只能由你来做；
+   每一笔付款都要你在支付宝里授权。
 
 ## 运行
 
