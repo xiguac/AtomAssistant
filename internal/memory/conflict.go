@@ -20,6 +20,9 @@ const (
 	ConflictContradiction ConflictKind = "contradiction"
 	// ConflictSourceAuthority 来源可信度不同：用户口述 vs 权威数据。
 	ConflictSourceAuthority ConflictKind = "source_authority"
+	// ConflictRefinement 新值是旧值的补充：旧的说法原样还在，只是多了细节。
+	// "住在杭州" → "住在杭州，出行常从杭州东站走"。这不是矛盾。
+	ConflictRefinement ConflictKind = "refinement"
 	// ConflictObservationVsStatement 观察与陈述矛盾：
 	// 用户说不吃辣，但订单记录连续点川菜。
 	ConflictObservationVsStatement ConflictKind = "observation_vs_statement"
@@ -131,7 +134,29 @@ func Arbitrate(existing *Memory, cand Candidate, evidence []Evidence, now time.T
 		}
 	}
 
-	// 4. 时效更替：旧值曾经是对的，只是过时了。这类不该被当成"矛盾"去打扰用户。
+	// 4. 补充而非矛盾。只比较文字是否相同的话，每一次"说得更细一点"
+	//    都会被当成冲突挂起，用户很快就会被自己说过的话淹没。
+	switch {
+	case contains(existing.Current.Value, cand.Value):
+		// 新说法只是旧说法的一部分，没有带来新东西。
+		return Arbitration{
+			Kind:       ConflictNone,
+			Resolution: ResolveReinforce,
+			Evidence:   evidence,
+			Reason:     "新观察已包含在既有记忆里，提升置信度",
+		}
+	case contains(cand.Value, existing.Current.Value) &&
+		authority(cand.Source.Kind) >= authority(existing.Current.Source.Kind):
+		// 来源不如旧值权威的"补充"不走这条：不能让一次任务里的推断悄悄改写用户亲口说的话。
+		return Arbitration{
+			Kind:       ConflictRefinement,
+			Resolution: ResolveUpdate,
+			Evidence:   evidence,
+			Reason:     "新值是对既有记忆的补充，旧值转入历史",
+		}
+	}
+
+	// 5. 时效更替：旧值曾经是对的，只是过时了。这类不该被当成"矛盾"去打扰用户。
 	if isSuccession(existing, cand, now) {
 		return Arbitration{
 			Kind:       ConflictTemporalSuccession,
@@ -141,7 +166,7 @@ func Arbitrate(existing *Memory, cand Candidate, evidence []Evidence, now time.T
 		}
 	}
 
-	// 5. 观察与陈述矛盾：两者都可能对，行为和口述本来就会不一致。
+	// 6. 观察与陈述矛盾：两者都可能对，行为和口述本来就会不一致。
 	if isObservationVsStatement(existing, cand) {
 		return Arbitration{
 			Kind:       ConflictObservationVsStatement,
@@ -152,7 +177,7 @@ func Arbitrate(existing *Memory, cand Candidate, evidence []Evidence, now time.T
 		}
 	}
 
-	// 6. 来源权威度差距明显时直接采信更权威的一方。
+	// 7. 来源权威度差距明显时直接采信更权威的一方。
 	switch {
 	case authority(cand.Source.Kind) > authority(existing.Current.Source.Kind):
 		return Arbitration{
@@ -173,7 +198,7 @@ func Arbitrate(existing *Memory, cand Candidate, evidence []Evidence, now time.T
 		}
 	}
 
-	// 7. 同等权威的真实矛盾，交给交叉验证的证据强度决定。
+	// 8. 同等权威的真实矛盾，交给交叉验证的证据强度决定。
 	support, oppose, strongSupport := weigh(evidence)
 	switch {
 	case strongSupport:
@@ -304,6 +329,16 @@ func weigh(evidence []Evidence) (support, oppose int, strongSupport bool) {
 
 func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// contains 报告 whole 是否原样包含 part（忽略大小写与空白）。
+//
+// 这是个保守的判据：它认得出"在原话后面加了细节"，认不出换了说法的补充——
+// 后者仍会走到矛盾处理，由用户裁决。宁可多问一次，也不靠猜。
+func contains(whole, part string) bool {
+	squash := func(s string) string { return strings.Join(strings.Fields(normalize(s)), "") }
+	w, p := squash(whole), squash(part)
+	return p != "" && w != p && strings.Contains(w, p)
 }
 
 // UserOverride 处理用户在被对质后仍坚持新值的情形。

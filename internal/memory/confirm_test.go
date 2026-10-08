@@ -109,3 +109,52 @@ func TestSeed_内置流程可重复写入且不覆盖用户版本(t *testing.T) 
 		t.Fatalf("用户的版本被出厂版本覆盖了: %s", got.Current.Value)
 	}
 }
+
+func TestArbitrate_补充不是矛盾(t *testing.T) {
+	st := memstore.New()
+	p := memory.NewPipeline(st, nil)
+	fact := func(value string, src memory.Source) memory.Candidate {
+		return memory.Candidate{
+			Kind: memory.KindFact, Subject: "user", Domain: "居住", Value: value,
+			Temporality: memory.TemporalDurable, Source: src,
+		}
+	}
+	if _, err := p.Ingest(ctx(), []memory.Candidate{fact("住在杭州", userSource())}); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+
+	// 同样来自用户、在原话后面加了细节：直接更新，不打扰用户。
+	out, err := p.Ingest(ctx(), []memory.Candidate{fact("住在杭州，出行常从杭州东站走", userSource())})
+	if err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	if out[0].Arb.Kind != memory.ConflictRefinement || out[0].PendingID != "" {
+		t.Fatalf("补充应直接更新而不是挂起: %+v", out[0].Arb)
+	}
+	m, _ := st.Get(ctx(), out[0].MemoryID)
+	if m.Current.Value != "住在杭州，出行常从杭州东站走" || m.Status != memory.StatusActive {
+		t.Fatalf("应采用更详细的说法且保持生效: %q %s", m.Current.Value, m.Status)
+	}
+	if len(m.History) != 1 || m.History[0].Value != "住在杭州" {
+		t.Fatalf("旧说法应留在版本链里: %+v", m.History)
+	}
+
+	// 新说法只是已知内容的一部分：算佐证。
+	out, _ = p.Ingest(ctx(), []memory.Candidate{fact("住在杭州", userSource())})
+	if out[0].Resolution != memory.ResolveReinforce {
+		t.Fatalf("已包含的说法应算佐证: %+v", out[0].Arb)
+	}
+
+	// 来源不如旧值权威的"补充"不能悄悄改写用户亲口说的话。
+	out, _ = p.Ingest(ctx(), []memory.Candidate{
+		fact("住在杭州，出行常从杭州东站走，最近打算搬去上海", taskSource())})
+	if out[0].Arb.Kind == memory.ConflictRefinement || out[0].PendingID == "" {
+		t.Fatalf("任务推断的补充应交给用户裁决: %+v", out[0].Arb)
+	}
+
+	// 真正的矛盾照旧挂起。
+	out, _ = p.Ingest(ctx(), []memory.Candidate{fact("住在北京", userSource())})
+	if out[0].Arb.Kind == memory.ConflictRefinement {
+		t.Fatalf("换了地方不是补充: %+v", out[0].Arb)
+	}
+}

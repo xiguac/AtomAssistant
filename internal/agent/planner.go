@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -242,6 +243,32 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 		return kernel.Decision{}, err
 	}
 
+	d, firstErr := p.ask(ctx, t, msgs)
+	if firstErr == nil || ctx.Err() != nil || !errors.Is(firstErr, errBadOutput) {
+		return d, firstErr
+	}
+	// 模型答非所问（空输出、不是对象、选了不存在的工具）时当场再问一次，把错在哪告诉它。
+	// 这类错多半一提醒就改；交给内核的话要先退避十秒，还白占一次失败额度。
+	retry := append(append([]llm.Message{}, msgs...), llm.Message{
+		Role: llm.RoleUser,
+		Content: "你上一次的输出无法使用：" + firstErr.Error() +
+			"\n请重新决定，只输出一个符合格式的 JSON 对象。",
+	})
+	d2, err := p.ask(ctx, t, retry)
+	// 两次调用都花了钱，都要记账。
+	d2.TokensIn += d.TokensIn
+	d2.TokensOut += d.TokensOut
+	d2.CostMicros += d.CostMicros
+	return d2, err
+}
+
+// errBadOutput 标记"模型给了回答，但回答不能用"。上游不可达之类的错误不属于这一类。
+var errBadOutput = errors.New("agent: 模型输出不可用")
+
+// ask 调一次模型并把回答校验成决策。
+//
+// 回答不可用时返回的 Decision 只带用量，供调用方记账。
+func (p *Planner) ask(ctx context.Context, t *core.Task, msgs []llm.Message) (kernel.Decision, error) {
 	resp, err := p.model.Complete(ctx, llm.PurposePlan, llm.Request{
 		Messages: msgs,
 		JSONMode: true,
@@ -249,22 +276,25 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 	if err != nil {
 		return kernel.Decision{}, err
 	}
+	spent := kernel.Decision{
+		TokensIn:   resp.Usage.PromptTokens,
+		TokensOut:  resp.Usage.CompletionTokens,
+		CostMicros: resp.CostMicros,
+	}
 
 	// 只取第一个 JSON 值：模型偶尔会在对象后面再跟一段解释，
 	// 为这种尾巴整次重试不值得。
 	var md modelDecision
 	if err := json.NewDecoder(strings.NewReader(stripFence(resp.Content))).Decode(&md); err != nil {
-		return kernel.Decision{}, fmt.Errorf("agent: 模型输出不是合法 JSON: %w (原文: %s)",
-			err, truncate(resp.Content, 200))
+		return spent, fmt.Errorf("%w: 不是合法 JSON: %v (原文: %s)",
+			errBadOutput, err, truncate(strings.TrimSpace(resp.Content), 200))
 	}
 	d, err := p.validate(t, md)
 	if err != nil {
-		return kernel.Decision{}, err
+		return spent, fmt.Errorf("%w: %v", errBadOutput, err)
 	}
 	// 规划本身的用量交给内核记账，否则任务预算管不到最贵的那部分开销。
-	d.TokensIn = resp.Usage.PromptTokens
-	d.TokensOut = resp.Usage.CompletionTokens
-	d.CostMicros = resp.CostMicros
+	d.TokensIn, d.TokensOut, d.CostMicros = spent.TokensIn, spent.TokensOut, spent.CostMicros
 	return d, nil
 }
 

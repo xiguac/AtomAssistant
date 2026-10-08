@@ -268,3 +268,34 @@ func TestPlanner_适用的流程单独成段(t *testing.T) {
 		t.Fatal("内置流程不应在围栏里")
 	}
 }
+
+func TestPlanner_输出不可用时当场重问一次并合并用量(t *testing.T) {
+	m := &fakeModel{replies: []string{
+		`[{"title":"这是个数组，不是决策"}]`,
+		`{"action":"finish","reason":"好了"}`,
+	}}
+	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	d, err := p.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil)
+	if err != nil || d.Kind != kernel.DecideFinish {
+		t.Fatalf("第二次回答可用就应成功: %+v, %v", d, err)
+	}
+	if m.calls != 2 {
+		t.Fatalf("应只重问一次，实际调用 %d 次", m.calls)
+	}
+	// 两次调用都花了钱。
+	if d.TokensIn != 20 || d.TokensOut != 10 {
+		t.Fatalf("两次调用的用量都应记账: in=%d out=%d", d.TokensIn, d.TokensOut)
+	}
+	// 重问时要把错在哪告诉模型。
+	last := m.lastReq.Messages[len(m.lastReq.Messages)-1].Content
+	if !strings.Contains(last, "无法使用") {
+		t.Fatalf("重问应说明上次的问题: %s", last)
+	}
+
+	// 上游不可达不属于"答非所问"，不在这里重试。
+	down := &fakeModel{err: context.DeadlineExceeded}
+	p = NewPlanner(down, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	if _, err := p.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil); err == nil {
+		t.Fatal("上游错误应原样返回")
+	}
+}
