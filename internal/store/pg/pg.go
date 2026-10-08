@@ -124,7 +124,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 func (s *Store) ResetForTest(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `
 		DROP TABLE IF EXISTS audit_log, task_steps, tasks,
-			memory_pending, memory_revisions, memories, schema_migrations CASCADE`)
+			memory_pending, memory_revisions, memories,
+			event_subscriptions, events, schema_migrations CASCADE`)
 	if err != nil {
 		return fmt.Errorf("pg: 重置数据库失败: %w", err)
 	}
@@ -238,11 +239,71 @@ const stepColumns = `
 	input_hash, input, output, output_trust, idempotency_key,
 	tokens_in, tokens_out, cost_cents, err, started_at, ended_at`
 
+// execer 同时适配连接池与事务。
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 func (s *Store) AppendStep(ctx context.Context, st *core.Step) error {
+	return insertStep(ctx, s.pool, st)
+}
+
+// WakeWithStep 在一个事务里完成唤醒与写步骤。
+//
+// UPDATE 拿到的行锁一直持有到提交，期间调度器领不走这个任务，
+// 所以随后读到的 MAX(seq) 不会被并发的步骤写入抢先。
+func (s *Store) WakeWithStep(ctx context.Context, taskID, reason string, st *core.Step) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("pg: 开启事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE tasks
+		   SET state = 'ready', reason = $2, updated_at = now(),
+		       lease_owner = '', lease_expires_at = NULL
+		 WHERE id = $1 AND state = 'waiting'`, taskID, reason)
+	if err != nil {
+		return fmt.Errorf("pg: 唤醒任务失败: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var actual string
+		err := tx.QueryRow(ctx, `SELECT state FROM tasks WHERE id = $1`, taskID).Scan(&actual)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return store.ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("pg: 查询任务状态失败: %w", err)
+		}
+		return fmt.Errorf("%w: 期望 %s，实际 %s", store.ErrStateConflict, core.StateWaiting, actual)
+	}
+
+	var seq int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(seq), 0) + 1 FROM task_steps WHERE task_id = $1`, taskID).Scan(&seq); err != nil {
+		return fmt.Errorf("pg: 分配步骤序号失败: %w", err)
+	}
+	st.TaskID = taskID
+	st.Seq = seq
+	st.IdempotencyKey = core.IdempotencyKeyFor(taskID, seq)
+	if err := insertStep(ctx, tx, st); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE tasks SET next_seq = $2 WHERE id = $1`, taskID, seq+1); err != nil {
+		return fmt.Errorf("pg: 更新步骤序号失败: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pg: 提交唤醒失败: %w", err)
+	}
+	return nil
+}
+
+func insertStep(ctx context.Context, db execer, st *core.Step) error {
 	if err := st.Validate(); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		INSERT INTO task_steps (`+stepColumns+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		st.ID, st.TaskID, st.Seq, string(st.Type), string(st.Status), st.ToolName,

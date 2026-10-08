@@ -62,6 +62,12 @@ type TaskStore interface {
 	ReclaimExpired(ctx context.Context, now time.Time) (int, error)
 	// DueWaiting 返回唤醒时间已到的 waiting 任务。
 	DueWaiting(ctx context.Context, now time.Time, limit int) ([]*core.Task, error)
+	// WakeWithStep 原子地把一个 waiting 任务放回 ready，并在它的日志末尾追加步骤 s。
+	//
+	// 用于把"任务为什么醒了"（事件内容）送进任务：序号由存储分配并回填到 s，
+	// 调用方传入的 Seq 会被覆盖。任务不在 waiting 时返回 ErrStateConflict 且不写入任何东西——
+	// 两件事必须同成同败，否则会出现任务醒了却看不到事件，或者事件写进了一个正在跑的任务。
+	WakeWithStep(ctx context.Context, taskID, reason string, s *core.Step) error
 
 	Audit(ctx context.Context, e AuditEntry) error
 }

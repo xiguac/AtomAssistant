@@ -36,6 +36,7 @@ func RunSuite(t *testing.T, newStore Factory) {
 		{"租约续期与抢占", testRenewLease},
 		{"回收过期租约", testReclaimExpired},
 		{"到期的等待任务可被查出", testDueWaiting},
+		{"唤醒与写步骤同成同败", testWakeWithStep},
 		{"运行时字段可更新", testUpdateRuntime},
 		{"审计可写入", testAudit},
 		{"不存在的记录返回ErrNotFound", testNotFound},
@@ -321,6 +322,62 @@ func testDueWaiting(t *testing.T, s store.TaskStore) {
 	}
 	if due[0].Wake == nil || due[0].Wake.Kind != core.WakeTime {
 		t.Fatalf("唤醒条件未正确读回: %+v", due[0].Wake)
+	}
+}
+
+func testWakeWithStep(t *testing.T, s store.TaskStore) {
+	ctx := context.Background()
+	task := newTask(t, s)
+
+	first := core.NewStep(task.ID, 1, core.StepLLM, nil)
+	first.SideEffect = core.SideEffectNone
+	first.Complete(json.RawMessage(`{}`), core.TrustSystem)
+	if err := s.AppendStep(ctx, first); err != nil {
+		t.Fatalf("写入步骤失败: %v", err)
+	}
+
+	delivered := func() *core.Step {
+		// Seq 故意给一个错的值：序号必须由存储分配。
+		st := core.NewStep(task.ID, 99, core.StepWait, nil)
+		st.SideEffect = core.SideEffectNone
+		st.Complete(json.RawMessage(`{"topic":"a.b"}`), core.TrustExternal)
+		return st
+	}
+
+	// 任务还没进入等待：不得唤醒，也不得写入步骤。
+	if err := s.WakeWithStep(ctx, task.ID, "事件命中", delivered()); !errors.Is(err, store.ErrStateConflict) {
+		t.Fatalf("期望 ErrStateConflict，实际 %v", err)
+	}
+	if list, _ := s.ListSteps(ctx, task.ID); len(list) != 1 {
+		t.Fatalf("唤醒失败时不得留下步骤，实际 %d 条", len(list))
+	}
+
+	setWaiting(t, s, task, time.Now().UTC().Add(time.Hour))
+	st := delivered()
+	if err := s.WakeWithStep(ctx, task.ID, "事件命中", st); err != nil {
+		t.Fatalf("唤醒失败: %v", err)
+	}
+	if st.Seq != 2 {
+		t.Fatalf("序号应回填为 2，实际 %d", st.Seq)
+	}
+	got, err := s.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("读取任务失败: %v", err)
+	}
+	if got.State != core.StateReady || got.Reason != "事件命中" || got.LeaseOwner != "" {
+		t.Fatalf("期望 ready 且无租约，实际 state=%s reason=%q owner=%q", got.State, got.Reason, got.LeaseOwner)
+	}
+	list, _ := s.ListSteps(ctx, task.ID)
+	if len(list) != 2 || list[1].Seq != 2 || list[1].Status != core.StepDone ||
+		list[1].OutputTrust != core.TrustExternal {
+		t.Fatalf("事件步骤未正确写入: %v", stepSeqs(list))
+	}
+	if list[1].IdempotencyKey != core.IdempotencyKeyFor(task.ID, 2) {
+		t.Fatal("幂等键应按分配后的序号重新派生")
+	}
+
+	if err := s.WakeWithStep(ctx, "不存在", "x", delivered()); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("期望 ErrNotFound，实际 %v", err)
 	}
 }
 

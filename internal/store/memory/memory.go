@@ -238,6 +238,38 @@ func (s *Store) DueWaiting(_ context.Context, now time.Time, limit int) ([]*core
 	return out, nil
 }
 
+func (s *Store) WakeWithStep(_ context.Context, taskID, reason string, st *core.Step) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[taskID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	if t.State != core.StateWaiting {
+		return fmt.Errorf("%w: 期望 %s，实际 %s", store.ErrStateConflict, core.StateWaiting, t.State)
+	}
+	seq := 1
+	if list := s.steps[taskID]; len(list) > 0 {
+		seq = list[len(list)-1].Seq + 1
+	}
+	st.TaskID = taskID
+	st.Seq = seq
+	st.IdempotencyKey = core.IdempotencyKeyFor(taskID, seq)
+	if err := st.Validate(); err != nil {
+		return err
+	}
+	s.steps[taskID] = append(s.steps[taskID], *st)
+
+	t.State = core.StateReady
+	t.Reason = reason
+	t.NextSeq = seq + 1
+	t.LeaseOwner = ""
+	t.LeaseExpiresAt = nil
+	t.UpdatedAt = time.Now().UTC()
+	s.tasks[taskID] = t
+	return nil
+}
+
 func (s *Store) Audit(_ context.Context, e store.AuditEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
