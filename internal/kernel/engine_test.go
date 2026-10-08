@@ -284,6 +284,10 @@ func TestReject_拒绝后步骤跳过并交回Planner(t *testing.T) {
 	if steps[0].Status != core.StepSkipped || steps[0].Err == "" {
 		t.Fatalf("被拒绝的步骤应为 skipped 且带理由，实际 %+v", steps[0])
 	}
+	// 拒绝理由是用户的原话，必须以 user 等级进上下文，否则模型会把它当注入。
+	if steps[0].OutputTrust != core.TrustUser {
+		t.Fatalf("拒绝理由的信任等级应为 user，实际 %s", steps[0].OutputTrust)
+	}
 	if err := Reject(ctx, st, task.ID, ""); !errors.Is(err, ErrNothingToDecide) {
 		t.Fatalf("没有待审批步骤时应返回 ErrNothingToDecide，实际 %v", err)
 	}

@@ -135,6 +135,24 @@ func TestPlanner_等待事件的表达式在决策时校验(t *testing.T) {
 	}
 }
 
+func TestPlanner_容忍JSON后面的多余文字(t *testing.T) {
+	m := &fakeModel{replies: []string{
+		`{"action":"finish","reason":"已完成"}` + "\n以上是我的决定。",
+	}}
+	p := NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{})
+	d, err := p.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil)
+	if err != nil || d.Kind != kernel.DecideFinish || d.Reason != "已完成" {
+		t.Fatalf("应取第一个 JSON 对象: %+v, %v", d, err)
+	}
+}
+
+func TestTruncate_不切坏多字节字符(t *testing.T) {
+	got := truncate("虹桥机场", 4) // 每个汉字 3 字节，4 落在第二个字中间
+	if got != "虹…" {
+		t.Fatalf("应退到字符边界，实际 %q", got)
+	}
+}
+
 func TestPlanner_副作用等级不采信模型自报(t *testing.T) {
 	// 模型试图把一个不可逆工具说成只读。
 	m := &fakeModel{replies: []string{

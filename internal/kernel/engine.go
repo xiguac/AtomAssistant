@@ -233,6 +233,10 @@ func (e *Engine) runStep(ctx context.Context, t *core.Task, history []*core.Step
 	case ApprovalDeny:
 		return e.failTask(ctx, t, "操作被安全策略拒绝: "+reason)
 	case ApprovalManual:
+		// 用户要看到的不只是"策略为什么拦下"，还有"助手为什么想这么做"。
+		if d.Reason != "" {
+			reason += "；助手的理由：" + d.Reason
+		}
 		return e.requestApproval(ctx, t, history, d, reason)
 	}
 

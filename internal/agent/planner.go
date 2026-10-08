@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
@@ -147,8 +148,10 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 		return kernel.Decision{}, err
 	}
 
+	// 只取第一个 JSON 值：模型偶尔会在对象后面再跟一段解释，
+	// 为这种尾巴整次重试不值得。
 	var md modelDecision
-	if err := json.Unmarshal([]byte(stripFence(resp.Content)), &md); err != nil {
+	if err := json.NewDecoder(strings.NewReader(stripFence(resp.Content))).Decode(&md); err != nil {
 		return kernel.Decision{}, fmt.Errorf("agent: 模型输出不是合法 JSON: %w (原文: %s)",
 			err, truncate(resp.Content, 200))
 	}
@@ -314,15 +317,18 @@ func (p *Planner) toolList() string {
 func summarize(steps []*core.Step) string {
 	var sb strings.Builder
 	for _, s := range steps {
-		fmt.Fprintf(&sb, "- 步骤 %d %s %s → %s\n",
-			s.Seq, s.Type, s.ToolName, stepOutcome(s))
+		fmt.Fprintf(&sb, "- 步骤 %d %s %s %s → %s\n",
+			s.Seq, s.Type, s.ToolName, truncate(string(s.Input), 200), stepOutcome(s))
 	}
 	return sb.String()
 }
 
 func describeStep(s *core.Step) string {
-	return fmt.Sprintf("步骤 %d（%s %s）%s\n输出: %s",
-		s.Seq, s.Type, s.ToolName, stepOutcome(s), truncate(string(s.Output), 2000))
+	// 参数必须带上：只看到"调过 book_ride 且成功"而看不到订的是什么，
+	// 模型无从判断这一步是否已经满足目标，会把同一件事再做一遍。
+	return fmt.Sprintf("步骤 %d（%s %s）%s\n参数: %s\n输出: %s",
+		s.Seq, s.Type, s.ToolName, stepOutcome(s),
+		truncate(string(s.Input), 1000), truncate(string(s.Output), 2000))
 }
 
 func stepOutcome(s *core.Step) string {
@@ -351,6 +357,10 @@ func stripFence(s string) string {
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
+	}
+	// 退到字符边界再切，否则中文会被切出半个字符。
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
 	}
 	return s[:max] + "…"
 }

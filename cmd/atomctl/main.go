@@ -12,6 +12,7 @@ import (
 	"os"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
@@ -192,6 +193,9 @@ func steps(ctx context.Context, st *pg.Store, id string) error {
 }
 
 func summarize(s *core.Step) string {
+	if s.Status == core.StepSkipped {
+		return "未执行: " + s.Err
+	}
 	if s.Err != "" {
 		return "失败: " + s.Err
 	}
@@ -206,8 +210,12 @@ func summarize(s *core.Step) string {
 	if err != nil {
 		return string(s.Output)
 	}
-	const max = 60
+	max := 60
 	if len(b) > max {
+		// 退到字符边界再切，否则中文会被切出半个字符。
+		for max > 0 && !utf8.RuneStart(b[max]) {
+			max--
+		}
 		return string(b[:max]) + "…"
 	}
 	return string(b)

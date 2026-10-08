@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // OpenAICompatible 适配任何 OpenAI Chat Completions 兼容的接口。
@@ -169,6 +170,10 @@ func truncate(s string, max int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= max {
 		return s
+	}
+	// 退到字符边界再切，否则中文会被切出半个字符。
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
 	}
 	return s[:max] + "…"
 }

@@ -67,6 +67,9 @@ func Reject(ctx context.Context, s store.TaskStore, taskID, reason string) error
 	}
 	step.Fail(errors.New(msg))
 	step.Status = core.StepSkipped
+	// 拒绝理由是用户本人说的话。不改的话它会顶着步骤默认的 external 等级进上下文，
+	// 模型会把"改成 3000 再订"当成不可信内容里的注入而拒绝照办。
+	step.OutputTrust = core.TrustUser
 	if err := s.SaveStep(ctx, step); err != nil {
 		return err
 	}
