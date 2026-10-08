@@ -33,6 +33,8 @@ type Store interface {
 	// PutPending 保存一条待用户裁决的候选。
 	PutPending(ctx context.Context, p Pending) error
 	ListPending(ctx context.Context, subject string) ([]Pending, error)
+	// ResolvePending 标记一条候选已被用户裁决，此后不再出现在待裁决列表里。
+	ResolvePending(ctx context.Context, id string, at time.Time) error
 }
 
 // Pending 是一条需要用户裁决后才能生效的候选。
@@ -255,6 +257,82 @@ func (p *Pipeline) apply(ctx context.Context, m *Memory, cand Candidate, arb Arb
 		o.PendingID = pending.ID
 	}
 	return o, nil
+}
+
+// ErrPendingNotFound 表示没有这条待裁决的候选。
+var ErrPendingNotFound = errors.New("memory: 没有这条待裁决的候选")
+
+func (p *Pipeline) findPending(ctx context.Context, id string) (Pending, error) {
+	list, err := p.store.ListPending(ctx, "")
+	if err != nil {
+		return Pending{}, err
+	}
+	for _, pd := range list {
+		if pd.ID == id {
+			return pd, nil
+		}
+	}
+	return Pending{}, fmt.Errorf("%w: %s", ErrPendingNotFound, id)
+}
+
+// Confirm 是用户对一条候选说"对，记住它"。
+//
+// 候选从此以用户本人的名义生效：新记忆直接落库；与既有记忆冲突的，
+// 走 UserOverride——旧值进版本链，不删除。返回落到的记忆 ID。
+func (p *Pipeline) Confirm(ctx context.Context, pendingID string) (string, error) {
+	pd, err := p.findPending(ctx, pendingID)
+	if err != nil {
+		return "", err
+	}
+	now := p.now()
+	cand := pd.Candidate
+	cand.Source = Source{Kind: SourceUser, Ref: cand.Source.Ref, Trust: core.TrustUser}
+
+	existing, err := p.store.FindByKey(ctx, cand.Key())
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	var id string
+	if existing == nil {
+		o, err := p.insert(ctx, cand, now)
+		if err != nil {
+			return "", err
+		}
+		id = o.MemoryID
+	} else {
+		UserOverride(existing, cand.Value, now)
+		existing.Temporality = cand.Temporality
+		existing.ValidUntil = cand.ValidUntil
+		existing.Status = StatusActive
+		if err := p.store.Put(ctx, existing); err != nil {
+			return "", err
+		}
+		id = existing.ID
+	}
+	return id, p.store.ResolvePending(ctx, pendingID, now)
+}
+
+// Dismiss 是用户对一条候选说"不对，别记"。既有记忆若因它被标为有分歧，恢复为生效。
+func (p *Pipeline) Dismiss(ctx context.Context, pendingID string) error {
+	pd, err := p.findPending(ctx, pendingID)
+	if err != nil {
+		return err
+	}
+	now := p.now()
+	if pd.MemoryID != "" {
+		m, err := p.store.Get(ctx, pd.MemoryID)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if m != nil && m.Status == StatusDisputed {
+			m.Status = StatusActive
+			m.UpdatedAt = now
+			if err := p.store.Put(ctx, m); err != nil {
+				return err
+			}
+		}
+	}
+	return p.store.ResolvePending(ctx, pendingID, now)
 }
 
 // dedupe 按身份键去重，同键保留最后一条。

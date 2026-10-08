@@ -1,0 +1,111 @@
+package memory_test
+
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/memory/memstore"
+)
+
+// 从任务里提炼、没有用户原话佐证的候选。
+func distilled(kind memory.Kind, domain, value string) memory.Candidate {
+	return memory.Candidate{
+		Kind: kind, Subject: "user", Domain: domain, Value: value,
+		Temporality: memory.TemporalDurable,
+		Source:      memory.Source{Kind: memory.SourceTask, Ref: "task#9", Trust: core.TrustToolOutput},
+	}
+}
+
+func TestConfirm_候选经用户确认后以用户名义生效(t *testing.T) {
+	st := memstore.New()
+	p := memory.NewPipeline(st, nil)
+
+	out, err := p.Ingest(ctx(), []memory.Candidate{distilled(memory.KindPlaybook, "报销流程", "1. 收集发票 2. 填单")})
+	if err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	if out[0].PendingID == "" || out[0].MemoryID != "" {
+		t.Fatalf("任务提炼的流程应先挂为候选，实际 %+v", out[0])
+	}
+	if list, _ := st.List(ctx(), memory.Query{}); len(list) != 0 {
+		t.Fatal("确认之前不应有任何记忆生效")
+	}
+
+	id, err := p.Confirm(ctx(), out[0].PendingID)
+	if err != nil {
+		t.Fatalf("确认失败: %v", err)
+	}
+	m, err := st.Get(ctx(), id)
+	if err != nil {
+		t.Fatalf("读取失败: %v", err)
+	}
+	if m.Kind != memory.KindPlaybook || m.Current.Source.Trust != core.TrustUser {
+		t.Fatalf("确认后的流程应是 user 等级，实际 %+v", m.Current.Source)
+	}
+	if pend, _ := st.ListPending(ctx(), ""); len(pend) != 0 {
+		t.Fatal("已确认的候选不应再出现在待确认列表")
+	}
+	if _, err := p.Confirm(ctx(), out[0].PendingID); !errors.Is(err, memory.ErrPendingNotFound) {
+		t.Fatalf("重复确认应返回 ErrPendingNotFound，实际 %v", err)
+	}
+}
+
+func TestDismiss_否决的候选不生效(t *testing.T) {
+	st := memstore.New()
+	p := memory.NewPipeline(st, nil)
+	out, err := p.Ingest(ctx(), []memory.Candidate{distilled(memory.KindFact, "居住", "住在杭州")})
+	if err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	if err := p.Dismiss(ctx(), out[0].PendingID); err != nil {
+		t.Fatalf("否决失败: %v", err)
+	}
+	if list, _ := st.List(ctx(), memory.Query{}); len(list) != 0 {
+		t.Fatal("被否决的候选不应生效")
+	}
+	if pend, _ := st.ListPending(ctx(), ""); len(pend) != 0 {
+		t.Fatal("被否决的候选不应再待确认")
+	}
+}
+
+func TestSeed_内置流程可重复写入且不覆盖用户版本(t *testing.T) {
+	st := memstore.New()
+	now := time.Now().UTC()
+	for i := 0; i < 2; i++ {
+		if err := memory.Seed(ctx(), st, now); err != nil {
+			t.Fatalf("第 %d 次写入内置流程失败: %v", i+1, err)
+		}
+	}
+	list, err := st.List(ctx(), memory.Query{Kinds: []memory.Kind{memory.KindPlaybook}})
+	if err != nil || len(list) == 0 {
+		t.Fatalf("应有内置流程: %v, %d 条", err, len(list))
+	}
+	var travel *memory.Memory
+	for _, m := range list {
+		if len(m.History) != 0 {
+			t.Fatalf("内容没变时重复写入不应产生新版本: %s", m.Domain)
+		}
+		if m.Domain == "旅游出行规划" {
+			travel = m
+		}
+	}
+	if travel == nil || travel.Current.Source.Trust != core.TrustSystem {
+		t.Fatalf("应有系统等级的旅游规划流程: %+v", travel)
+	}
+
+	// 用户改过的版本优先于出厂的。
+	memory.UserOverride(travel, "我自己的旅游规划流程", now)
+	if err := st.Put(ctx(), travel); err != nil {
+		t.Fatalf("覆盖失败: %v", err)
+	}
+	if err := memory.Seed(ctx(), st, now); err != nil {
+		t.Fatalf("再次写入失败: %v", err)
+	}
+	got, _ := st.Get(ctx(), travel.ID)
+	if got.Current.Value != "我自己的旅游规划流程" {
+		t.Fatalf("用户的版本被出厂版本覆盖了: %s", got.Current.Value)
+	}
+}

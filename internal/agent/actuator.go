@@ -92,15 +92,24 @@ func (a *Actuator) runLLM(ctx context.Context, s *core.Step) (kernel.Result, err
 	return kernel.Result{
 		Output: out,
 		// 模型生成的文本不是可信指令来源：它可能在复述 untrusted 输入。
-		Trust:     core.TrustToolOutput,
-		TokensIn:  resp.Usage.PromptTokens,
-		TokensOut: resp.Usage.CompletionTokens,
+		Trust:      core.TrustToolOutput,
+		TokensIn:   resp.Usage.PromptTokens,
+		TokensOut:  resp.Usage.CompletionTokens,
+		CostMicros: resp.CostMicros,
 	}, nil
 }
 
 func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (kernel.Result, error) {
 	// 内置工具不走 MCP：它读的是本地记忆，没有对外出口，
 	// 让它绕一圈网关只会白白增加一次序列化。
+	if s.ToolName == ToolPlan {
+		out, err := runPlan(s.Input)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 清单是模型自己写的，信任等级与模型输出一致。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
 	if s.ToolName == ToolExpandMemory {
 		out, err := a.runExpandMemory(ctx, s.Input)
 		if err != nil {

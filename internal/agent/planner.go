@@ -27,13 +27,18 @@ const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责
 
 必须输出一个 JSON 对象，不要输出任何其他内容：
 {
-  "action": "tool" | "wait" | "finish" | "fail",
+  "action": "tool" | "ask" | "wait" | "finish" | "fail",
   "tool": "工具全名，action=tool 时必填",
   "params": {},
+  "question": "action=ask 时必填，要问用户的一个问题",
   "wait_seconds": 数字，action=wait 时必填,
   "wait_event": "可选。事件订阅表达式，action=wait 时填写表示等这个事件",
-  "reason": "一句话说明理由，会展示给用户"
+  "reason": "一句话说明理由，会展示给用户；action=finish 时写完整的结论或建议"
 }
+
+向用户提问（ask）：
+- 只在缺少的信息会改变结论、且记忆和历史里都找不到时才问。能从记忆里知道的不要再问。
+- 一次只问一个问题，问得具体。用户的回答会作为一条步骤输出出现在历史里。
 
 等待有两种：
 - 只填 wait_seconds：等这么多秒后继续。
@@ -42,6 +47,22 @@ const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责
   表达式语法：字段只有 topic、source、payload.字段路径；
   运算符 == != > >= < <= CONTAINS，用 AND / OR / NOT 和括号组合；字符串用双引号。
   例：topic == "calendar.event.created" AND payload.attendees CONTAINS "客户张总"
+
+给建议之前要综合研判，不要只看单一因素：
+- 先想清楚这个决定受哪些因素影响，再逐个取证，最后综合给出结论。
+  以出行为例：从哪出发、什么时候有空、交通（机票/火车票的价格与耗时）、
+  当地天气、是否节假日与调休、人流量、预算、用户自己的出行习惯。
+- 结论要具体到可以执行：什么时候去、去哪些地方、怎么去，以及为什么这样选。
+- 每个因素的依据必须来自工具结果、记忆或用户的话。某个因素没有工具能查，
+  就在结论里明说"这一项没有数据"，并说明它可能怎样影响结论——绝不编造票价、天气或人流。
+- 上下文里如果给了适用的标准流程（SOP），按它的步骤做；跳过哪一步要说明原因。
+
+对外只披露必要的信息：
+- 工具参数里只放这次调用必需的信息。记忆里的住址、健康、家人、财务、联系人等个人信息，
+  与这次调用无关的一律不带。
+- 可给可不给的信息先权衡：给了能明显改善结果才给，并且只给到够用的粒度
+  （查天气给城市就够了，不要给详细住址）。
+- 拿不准该不该给，就不给，或者先问用户。
 
 规则：
 - 只能使用下面列出的工具，名字必须完全一致。
@@ -60,6 +81,31 @@ type PlannerOptions struct {
 	MaxWait time.Duration
 	// MemoryChars 是记忆环的字符预算。
 	MemoryChars int
+	// ReplyStyle 是回复风格：concise / balanced / detailed，空值按 concise。
+	ReplyStyle string
+	// ReplyCustom 是用户自己写的额外风格要求。
+	ReplyCustom string
+}
+
+// styleRule 返回写进系统提示的回复风格要求。
+//
+// 默认简洁：多数任务用户要的是结论，不是一篇文章。
+func (o PlannerOptions) styleRule() string {
+	var rule string
+	switch o.ReplyStyle {
+	case "detailed":
+		rule = "回复风格：详细。结论放在最前面，然后展开依据、备选方案和注意事项。"
+	case "balanced":
+		rule = "回复风格：适中。先给结论，再用几句话交代关键依据；不要铺陈背景。"
+	default:
+		rule = "回复风格：简洁。直接给结论和必要的依据，能一句话说清就不用两句；" +
+			"不要客套、不要复述问题、不要罗列用户没问的东西。" +
+			"只有任务本身需要完整方案（如行程规划）时才展开，展开也只写用得上的。"
+	}
+	if c := strings.TrimSpace(o.ReplyCustom); c != "" {
+		rule += "\n用户对回复的额外要求：" + c
+	}
+	return rule + "\n这条要求约束你写给用户看的 reason 和 question。"
 }
 
 func (o *PlannerOptions) applyDefaults() {
@@ -123,6 +169,7 @@ type modelDecision struct {
 	Params      json.RawMessage `json:"params"`
 	WaitSeconds int64           `json:"wait_seconds"`
 	WaitEvent   string          `json:"wait_event"`
+	Question    string          `json:"question"`
 	Reason      string          `json:"reason"`
 }
 
@@ -133,8 +180,12 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 		return kernel.Decision{}, err
 	}
 	msgs, err := llm.Build(segs, llm.BuildOptions{
-		SystemPrompt: plannerSystemPrompt + "\n\n可用工具：\n" + p.toolList(),
-		MaxChars:     p.opts.MaxChars,
+		// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
+		SystemPrompt: plannerSystemPrompt +
+			"\n\n" + p.opts.styleRule() +
+			"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
+			"\n\n可用工具：\n" + p.toolList(),
+		MaxChars: p.opts.MaxChars,
 	})
 	if err != nil {
 		return kernel.Decision{}, err
@@ -155,13 +206,14 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 		return kernel.Decision{}, fmt.Errorf("agent: 模型输出不是合法 JSON: %w (原文: %s)",
 			err, truncate(resp.Content, 200))
 	}
-	d, err := p.validate(md)
+	d, err := p.validate(t, md)
 	if err != nil {
 		return kernel.Decision{}, err
 	}
 	// 规划本身的用量交给内核记账，否则任务预算管不到最贵的那部分开销。
 	d.TokensIn = resp.Usage.PromptTokens
 	d.TokensOut = resp.Usage.CompletionTokens
+	d.CostMicros = resp.CostMicros
 	return d, nil
 }
 
@@ -169,8 +221,29 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 //
 // 这里是"模型不可信"原则的落点：工具必须在目录里，副作用等级取自目录而不是模型自报，
 // 等待时长有上限。模型能影响做什么，但不能影响能做什么。
-func (p *Planner) validate(md modelDecision) (kernel.Decision, error) {
+func (p *Planner) validate(t *core.Task, md modelDecision) (kernel.Decision, error) {
 	switch md.Action {
+	case "ask":
+		q := strings.TrimSpace(md.Question)
+		if q == "" {
+			return kernel.Decision{}, fmt.Errorf("agent: action=ask 但没有问题")
+		}
+		record, err := json.Marshal(map[string]string{"asked_user": q})
+		if err != nil {
+			return kernel.Decision{}, fmt.Errorf("agent: 序列化提问失败: %w", err)
+		}
+		at := p.now().Add(p.opts.MaxWait)
+		return kernel.Decision{
+			Kind: kernel.DecideWait,
+			// 只等发给这个任务的用户消息。任务 ID 是我们自己生成的，拼进表达式是安全的。
+			Wake: &core.WakeCondition{
+				Kind: core.WakeEvent, At: &at,
+				Expr: fmt.Sprintf(`topic == %q AND payload.task_id == %q`, event.TopicUserMessage, t.ID),
+			},
+			// 问题要留在日志里：醒来之后模型得知道用户的回答是在答什么。
+			Input:  record,
+			Reason: "等待你的回复：" + q,
+		}, nil
 	case "finish":
 		return kernel.Decision{Kind: kernel.DecideFinish, Reason: md.Reason}, nil
 	case "fail":
@@ -249,7 +322,10 @@ func (p *Planner) contextSegments(ctx context.Context, t *core.Task, history []*
 }
 
 // memorySubject 决定检索哪个主体的记忆。
-func memorySubject(*core.Task) string { return "user" }
+//
+// 空值表示不限主体：一个实例只服务一个用户，关于他本人的记忆和关于
+// 他身边的人（客户、家人）的记忆都属于他，都该参与检索。
+func memorySubject(*core.Task) string { return "" }
 
 // segments 装配上下文：任务目标 + 压缩的历史 + 最近步骤原文。
 func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
@@ -266,6 +342,18 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 
 	if len(history) == 0 {
 		return segs
+	}
+
+	// 最新的计划清单钉在最前面：它记录着这个任务已经拿到什么、还差什么，
+	// 不能随着步骤增多滑出窗口。
+	if plan := latestPlan(history); plan != "" {
+		segs = append(segs, llm.Segment{
+			Role:    llm.RoleUser,
+			Content: "当前计划清单（你自己维护的，用 " + ToolPlan + " 更新）：\n" + plan,
+			Trust:   core.TrustToolOutput,
+			Source:  "计划清单",
+			Pinned:  true,
+		})
 	}
 
 	cut := len(history) - p.opts.RecentSteps

@@ -242,6 +242,8 @@ func describeSource(r Revision) string {
 		return date + "从已授权数据同步的"
 	case SourceObserved:
 		return date + "从你的行为中观察到的"
+	case SourceBuiltin:
+		return "内置流程"
 	}
 	return date
 }

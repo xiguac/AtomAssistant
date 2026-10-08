@@ -8,6 +8,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/xiguac/atomhelper/internal/memory"
 )
@@ -109,6 +110,19 @@ func (s *Store) ListPending(_ context.Context, subject string) ([]memory.Pending
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) ResolvePending(_ context.Context, id string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.pending[:0]
+	for _, p := range s.pending {
+		if p.ID != id {
+			kept = append(kept, p)
+		}
+	}
+	s.pending = kept
+	return nil
 }
 
 func matches(m memory.Memory, q memory.Query) bool {

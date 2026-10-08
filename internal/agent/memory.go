@@ -34,12 +34,90 @@ var expandMemoryTool = mcpgw.ToolInfo{
 	SideEffect: core.SideEffectNone,
 }
 
+// ToolPlan 是内置工具：维护任务自己的计划清单。
+//
+// 长程任务靠它不迷路。分多天收集材料、逐个核实因素这类事，
+// 步骤一多、中间一等，早先的进展就滑出了上下文窗口；
+// 清单是模型自己写给自己的备忘，最新一版始终钉在上下文里。
+const ToolPlan = "plan.update"
+
+var planTool = mcpgw.ToolInfo{
+	Name:    ToolPlan,
+	Server:  "builtin",
+	RawName: "update",
+	Description: `维护这个任务的计划清单，每次传入完整的最新清单。` +
+		`任务有多个步骤、要逐项收集材料、或要逐个核实多个因素时，先列清单，每推进一项就更新。` +
+		`最新的清单会一直显示在上下文里；任务跨多天断续进行时，靠它记住已经拿到什么、还差什么。` +
+		`参数: {"items":[{"title":"事项","status":"todo|doing|done|blocked","note":"已拿到的内容或卡住的原因"}]}`,
+	InputSchema: json.RawMessage(`{"type":"object","properties":{"items":{"type":"array","items":{"type":"object",` +
+		`"properties":{"title":{"type":"string"},"status":{"type":"string","enum":["todo","doing","done","blocked"]},` +
+		`"note":{"type":"string"}},"required":["title","status"]}}},"required":["items"]}`),
+	// 清单只存在于任务自己的日志里，没有任何外部副作用。
+	SideEffect: core.SideEffectNone,
+}
+
 // builtinTools 是不经过 MCP 的内置工具。
 func builtinTools(hasMemory bool) []mcpgw.ToolInfo {
-	if !hasMemory {
-		return nil
+	tools := []mcpgw.ToolInfo{planTool}
+	if hasMemory {
+		tools = append(tools, expandMemoryTool)
 	}
-	return []mcpgw.ToolInfo{expandMemoryTool}
+	return tools
+}
+
+// planInput 是 plan.update 的参数。
+type planInput struct {
+	Items []struct {
+		Title  string `json:"title"`
+		Status string `json:"status"`
+		Note   string `json:"note,omitempty"`
+	} `json:"items"`
+}
+
+// runPlan 校验并保存计划清单。清单本身就是这一步的输出。
+func runPlan(raw json.RawMessage) (json.RawMessage, error) {
+	var in planInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, fmt.Errorf("agent: 解析计划清单失败: %w", err)
+	}
+	if len(in.Items) == 0 {
+		return nil, fmt.Errorf("agent: 计划清单不能为空")
+	}
+	for _, it := range in.Items {
+		switch it.Status {
+		case "todo", "doing", "done", "blocked":
+		default:
+			return nil, fmt.Errorf("agent: 事项 %q 的状态 %q 不合法", it.Title, it.Status)
+		}
+		if strings.TrimSpace(it.Title) == "" {
+			return nil, fmt.Errorf("agent: 计划清单里有没写标题的事项")
+		}
+	}
+	return json.Marshal(in)
+}
+
+// latestPlan 返回任务最新一版计划清单，没有则返回空。
+func latestPlan(history []*core.Step) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		s := history[i]
+		if s.ToolName != ToolPlan || s.Status != core.StepDone {
+			continue
+		}
+		var in planInput
+		if err := json.Unmarshal(s.Output, &in); err != nil {
+			return ""
+		}
+		var sb strings.Builder
+		for _, it := range in.Items {
+			fmt.Fprintf(&sb, "- [%s] %s", it.Status, it.Title)
+			if it.Note != "" {
+				fmt.Fprintf(&sb, "：%s", it.Note)
+			}
+			sb.WriteString("\n")
+		}
+		return sb.String()
+	}
+	return ""
 }
 
 // memorySegments 把装配结果转成上下文分段。
@@ -49,6 +127,25 @@ func builtinTools(hasMemory bool) []mcpgw.ToolInfo {
 // 记忆是事实材料，不是指令，助手不能因为"记忆里这么写"就去执行操作。
 func memorySegments(asm memory.Assembly) []llm.Segment {
 	var segs []llm.Segment
+
+	// 流程单独成段：它不是"关于用户的事实"，而是"这类事该怎么办"。
+	asm, playbooks := splitPlaybooks(asm)
+	if len(playbooks) > 0 {
+		var sb strings.Builder
+		sb.WriteString("适用的标准流程（SOP）。任务属于其中某一类时按它的步骤做，跳过哪一步要说明原因：\n")
+		// 整段的信任等级取其中最低的：混进一条低信任的流程，整段都不能当指令。
+		trust := core.TrustSystem
+		for _, it := range playbooks {
+			fmt.Fprintf(&sb, "【%s】\n%s\n", it.Memory.Domain, it.Memory.Current.Value)
+			if t := it.Memory.Current.Source.Trust; t < trust {
+				trust = t
+			}
+		}
+		segs = append(segs, llm.Segment{
+			Role: llm.RoleUser, Content: sb.String(),
+			Trust: trust, Source: "标准流程",
+		})
+	}
 
 	if len(asm.Critical) > 0 {
 		var sb strings.Builder
@@ -102,6 +199,25 @@ func memorySegments(asm memory.Assembly) []llm.Segment {
 		})
 	}
 	return segs
+}
+
+// splitPlaybooks 把流程类记忆从高、中关联环里挑出来。
+func splitPlaybooks(asm memory.Assembly) (memory.Assembly, []memory.Item) {
+	var playbooks []memory.Item
+	keep := func(items []memory.Item) []memory.Item {
+		out := make([]memory.Item, 0, len(items))
+		for _, it := range items {
+			if it.Memory.Kind == memory.KindPlaybook {
+				playbooks = append(playbooks, it)
+				continue
+			}
+			out = append(out, it)
+		}
+		return out
+	}
+	asm.High = keep(asm.High)
+	asm.Medium = keep(asm.Medium)
+	return asm, playbooks
 }
 
 // sceneOf 从任务推导检索场景。

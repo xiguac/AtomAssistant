@@ -127,6 +127,7 @@ const (
 	SourceTask      SourceKind = "task"      // 从任务执行中提炼
 	SourceConnector SourceKind = "connector" // 权威数据同步
 	SourceObserved  SourceKind = "observed"  // 从行为中观察推断
+	SourceBuiltin   SourceKind = "builtin"   // 随程序发布的内置流程
 )
 
 // Source 记录一条记忆是怎么来的。
@@ -331,7 +332,7 @@ func New(kind Kind, subject, domain string, value string, src Source, now time.T
 // 连续点了三次川菜不代表"喜欢川菜"，可能只是公司楼下就那一家。
 func initialConfidence(src Source) float64 {
 	switch src.Kind {
-	case SourceUser:
+	case SourceUser, SourceBuiltin:
 		return 0.9
 	case SourceConnector:
 		return 0.85

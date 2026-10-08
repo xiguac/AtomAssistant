@@ -66,22 +66,27 @@ func run(migrateOnly, checkOnly bool) error {
 		return nil
 	}
 
-	planner, actuator, approver, closeFn, err := build(initCtx, file, st, log)
+	parts, err := build(initCtx, file, st, log)
 	if err != nil {
 		return err
 	}
-	defer closeFn()
+	defer parts.close()
 
 	if checkOnly {
 		log.Info("配置与连接校验通过")
 		return nil
 	}
 
-	// 事件与任务同库：订阅在数据库里，进程重启不丢。
-	engine := kernel.NewEngine(st, planner, actuator).
-		WithSubscriber(event.NewBus(st.Events(), st))
-	if approver != nil {
-		engine = engine.WithApprover(approver)
+	// 事件与任务同库：订阅和收件箱都在数据库里，进程重启不丢。
+	bus := event.NewBus(st.Events(), st)
+	engine := kernel.NewEngine(st, parts.planner, parts.actuator).
+		WithSubscriber(bus).
+		WithInbox(bus)
+	if parts.approver != nil {
+		engine = engine.WithApprover(parts.approver)
+	}
+	if parts.epilogue != nil {
+		engine = engine.WithEpilogue(parts.epilogue)
 	}
 	sched := kernel.NewScheduler(st, engine, kernel.SchedulerConfig{
 		Owner:            cfg.Owner,
@@ -99,22 +104,29 @@ func run(migrateOnly, checkOnly bool) error {
 	return sched.Run(ctx)
 }
 
-// build 按配置装出 Planner / Actuator / Approver。
-func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logger) (
-	kernel.Planner, kernel.Actuator, kernel.Approver, func(), error,
-) {
+// parts 是按配置装出来的可插拔部件。approver 与 epilogue 可以为 nil。
+type parts struct {
+	planner  kernel.Planner
+	actuator kernel.Actuator
+	approver kernel.Approver
+	epilogue kernel.Epilogue
+	close    func()
+}
+
+// build 按配置装出各个部件。
+func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logger) (*parts, error) {
 	if file == nil {
 		log.Warn("未设置 ATOM_CONFIG，运行在 demo 模式，不会产生任何真实副作用")
-		return demo.Planner{}, demo.Actuator{}, nil, func() {}, nil
+		return &parts{planner: demo.Planner{}, actuator: demo.Actuator{}, close: func() {}}, nil
 	}
 
 	router, err := file.BuildRouter()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 	registry, err := file.BuildRegistry()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 	guard := policy.NewGuard(policy.NewClassifier(), registry)
 
@@ -124,12 +136,12 @@ func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logge
 		Audit:    agent.NewStoreAudit(st),
 	})
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 
 	servers, err := file.MCPServers()
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, err
 	}
 	for _, spec := range servers {
 		if err := gw.Connect(ctx, spec); err != nil {
@@ -150,14 +162,24 @@ func build(ctx context.Context, file *config.File, st *pg.Store, log *slog.Logge
 		file.BuildApprovalPolicy(), policy.NewClassifier(), agent.NewMemoryUsageTracker())
 
 	// 记忆与任务同库，共用连接池。
-	mem := memory.NewRetriever(st.Memories(), nil)
+	memStore := st.Memories()
+	if err := memory.Seed(ctx, memStore, time.Now().UTC()); err != nil {
+		return nil, fmt.Errorf("写入内置流程失败: %w", err)
+	}
+	mem := memory.NewRetriever(memStore, nil)
 	log.Info("记忆系统就绪")
 
-	return agent.NewPlanner(router, gw, agent.PlannerOptions{}).WithMemory(mem),
-		agent.NewActuator(gw, router).WithMemory(mem),
-		approver,
-		func() { _ = gw.Close() },
-		nil
+	return &parts{
+		planner: agent.NewPlanner(router, gw, agent.PlannerOptions{
+			ReplyStyle:  file.Reply.Style,
+			ReplyCustom: file.Reply.Custom,
+		}).WithMemory(mem),
+		actuator: agent.NewActuator(gw, router).WithMemory(mem),
+		approver: approver,
+		// 任务完成后提炼记忆与流程，经写入管线落库。
+		epilogue: agent.NewEpilogue(router, memory.NewPipeline(memStore, nil)),
+		close:    func() { _ = gw.Close() },
+	}, nil
 }
 
 func newLogger(level string) *slog.Logger {
