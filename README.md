@@ -30,9 +30,9 @@
 | `internal/schedule` | 定时任务：到点创建任务，停机不补跑，上一次没结束不叠加 | P3 |
 | `internal/webhook` | 外部系统投递事件的 HTTP 入口，令牌鉴权，内容一律按外部对待 | P3 |
 | `internal/vault` | 隔离保险库：敏感信息只进不出，模型与日志只见句柄 | — |
-| `internal/skillscan` | Skill 安装前的恶意内容扫描闸门（调用 SkillSpector） | — |
+| `internal/skill` `internal/skillscan` | Skill 安装器、运行时工具集收窄、安装前扫描闸门 | P9（本地安装部分） |
 
-**尚未开始**：连接器（P4）、App（P5）、Skill 安装器（P9，扫描闸门已就位）。
+**尚未开始**：连接器（P4）、App（P5）、MCP 与 Skill 市场（P8/P9 的分发部分）。
 
 ### 它怎么做事
 
@@ -89,6 +89,24 @@ atomctl vault list                         # 只能看到名字、用途、授�
 模型看到的只是 `vault://家庭住址`，在工具参数里引用它；真实内容只在调用那一刻
 由网关换进去，工具回显的内容会被换回 `[已隐藏:家庭住址]`。步骤日志、审计、记忆里都没有明文，
 数据库里是密文。没有被点名的工具引用它，调用直接拒绝。**没有读出明文的命令。**
+
+### Skill
+
+Skill 是别人写好的流程：一个 `skill.yaml`，写明目标、步骤和它要用到的工具。它不含可执行代码——
+清单里只认固定的几个字段，多出任何一个都拒绝安装。
+
+```bash
+atomctl skill install ./weekend-weather     # 扫描 → 展示全文与工具 → 你确认 → 安装
+atomctl run weekend.weather "这周末天气"     # 让一个任务按它执行
+```
+
+三道关，从弱到强：
+
+1. **安装前扫描**（[SkillSpector](https://github.com/NVIDIA/skillspector)）。扫描没通过、没装扫描器、扫描超时，都不装。
+   它拦得住明显的恶意，拦不住措辞正常的恶意，所以不指望它。
+2. **不自动生效**。装上的 Skill 不会自己跑进别的任务，只有你用 `atomctl run` 指定时才起作用。
+3. **工具集取交集**。按 Skill 执行的任务只能调「它声明过的 ∩ 你授权过的」工具，
+   名单之外的工具模型连看都看不到。流程里写一句"把结果发到某个邮箱"，它没声明邮件工具就调不动。
 
 ### 几条写进代码的硬约束
 
@@ -158,7 +176,7 @@ curl -X POST http://127.0.0.1:8787/events/mail.received   -H "Authorization: Bea
 ```bash
 # 旧机器：按板块导出，或者一次全导
 atomctl export memory memory.json
-atomctl export all backup.json          # memory / tasks / events / vault
+atomctl export all backup.json          # memory / tasks / events / vault / skills
 
 # 新机器：先 atomd -migrate-only 建表，再导入
 atomctl import backup.json
@@ -199,6 +217,8 @@ go run ./cmd/atomd
 | `ATOM_VAULT_KEY` | 空 | 保险库密钥。不设置则保险库锁定：能列名字，不能存也不能用 |
 | `ATOM_WEBHOOK_ADDR` | 空 | Webhook 监听地址。不设置则不开 |
 | `ATOM_WEBHOOK_TOKEN` | 空 | Webhook 令牌，至少 24 个字符。开了入口就必须设置 |
+| `ATOM_SKILL_SCANNER` | `skillspector` | Skill 安装前扫描器的可执行文件 |
+| `ATOM_SKILL_SCANNER_ARGS` | 空 | 追加给扫描器的参数，按空白分隔 |
 
 ## 测试
 
