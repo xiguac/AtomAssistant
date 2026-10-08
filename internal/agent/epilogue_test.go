@@ -45,14 +45,14 @@ func TestEpilogue_只有逐字出自用户原话的才直接记住(t *testing.T)
 	}
 
 	model := &fakeModel{replies: []string{`{"memories":[
-	  {"kind":"fact","subject":"user","domain":"居住","value":"常住杭州","temporality":"durable",
+	  {"kind":"fact","subject":"用户","domain":"居住","value":"常住杭州","temporality":"durable",
 	   "quote":"我住在杭州"},
 	  {"kind":"preference","subject":"user","domain":"出行","condition":{"场景":"国内出行"},
 	   "value":"优先高铁，不坐飞机","temporality":"durable","quote":"一般出门都坐高铁，不喜欢坐飞机"},
 	  {"kind":"fact","subject":"user","domain":"工作","value":"在北京上班","temporality":"durable",
 	   "quote":"用户住在北京"},
 	  {"kind":"playbook","subject":"user","domain":"短途出行规划",
-	   "value":"1. 确认出发地 2. 查高铁 3. 查天气 4. 给建议","temporality":"durable","quote":""},
+	   "value":"1. 确认出发地 2. 查高铁 3. 查天气 4. 给建议","temporality":"durable","quote":"我住在杭州"},
 	  {"kind":"episode","subject":"user","value":"不该提炼的类型","temporality":"durable"}
 	]}`}}
 	ep := NewEpilogue(model, memory.NewPipeline(st, nil))
@@ -71,6 +71,10 @@ func TestEpilogue_只有逐字出自用户原话的才直接记住(t *testing.T)
 		t.Fatalf("只有两条有用户原话佐证的应直接生效，实际 %d 条", len(active))
 	}
 	for _, m := range active {
+		// 模型把主体写成"用户"也要归一成 user，否则同一个人的记忆合不到一起。
+		if m.Subject != "user" {
+			t.Fatalf("主体应归一为 user，实际 %q", m.Subject)
+		}
 		if m.Current.Source.Trust != core.TrustUser || m.Current.Source.Kind != memory.SourceUser {
 			t.Fatalf("直接生效的记忆必须是用户来源: %+v", m.Current.Source)
 		}

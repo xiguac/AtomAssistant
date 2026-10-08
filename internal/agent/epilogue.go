@@ -185,7 +185,10 @@ func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string
 		Tags:           em.Tags,
 		Evidence:       []string{"task:" + t.ID},
 	}
-	if cand.Subject == "" {
+	// 主体参与记忆的身份键。"用户""我""本人"说的都是同一个人，
+	// 不归一的话同一件事会按不同主体各存一条，永远合不到一起。
+	switch strings.ToLower(cand.Subject) {
+	case "", "user", "用户", "我", "本人", "自己":
 		cand.Subject = "user"
 	}
 	if len(em.Condition) > 0 {
@@ -206,7 +209,9 @@ func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string
 	}
 
 	cand.Source = memory.Source{Kind: memory.SourceTask, Ref: t.ID, Trust: core.TrustToolOutput}
-	if quoted(em.Quote, userSaid) {
+	// 流程不适用引文核验：引文只能证明用户说过某句话，证明不了整套做法是用户认可的。
+	// 流程会被当成"这类事该怎么办"来执行，所以一律等用户确认后才生效。
+	if cand.Kind != memory.KindPlaybook && quoted(em.Quote, userSaid) {
 		cand.Source = memory.Source{Kind: memory.SourceUser, Ref: t.ID, Trust: core.TrustUser}
 		cand.Evidence = append(cand.Evidence, "用户原话: "+strings.TrimSpace(em.Quote))
 	}

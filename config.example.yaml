@@ -21,11 +21,16 @@ providers:
 #
 # purpose 取值: plan / extract / summarize / vision
 # ---------------------------------------------------------------
+#
+# input_yuan_per_mtok / output_yuan_per_mtok 是每百万 token 的单价（元），照服务商的价目表填。
+# 不填则这条路由不计费，任务的金额预算对它不起作用（token 预算仍然生效）。
 routes:
   - purpose: plan
     provider: deepseek
     model: deepseek-chat
     max_tokens: 4000
+    # input_yuan_per_mtok: 2
+    # output_yuan_per_mtok: 8
   - purpose: extract
     provider: deepseek
     model: deepseek-chat
@@ -35,6 +40,15 @@ fallback:
   provider: deepseek
   model: deepseek-chat
   max_tokens: 2000
+
+# ---------------------------------------------------------------
+# 回复风格。默认简洁——多数时候要的是结论，不是一篇文章。
+#   style   concise（简洁）/ balanced（适中）/ detailed（详细）
+#   custom  你自己的额外要求，原样交给助手
+# ---------------------------------------------------------------
+reply:
+  style: concise
+  # custom: 结论放第一句，不要用表情
 
 # ---------------------------------------------------------------
 # 已批准的 MCP server。transport 取值: command / http

@@ -15,6 +15,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/vault"
 )
 
 // ToolCatalog 提供可用工具列表。
@@ -63,6 +64,8 @@ const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责
 - 可给可不给的信息先权衡：给了能明显改善结果才给，并且只给到够用的粒度
   （查天气给城市就够了，不要给详细住址）。
 - 拿不准该不该给，就不给，或者先问用户。
+- 读取也一样克制：只调用与任务直接相关的工具。不要为了找线索去翻用户的邮件、
+  消息、相册这类私人数据——缺信息就问用户。
 
 规则：
 - 只能使用下面列出的工具，名字必须完全一致。
@@ -123,11 +126,17 @@ func (o *PlannerOptions) applyDefaults() {
 	}
 }
 
+// VaultLister 列出保险库条目的公开信息，由 *vault.Vault 提供。
+type VaultLister interface {
+	List(ctx context.Context) ([]vault.Meta, error)
+}
+
 // Planner 用大模型决定任务的下一步。
 type Planner struct {
 	model   Completer
 	catalog ToolCatalog
 	memory  MemoryProvider
+	vault   VaultLister
 	opts    PlannerOptions
 	now     func() time.Time
 }
@@ -150,6 +159,48 @@ func NewPlanner(model Completer, catalog ToolCatalog, opts PlannerOptions) *Plan
 func (p *Planner) WithMemory(m MemoryProvider) *Planner {
 	p.memory = m
 	return p
+}
+
+// WithVault 接入保险库。接入后模型能看到条目的名字与用途，并用句柄引用它们；
+// 它看不到、也没有任何办法看到条目的值。
+func (p *Planner) WithVault(v VaultLister) *Planner {
+	p.vault = v
+	return p
+}
+
+// vaultSegment 把保险库条目的名字列给模型。
+func (p *Planner) vaultSegment(ctx context.Context) (llm.Segment, bool, error) {
+	if p.vault == nil {
+		return llm.Segment{}, false, nil
+	}
+	metas, err := p.vault.List(ctx)
+	if err != nil {
+		return llm.Segment{}, false, fmt.Errorf("agent: 读取保险库目录失败: %w", err)
+	}
+	if len(metas) == 0 {
+		return llm.Segment{}, false, nil
+	}
+	var sb strings.Builder
+	sb.WriteString("保险库里存着下面这些敏感信息。你只能看到名字，看不到内容，也不要向用户索要内容。\n" +
+		"工具参数需要其中某一项时，把那个参数的值**整个**写成对应的句柄，系统会在调用的瞬间替换成真实内容；\n" +
+		"句柄只能用于它后面列出的工具，用在别的工具上调用会被拒绝。不要把句柄写进长文本里，那样不会被替换。\n")
+	for _, m := range metas {
+		fmt.Fprintf(&sb, "- %s%s", vault.HandlePrefix, m.Label)
+		if m.Note != "" {
+			fmt.Fprintf(&sb, "（%s）", m.Note)
+		}
+		if len(m.AllowedTools) == 0 {
+			sb.WriteString(" 可用工具：无")
+		} else {
+			fmt.Fprintf(&sb, " 可用工具：%s", strings.Join(m.AllowedTools, "、"))
+		}
+		sb.WriteString("\n")
+	}
+	// 这份目录是系统自己生成的：名字与用途由用户亲手填写，其中没有任何外部内容。
+	return llm.Segment{
+		Role: llm.RoleUser, Content: sb.String(),
+		Trust: core.TrustSystem, Source: "保险库目录", Pinned: true,
+	}, true, nil
 }
 
 // lookup 在内置工具与 MCP 目录里查找。
@@ -303,6 +354,12 @@ func (p *Planner) validate(t *core.Task, md modelDecision) (kernel.Decision, err
 // contextSegments 装配完整上下文：任务目标 + 分环记忆 + 压缩历史 + 最近步骤。
 func (p *Planner) contextSegments(ctx context.Context, t *core.Task, history []*core.Step) ([]llm.Segment, error) {
 	segs := p.segments(t, history)
+	if seg, ok, err := p.vaultSegment(ctx); err != nil {
+		return nil, err
+	} else if ok {
+		// 紧跟在任务定义之后。
+		segs = append(segs[:1], append([]llm.Segment{seg}, segs[1:]...)...)
+	}
 	if p.memory == nil {
 		return segs, nil
 	}
