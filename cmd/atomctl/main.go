@@ -44,13 +44,19 @@ const usage = `用法:
   atomctl memory confirm <ID>    确认一条，让它生效
   atomctl memory dismiss <ID>    否决一条
 
+  atomctl skill install <路径> [--yes]
+                                 安装一个 Skill。先扫描，再展示全文和它要用的工具，确认后才装
+  atomctl skill list | show <ID> | rm <ID>
+  atomctl run <SkillID> <标题> [目标]
+                                 创建一个按该 Skill 执行的任务，可用工具只限它声明过的
+
   atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
   atomctl vault put <名字> <用途说明> [工具,工具...]
                                  存入一条敏感信息。值从标准输入读取，不出现在命令行里
   atomctl vault list             列出条目的名字、用途与授权的工具（看不到值）
   atomctl vault rm <名字>        删除一条
 
-  atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / vault / all
+  atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / vault / skills / all
   atomctl import <文件>          导入。已存在的数据不会被覆盖
 
 环境变量: ATOM_DSN（必填）
@@ -132,13 +138,24 @@ func run(args []string) error {
 		return list(ctx, st, len(args) > 1 && args[1] == "all")
 	case "schedule":
 		return scheduleCmd(ctx, st, args[1:])
+	case "skill":
+		return skillCmd(ctx, st, cfg, args[1:])
+	case "run":
+		if len(args) < 3 {
+			return fmt.Errorf("run 需要 Skill ID 和任务标题")
+		}
+		goal := ""
+		if len(args) > 3 {
+			goal = args[3]
+		}
+		return runSkill(ctx, st, args[1], args[2], goal)
 	case "memory":
 		return memoryCmd(ctx, st, args[1:])
 	case "vault":
 		return vaultCmd(ctx, st, cfg.VaultKey, args[1:])
 	case "export":
 		if len(args) < 3 {
-			return fmt.Errorf("export 需要板块（memory / tasks / events / vault / all）和文件路径")
+			return fmt.Errorf("export 需要板块（memory / tasks / events / vault / skills / all）和文件路径")
 		}
 		return exportCmd(ctx, st, args[1], args[2])
 	case "import":

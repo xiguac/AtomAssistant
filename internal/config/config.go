@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,12 @@ type Config struct {
 	// WebhookToken 是调用方必须携带的令牌，开了入口就必须设置。
 	WebhookAddr  string
 	WebhookToken string
+
+	// SkillScanner 是 Skill 安装前扫描器的可执行文件，空值按 skillspector。
+	// SkillScannerArgs 是追加给它的参数，按空白分隔。
+	// 这两项只能由用户在环境里配置：助手没有任何途径改它们，也就关不掉扫描。
+	SkillScanner     string
+	SkillScannerArgs []string
 }
 
 // Load 从环境变量读取配置。
@@ -54,6 +61,9 @@ func Load() (*Config, error) {
 
 		WebhookAddr:  os.Getenv("ATOM_WEBHOOK_ADDR"),
 		WebhookToken: os.Getenv("ATOM_WEBHOOK_TOKEN"),
+
+		SkillScanner:     os.Getenv("ATOM_SKILL_SCANNER"),
+		SkillScannerArgs: strings.Fields(os.Getenv("ATOM_SKILL_SCANNER_ARGS")),
 	}
 	if c.DSN == "" {
 		return nil, fmt.Errorf("config: 必须设置 ATOM_DSN")

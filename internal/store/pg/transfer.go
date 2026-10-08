@@ -26,6 +26,8 @@ const (
 	SectionEvents Section = "events"
 	// SectionVault 保险库。导出的是密文，密钥不在其中——迁移时要把 ATOM_VAULT_KEY 一起带过去。
 	SectionVault Section = "vault"
+	// SectionSkills 已安装的 Skill，连同安装时的清单原文与扫描报告。
+	SectionSkills Section = "skills"
 )
 
 // sectionTables 列出每个板块的表，顺序即导入顺序：被引用的表在前。
@@ -35,10 +37,11 @@ var sectionTables = map[Section][]string{
 	SectionTasks:  {"tasks", "task_steps", "audit_log", "schedules"},
 	SectionEvents: {"events", "event_subscriptions"},
 	SectionVault:  {"vault_items"},
+	SectionSkills: {"skills"},
 }
 
 // sectionOrder 是导入全部板块时的顺序：事件引用任务，必须排在任务之后。
-var sectionOrder = []Section{SectionMemory, SectionTasks, SectionEvents, SectionVault}
+var sectionOrder = []Section{SectionMemory, SectionTasks, SectionEvents, SectionVault, SectionSkills}
 
 // Sections 返回全部板块，按导入顺序。
 func Sections() []Section { return append([]Section(nil), sectionOrder...) }
@@ -46,7 +49,7 @@ func Sections() []Section { return append([]Section(nil), sectionOrder...) }
 // ParseSection 校验板块名。
 func ParseSection(name string) (Section, error) {
 	if _, ok := sectionTables[Section(name)]; !ok {
-		return "", fmt.Errorf("pg: 未知的板块 %q（可选 memory / tasks / events / vault）", name)
+		return "", fmt.Errorf("pg: 未知的板块 %q（可选 memory / tasks / events / vault / skills）", name)
 	}
 	return Section(name), nil
 }

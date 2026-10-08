@@ -232,7 +232,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		planner: agent.NewPlanner(router, gw, agent.PlannerOptions{
 			ReplyStyle:  file.Reply.Style,
 			ReplyCustom: file.Reply.Custom,
-		}).WithMemory(mem).WithVault(safe),
+		}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()),
 		actuator: agent.NewActuator(gw, router).WithMemory(mem),
 		approver: approver,
 		// 任务完成后提炼记忆与流程，经写入管线落库。
