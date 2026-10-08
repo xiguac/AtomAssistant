@@ -64,6 +64,19 @@ func TestNewTask_默认落在最保守的一侧(t *testing.T) {
 	}
 }
 
+func TestChannelOrigin_只有用户亲手配置的渠道可信(t *testing.T) {
+	if got := ChannelByUser.MessageTrust(); got != TrustUser || !got.CanInstruct() {
+		t.Fatalf("用户配置的渠道应为 user 且可作为指令，实际 %s", got)
+	}
+	// 助手代配的渠道、来历不明的渠道，一律不可信。
+	for _, o := range []ChannelOrigin{ChannelByAssistant, "", "admin"} {
+		got := o.MessageTrust()
+		if got != TrustExternal || got.CanInstruct() || got.CanTriggerIrreversible() {
+			t.Fatalf("来历 %q 的渠道应为 external 且不可作为指令，实际 %s", o, got)
+		}
+	}
+}
+
 func TestEffectiveTrust_自由文本一律降级(t *testing.T) {
 	// 日历事件的开始时间是权威的。
 	if got := EffectiveTrust(TrustConnector, false); got != TrustConnector {

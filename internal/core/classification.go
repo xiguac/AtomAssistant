@@ -58,7 +58,7 @@ const (
 	TrustFriend
 	// TrustConnector 用户授权的连接器同步来的结构化数据（日历条目、订单记录）。
 	TrustConnector
-	// TrustUser 用户在 App 里的直接输入。
+	// TrustUser 用户本人的直接输入：App，或用户亲手配置的消息渠道。见 ChannelOrigin。
 	TrustUser
 	// TrustSystem 我们自己的系统提示。
 	TrustSystem
@@ -91,6 +91,30 @@ func (t TrustLevel) String() string {
 		return "system"
 	}
 	return fmt.Sprintf("unknown(%d)", int(t))
+}
+
+// ChannelOrigin 是一个消息渠道的来历：是谁把它配置成可以和助手对话的。
+//
+// 它决定从这个渠道来的消息算不算用户本人的话。见 docs/安全模型.md §3.1.1。
+type ChannelOrigin string
+
+const (
+	// ChannelByUser 用户本人在后台手动配置的渠道。
+	ChannelByUser ChannelOrigin = "user"
+	// ChannelByAssistant 助手代用户配置的渠道，哪怕是应用户在可信渠道里的要求。
+	ChannelByAssistant ChannelOrigin = "assistant"
+)
+
+// MessageTrust 返回从这个渠道收到的消息的信任等级。
+//
+// 只有用户亲手配置的渠道才是 TrustUser——其消息无条件信任并执行。
+// 助手配置的渠道一律 TrustExternal：否则注入内容只要诱使助手开通一个
+// 攻击者控制的渠道，就等于拿到了用户的全部权限。来历不明的同样按不可信处理。
+func (o ChannelOrigin) MessageTrust() TrustLevel {
+	if o == ChannelByUser {
+		return TrustUser
+	}
+	return TrustExternal
 }
 
 // PrivacyLevel 是字段级隐私分级，用于数据出口管控。见 docs/安全模型.md §4.1。
