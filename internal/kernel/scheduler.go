@@ -57,6 +57,18 @@ type Scheduler struct {
 	engine *Engine
 	cfg    SchedulerConfig
 	log    *slog.Logger
+	cron   Cron
+}
+
+// Cron 检查并触发到点的定时任务，返回新建的任务数。由 schedule.Runner 实现。
+type Cron interface {
+	Tick(ctx context.Context, now time.Time) (int, error)
+}
+
+// WithCron 接入定时任务。每个轮询周期检查一次。
+func (s *Scheduler) WithCron(c Cron) *Scheduler {
+	s.cron = c
+	return s
 }
 
 // NewScheduler 构造调度器。
@@ -273,6 +285,16 @@ func (s *Scheduler) janitor(ctx context.Context) {
 		}
 
 		s.wakeDue(ctx, now)
+
+		if s.cron != nil {
+			if n, err := s.cron.Tick(ctx, now); err != nil {
+				if ctx.Err() == nil {
+					s.log.Error("触发定时任务失败", "err", err)
+				}
+			} else if n > 0 {
+				s.log.Info("定时任务触发", "新建任务数", n)
+			}
+		}
 	}
 }
 

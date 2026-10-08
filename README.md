@@ -12,7 +12,7 @@
 | [MCP 市场与 Skill](docs/MCP市场与Skill.md) | 工具分发、Skill 自装机制 |
 | [截图理解与连接器](docs/截图理解与连接器.md) | 数据可达性、截图入口、审批阈值策略 |
 
-## 当前进度：P0 内核 + P1 模型与工具 + P2 记忆系统 + P3 事件（部分）
+## 当前进度：P0 内核 + P1 模型与工具 + P2 记忆系统 + P3 事件驱动
 
 | 模块 | 内容 | 阶段 |
 |---|---|---|
@@ -27,10 +27,11 @@
 | `internal/config` | 环境变量 + YAML 配置，非法值直接报错不静默回退 | P0/P1 |
 | `cmd/atomd` `cmd/atomctl` | 常驻服务与运维 CLI | P0 |
 | `internal/event` | 事件总线：订阅表达式、命中即唤醒、任务收件箱 | P3 |
+| `internal/schedule` | 定时任务：到点创建任务，停机不补跑，上一次没结束不叠加 | P3 |
+| `internal/webhook` | 外部系统投递事件的 HTTP 入口，令牌鉴权，内容一律按外部对待 | P3 |
 | `internal/vault` | 隔离保险库：敏感信息只进不出，模型与日志只见句柄 | — |
 | `internal/skillscan` | Skill 安装前的恶意内容扫描闸门（调用 SkillSpector） | — |
 
-**P3 尚缺**：事件来源目前只有 `atomctl reply / emit`，定时器与 Webhook 入口还没做。
 **尚未开始**：连接器（P4）、App（P5）、Skill 安装器（P9，扫描闸门已就位）。
 
 ### 它怎么做事
@@ -127,11 +128,30 @@ go run ./cmd/atomctl reply <任务ID> "护照照片拍好了，passport.jpg"
 # 发布一个事件，唤醒订阅命中的等待任务
 go run ./cmd/atomctl emit mail.received '{"from":"客户张总"}'
 
+# 定时任务：每天早上 8 点跑一次
+go run ./cmd/atomctl schedule add 24h 08:00 "早报" "看一眼今天的天气和日程，有要注意的告诉我"
+go run ./cmd/atomctl list                 # 进行中的任务；list all 连已结束的一起看
+
 # 记忆：查看、确认或否决助手提炼出来的东西
 go run ./cmd/atomctl memory list
 go run ./cmd/atomctl memory pending
 go run ./cmd/atomctl memory confirm <ID>
 ```
+
+### Webhook
+
+让外部系统（邮件网关、智能家居、自己写的脚本）往事件总线里投递事件，唤醒在等它的任务：
+
+```bash
+export ATOM_WEBHOOK_ADDR=127.0.0.1:8787
+export ATOM_WEBHOOK_TOKEN=<至少 24 个字符的随机串>
+
+curl -X POST http://127.0.0.1:8787/events/mail.received   -H "Authorization: Bearer $ATOM_WEBHOOK_TOKEN"   --data-binary '{"from":"客户张总","body":"..."}'
+```
+
+从这里进来的内容一律是 external 等级，调用方无法自报更高的等级：它能把任务叫醒，
+但内容只是材料不是指令，由它驱动的写操作必须你确认。没有令牌就不开门，没有免鉴权模式。
+默认建议只监听回环地址，需要对外时放在反向代理和 TLS 后面。
 
 ### 迁移服务器
 
@@ -177,6 +197,8 @@ go run ./cmd/atomd
 | `ATOM_LOG_LEVEL` | `info` | debug / info / warn / error |
 | `ATOM_CONFIG` | 空 | YAML 配置路径。不设置则跑 demo 模式 |
 | `ATOM_VAULT_KEY` | 空 | 保险库密钥。不设置则保险库锁定：能列名字，不能存也不能用 |
+| `ATOM_WEBHOOK_ADDR` | 空 | Webhook 监听地址。不设置则不开 |
+| `ATOM_WEBHOOK_TOKEN` | 空 | Webhook 令牌，至少 24 个字符。开了入口就必须设置 |
 
 ## 测试
 

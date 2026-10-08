@@ -125,7 +125,7 @@ func (s *Store) ResetForTest(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `
 		DROP TABLE IF EXISTS audit_log, task_steps, tasks,
 			memory_pending, memory_revisions, memories,
-			event_subscriptions, events, vault_items, schema_migrations CASCADE`)
+			event_subscriptions, events, vault_items, schedules, schema_migrations CASCADE`)
 	if err != nil {
 		return fmt.Errorf("pg: 重置数据库失败: %w", err)
 	}
@@ -142,6 +142,37 @@ const taskColumns = `
 	created_at, updated_at, usage_cost_micros`
 
 func (s *Store) CreateTask(ctx context.Context, t *core.Task) error {
+	return insertTask(ctx, s.pool, t)
+}
+
+// ListTasks 按创建时间倒序列出任务。activeOnly 为真时不含已结束的。
+//
+// 它不在 store.TaskStore 契约里：内核按 ID 和状态工作，从不需要"列出全部"，
+// 这只是给运维 CLI 用的视图。
+func (s *Store) ListTasks(ctx context.Context, activeOnly bool, limit int) ([]*core.Task, error) {
+	sql := `SELECT ` + taskColumns + ` FROM tasks`
+	if activeOnly {
+		sql += ` WHERE state NOT IN ('done', 'failed', 'cancelled')`
+	}
+	sql += ` ORDER BY created_at DESC LIMIT $1`
+	rows, err := s.pool.Query(ctx, sql, limit)
+	if err != nil {
+		return nil, fmt.Errorf("pg: 列出任务失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*core.Task, 0)
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, fmt.Errorf("pg: 解析任务失败: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func insertTask(ctx context.Context, db execer, t *core.Task) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
@@ -149,7 +180,7 @@ func (s *Store) CreateTask(ctx context.Context, t *core.Task) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `
+	_, err = db.Exec(ctx, `
 		INSERT INTO tasks (`+taskColumns+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
 		t.ID, nullString(t.ParentID), t.Title, t.Goal, string(t.State), t.Reason,

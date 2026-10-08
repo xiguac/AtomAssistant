@@ -6,9 +6,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,14 +19,17 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/agent"
 	"github.com/xiguac/atomhelper/internal/config"
+	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/demo"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomhelper/internal/webhook"
 )
 
 func main() {
@@ -95,14 +101,56 @@ func run(migrateOnly, checkOnly bool) error {
 		PollInterval:     cfg.PollInterval,
 		LeaseDuration:    cfg.LeaseDuration,
 		MaxStepsPerClaim: cfg.MaxStepsPerClaim,
-	}, log)
+	}, log).WithCron(schedule.NewRunner(st.Schedules(), st, core.DefaultBudget()))
 
 	// 收到信号后取消 ctx，调度器会把在跑的任务放回队列再退出，
 	// 下次启动能立刻接着跑，不必等租约过期。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if cfg.WebhookAddr != "" {
+		stopWebhook, err := serveWebhook(ctx, cfg, bus, log)
+		if err != nil {
+			return err
+		}
+		defer stopWebhook()
+	}
+
 	return sched.Run(ctx)
+}
+
+// serveWebhook 启动 Webhook 入口，返回一个用于关停它的函数。
+//
+// 先同步监听再异步服务：端口被占、地址写错这类问题要在启动时就报出来，
+// 而不是进程看起来起来了、入口其实没开。
+func serveWebhook(ctx context.Context, cfg *config.Config, bus *event.Bus, log *slog.Logger) (func(), error) {
+	handler, err := webhook.Handler(bus, cfg.WebhookToken, log)
+	if err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("tcp", cfg.WebhookAddr)
+	if err != nil {
+		return nil, fmt.Errorf("Webhook 监听 %s 失败: %w", cfg.WebhookAddr, err)
+	}
+	srv := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+	}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("Webhook 入口异常退出", "err", err)
+		}
+	}()
+	log.Info("Webhook 入口已开启", "地址", ln.Addr().String())
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Error("关闭 Webhook 入口失败", "err", err)
+		}
+	}, nil
 }
 
 // parts 是按配置装出来的可插拔部件。approver 与 epilogue 可以为 nil。

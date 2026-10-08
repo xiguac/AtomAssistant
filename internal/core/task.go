@@ -107,6 +107,13 @@ type Usage struct {
 	WallClock time.Duration `json:"wall_clock"`
 }
 
+// DefaultBudget 是没有特别指定时一个任务的预算。
+//
+// 墙钟只算执行时间，所以 24 小时是"真正在跑"的上限，等待多久都不占它。
+func DefaultBudget() Budget {
+	return Budget{MaxTokens: 200_000, MaxCostCents: 500, MaxWallClock: 24 * time.Hour}
+}
+
 // Exceeded 报告用量是否已经超出预算，以及超的是哪一项。
 // 任一项为 0 表示该项不限。
 func (b Budget) Exceeded(u Usage) (bool, string) {

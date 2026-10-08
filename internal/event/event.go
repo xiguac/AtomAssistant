@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xiguac/atomhelper/internal/core"
 )
@@ -67,6 +68,11 @@ func (e *Event) Validate() error {
 	}
 	if len(e.Payload) > 0 && !json.Valid(e.Payload) {
 		return fmt.Errorf("%w: Payload 不是合法 JSON", ErrInvalidEvent)
+	}
+	// json.Valid 会放过编码不对的字节，数据库不会。在这里拦下，
+	// 调用方得到的是一句说得清的拒绝，而不是写库时一个莫名其妙的失败。
+	if !utf8.Valid(e.Payload) {
+		return fmt.Errorf("%w: Payload 不是 UTF-8 编码", ErrInvalidEvent)
 	}
 	return nil
 }

@@ -33,6 +33,11 @@ type Config struct {
 	// VaultKey 是保险库密钥（base64 编码的 32 字节）。只从环境变量来，
 	// 不进配置文件也不进数据库。为空时保险库处于锁定状态。
 	VaultKey string
+
+	// WebhookAddr 是 Webhook 入口的监听地址，如 127.0.0.1:8787。为空则不开。
+	// WebhookToken 是调用方必须携带的令牌，开了入口就必须设置。
+	WebhookAddr  string
+	WebhookToken string
 }
 
 // Load 从环境变量读取配置。
@@ -46,9 +51,16 @@ func Load() (*Config, error) {
 		LogLevel:   envString("ATOM_LOG_LEVEL", "info"),
 		ConfigPath: os.Getenv("ATOM_CONFIG"),
 		VaultKey:   os.Getenv("ATOM_VAULT_KEY"),
+
+		WebhookAddr:  os.Getenv("ATOM_WEBHOOK_ADDR"),
+		WebhookToken: os.Getenv("ATOM_WEBHOOK_TOKEN"),
 	}
 	if c.DSN == "" {
 		return nil, fmt.Errorf("config: 必须设置 ATOM_DSN")
+	}
+	// 开了入口却没有令牌，等于把事件总线敞给所有能连上这个端口的人。
+	if c.WebhookAddr != "" && c.WebhookToken == "" {
+		return nil, fmt.Errorf("config: 设置了 ATOM_WEBHOOK_ADDR 就必须设置 ATOM_WEBHOOK_TOKEN")
 	}
 
 	var err error

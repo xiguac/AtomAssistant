@@ -23,6 +23,7 @@ import (
 
 const usage = `用法:
   atomctl create <标题> [目标]   创建一个任务并入队
+  atomctl list [all]             列出进行中的任务；加 all 连已结束的一起列
   atomctl show <任务ID>          查看任务详情
   atomctl steps <任务ID>         查看步骤日志
   atomctl approve <任务ID>       批准任务当前等待确认的动作
@@ -32,6 +33,11 @@ const usage = `用法:
                                  done 表示已生效，failed 表示未生效
   atomctl reply <任务ID> <内容>  回答任务的提问，或随时给它补充材料
   atomctl emit <主题> [JSON]     发布一个事件，唤醒订阅命中的等待任务
+
+  atomctl schedule add <间隔> <首次时间> <标题> [目标]
+                                 新建定时任务。间隔如 24h、30m；首次时间可写 now、08:00 或完整时间
+  atomctl schedule list          列出定时任务
+  atomctl schedule rm <ID>       删除定时任务
 
   atomctl memory list            查看全部记忆
   atomctl memory pending         查看助手提炼出来、等你确认的记忆与流程
@@ -122,6 +128,10 @@ func run(args []string) error {
 			return fmt.Errorf("reply 需要任务 ID 和回复内容")
 		}
 		return reply(ctx, st, args[1], args[2])
+	case "list":
+		return list(ctx, st, len(args) > 1 && args[1] == "all")
+	case "schedule":
+		return scheduleCmd(ctx, st, args[1:])
 	case "memory":
 		return memoryCmd(ctx, st, args[1:])
 	case "vault":
@@ -154,7 +164,7 @@ func create(ctx context.Context, st *pg.Store, title, goal string) error {
 	// 从 CLI 创建视为用户直接输入，信任等级为 user。
 	// 后续从截图/邮件创建的任务必须用 core.TrustExternal。
 	t := core.NewTask(title, goal, core.TrustUser)
-	t.Budget = core.Budget{MaxTokens: 200_000, MaxCostCents: 500, MaxWallClock: 24 * time.Hour}
+	t.Budget = core.DefaultBudget()
 
 	if err := st.CreateTask(ctx, t); err != nil {
 		return err
