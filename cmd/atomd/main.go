@@ -228,12 +228,22 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	mem := memory.NewRetriever(memStore, nil)
 	log.Info("记忆系统就绪")
 
+	planner := agent.NewPlanner(router, gw, agent.PlannerOptions{
+		ReplyStyle:  file.Reply.Style,
+		ReplyCustom: file.Reply.Custom,
+	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills())
+	actuator := agent.NewActuator(gw, router).WithMemory(mem)
+
+	// 付款能力默认关闭。开了之后每一笔仍然要过审批，并且要用户本人在支付宝里授权。
+	if file.Payment.Alipay.Enabled {
+		planner = planner.WithPay(true)
+		actuator = actuator.WithPayer(file.Alipay())
+		log.Info("已启用支付宝付款能力")
+	}
+
 	return &parts{
-		planner: agent.NewPlanner(router, gw, agent.PlannerOptions{
-			ReplyStyle:  file.Reply.Style,
-			ReplyCustom: file.Reply.Custom,
-		}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()),
-		actuator: agent.NewActuator(gw, router).WithMemory(mem),
+		planner:  planner,
+		actuator: actuator,
 		approver: approver,
 		// 任务完成后提炼记忆与流程，经写入管线落库。
 		epilogue: agent.NewEpilogue(router, memory.NewPipeline(memStore, nil)),

@@ -11,6 +11,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomhelper/internal/pay"
 	"github.com/xiguac/atomhelper/internal/policy"
 )
 
@@ -26,6 +27,7 @@ type File struct {
 	Tools     []ToolConfig     `yaml:"tools"`
 	Approval  ApprovalConfig   `yaml:"approval"`
 	Reply     ReplyConfig      `yaml:"reply"`
+	Payment   PaymentConfig    `yaml:"payment"`
 }
 
 // ProviderConfig 是一家模型服务。
@@ -103,6 +105,29 @@ type CapsConfig struct {
 	DailyAutoAmountYuan float64 `yaml:"daily_auto_amount_yuan"`
 	DailyAutoCount      int     `yaml:"daily_auto_count"`
 	PerTaskAmountYuan   float64 `yaml:"per_task_amount_yuan"`
+}
+
+// PaymentConfig 是付款能力的配置。不写这一节，助手就没有任何付款工具。
+type PaymentConfig struct {
+	Alipay AlipayConfig `yaml:"alipay"`
+}
+
+// AlipayConfig 是支付宝 Agent 支付的配置。
+type AlipayConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Command 是官方 alipay-bot 的可执行文件，不填按 alipay-bot（需在 PATH 里）。
+	Command string `yaml:"command"`
+	// AgentName 是开通钱包时向支付宝报告的智能体名称，不填按"原子助手"。
+	AgentName string `yaml:"agent_name"`
+}
+
+// Alipay 按配置构造支付宝付款客户端。
+func (f *File) Alipay() pay.Alipay {
+	name := f.Payment.Alipay.AgentName
+	if name == "" {
+		name = "原子助手"
+	}
+	return pay.Alipay{Command: f.Payment.Alipay.Command, AgentName: name}
 }
 
 // LoadFile 读取并校验 YAML 配置。路径为空时返回 nil，表示未配置。

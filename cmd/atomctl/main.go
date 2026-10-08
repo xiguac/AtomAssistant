@@ -50,6 +50,13 @@ const usage = `用法:
   atomctl run <SkillID> <标题> [目标]
                                  创建一个按该 Skill 执行的任务，可用工具只限它声明过的
 
+  atomctl pay wallet status      查看支付宝 AI 钱包是否已开通
+  atomctl pay wallet open [开通口令]
+                                 申请开通，按返回的入口在支付宝里完成授权
+  atomctl pay wallet bind <验证码>
+                                 提交开通过程中支付宝给你的验证码
+  atomctl pay wallet close       关闭授权
+
   atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
   atomctl vault put <名字> <用途说明> [工具,工具...]
                                  存入一条敏感信息。值从标准输入读取，不出现在命令行里
@@ -138,6 +145,8 @@ func run(args []string) error {
 		return list(ctx, st, len(args) > 1 && args[1] == "all")
 	case "schedule":
 		return scheduleCmd(ctx, st, args[1:])
+	case "pay":
+		return payCmd(ctx, cfg, args[1:])
 	case "skill":
 		return skillCmd(ctx, st, cfg, args[1:])
 	case "run":

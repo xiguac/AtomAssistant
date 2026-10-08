@@ -47,7 +47,7 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 	now := a.now()
 
 	// 参数分级失败时按最保守处理：分不清就不能放行。
-	_, maxPrivacy, err := a.classifier.ClassifyJSON(d.Input)
+	_, maxPrivacy, err := a.classifier.ClassifyJSON(classifiable(d))
 	if err != nil {
 		return kernel.ApprovalManual, "参数无法完成隐私分级，转人工确认", nil
 	}

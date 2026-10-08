@@ -152,6 +152,8 @@ type Planner struct {
 	memory  MemoryProvider
 	vault   VaultLister
 	skills  SkillProvider
+	// pay 为真表示接入了付款能力，付款工具对模型可见。
+	pay bool
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -216,6 +218,27 @@ func (p *Planner) permits(tool string) bool {
 	return p.scope == nil || p.scope.Allows(tool)
 }
 
+// WithPay 向模型开放付款工具。实际执行由 Actuator 上的 Payer 完成。
+func (p *Planner) WithPay(enabled bool) *Planner {
+	p.pay = enabled
+	return p
+}
+
+// builtins 返回当前这次决策可用的内置工具。
+//
+// 清单和记忆展开只读写任务自己的东西，任何任务都能用。付款不一样：
+// 任务绑定了 Skill 时，只有 Skill 明确声明了付款工具才给——
+// 否则一个别人写的流程，装上之后就凭空有了花钱的能力。
+func (p *Planner) builtins() []mcpgw.ToolInfo {
+	tools := builtinTools(p.memory != nil)
+	for _, t := range payTools(p.pay) {
+		if p.permits(t.Name) {
+			tools = append(tools, t)
+		}
+	}
+	return tools
+}
+
 // WithVault 接入保险库。接入后模型能看到条目的名字与用途，并用句柄引用它们；
 // 它看不到、也没有任何办法看到条目的值。
 func (p *Planner) WithVault(v VaultLister) *Planner {
@@ -260,7 +283,7 @@ func (p *Planner) vaultSegment(ctx context.Context) (llm.Segment, bool, error) {
 
 // lookup 在内置工具与 MCP 目录里查找。
 func (p *Planner) lookup(name string) (mcpgw.ToolInfo, error) {
-	for _, t := range builtinTools(p.memory != nil) {
+	for _, t := range p.builtins() {
 		if t.Name == name {
 			return t, nil
 		}
@@ -586,7 +609,7 @@ func (p *Planner) toolList() string {
 			tools = append(tools, t)
 		}
 	}
-	tools = append(tools, builtinTools(p.memory != nil)...)
+	tools = append(tools, p.builtins()...)
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
 	if len(tools) == 0 {
 		return "（当前没有可用工具，只能输出 finish 或 fail）"

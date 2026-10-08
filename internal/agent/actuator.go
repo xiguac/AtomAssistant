@@ -38,6 +38,13 @@ type Actuator struct {
 	tools  ToolCaller
 	model  Completer
 	memory MemoryProvider
+	payer  Payer
+}
+
+// WithPayer 接入付款能力。
+func (a *Actuator) WithPayer(p Payer) *Actuator {
+	a.payer = p
+	return a
 }
 
 var _ kernel.Actuator = (*Actuator)(nil)
@@ -109,6 +116,14 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		}
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if isPayTool(s.ToolName) {
+		out, err := a.runPay(ctx, t, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 付款程序的输出是自由文本，里面可能原样带着商户写的内容，按外部内容对待。
+		return kernel.Result{Output: out, Trust: core.TrustExternal}, nil
 	}
 	if s.ToolName == ToolExpandMemory {
 		out, err := a.runExpandMemory(ctx, s.Input)
