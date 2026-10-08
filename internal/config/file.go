@@ -1,0 +1,303 @@
+package config
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomhelper/internal/policy"
+)
+
+// File 是 atomd 的 YAML 配置。
+//
+// 用 YAML 而不是环境变量，是因为这部分配置是结构化的、需要用户手工编辑的；
+// 连接串、密码这类单值仍然走环境变量。
+type File struct {
+	Providers []ProviderConfig `yaml:"providers"`
+	Routes    []RouteConfig    `yaml:"routes"`
+	Fallback  *RouteConfig     `yaml:"fallback"`
+	MCP       []MCPConfig      `yaml:"mcp_servers"`
+	Tools     []ToolConfig     `yaml:"tools"`
+	Approval  ApprovalConfig   `yaml:"approval"`
+}
+
+// ProviderConfig 是一家模型服务。
+type ProviderConfig struct {
+	Name    string `yaml:"name"`
+	BaseURL string `yaml:"base_url"`
+	// APIKeyEnv 是存放密钥的环境变量名。
+	//
+	// 刻意不允许在配置文件里直接写密钥：配置文件常被复制、备份、
+	// 贴进聊天窗口求助，密钥不该跟着一起走。
+	APIKeyEnv string        `yaml:"api_key_env"`
+	Timeout   time.Duration `yaml:"timeout"`
+}
+
+// RouteConfig 把一个用途绑定到具体模型。
+type RouteConfig struct {
+	Purpose   string `yaml:"purpose"`
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	MaxTokens int    `yaml:"max_tokens"`
+}
+
+// MCPConfig 是一个已批准的 MCP server。
+type MCPConfig struct {
+	Name      string   `yaml:"name"`
+	Transport string   `yaml:"transport"`
+	Command   string   `yaml:"command"`
+	Args      []string `yaml:"args"`
+	// Env 形如 KEY=VALUE。只有这里列出的变量会传给子进程。
+	Env []string `yaml:"env"`
+	URL string   `yaml:"url"`
+}
+
+// ToolConfig 是一个工具的授权边界，对应用户在 App 上的批准结果。
+type ToolConfig struct {
+	Name string `yaml:"name"`
+	// MaxPrivacy: public / normal / sensitive。secret 不被接受。
+	MaxPrivacy string `yaml:"max_privacy"`
+	// Trust: external / tool_output / connector。
+	Trust string `yaml:"trust"`
+	// SideEffect: none / read_only / reversible / irreversible。
+	SideEffect    string   `yaml:"side_effect"`
+	EgressDomains []string `yaml:"egress_domains"`
+	AllowedFields []string `yaml:"allowed_fields"`
+}
+
+// ApprovalConfig 是审批策略。
+type ApprovalConfig struct {
+	Rules []ApprovalRule `yaml:"rules"`
+	Caps  CapsConfig     `yaml:"caps"`
+}
+
+// ApprovalRule 是针对某个工具的放行规则。
+type ApprovalRule struct {
+	Tool            string        `yaml:"tool"`
+	Never           bool          `yaml:"never"`
+	AmountBelowYuan float64       `yaml:"amount_below_yuan"`
+	Domain          string        `yaml:"domain"`
+	LeadTimeAbove   time.Duration `yaml:"lead_time_above"`
+}
+
+// CapsConfig 是累计上限。
+type CapsConfig struct {
+	DailyAutoAmountYuan float64 `yaml:"daily_auto_amount_yuan"`
+	DailyAutoCount      int     `yaml:"daily_auto_count"`
+	PerTaskAmountYuan   float64 `yaml:"per_task_amount_yuan"`
+}
+
+// LoadFile 读取并校验 YAML 配置。路径为空时返回 nil，表示未配置。
+func LoadFile(path string) (*File, error) {
+	if path == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: 读取 %s 失败: %w", path, err)
+	}
+	var f File
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	// 严格模式：配置里写错的字段名必须报错，不能被静默忽略——
+	// 一个拼错的 side_effect 会让工具按最保守等级跑，用户却以为自己配好了。
+	dec.KnownFields(true)
+	if err := dec.Decode(&f); err != nil {
+		return nil, fmt.Errorf("config: 解析 %s 失败: %w", path, err)
+	}
+	if err := f.validate(); err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
+
+func (f *File) validate() error {
+	for _, p := range f.Providers {
+		if p.Name == "" || p.BaseURL == "" || p.APIKeyEnv == "" {
+			return fmt.Errorf("config: provider 必须配齐 name / base_url / api_key_env")
+		}
+	}
+	for _, t := range f.Tools {
+		if _, err := parsePrivacy(t.MaxPrivacy); err != nil {
+			return fmt.Errorf("config: 工具 %s: %w", t.Name, err)
+		}
+		if _, err := parseTrust(t.Trust); err != nil {
+			return fmt.Errorf("config: 工具 %s: %w", t.Name, err)
+		}
+		if _, err := parseSideEffect(t.SideEffect); err != nil {
+			return fmt.Errorf("config: 工具 %s: %w", t.Name, err)
+		}
+	}
+	for _, r := range f.Approval.Rules {
+		if r.Domain != "" && !core.Domain(r.Domain).Valid() {
+			return fmt.Errorf("config: 审批规则 %s 的域取值非法: %q", r.Tool, r.Domain)
+		}
+	}
+	return nil
+}
+
+// BuildRouter 按配置构造 LLM 路由。密钥从环境变量读取。
+func (f *File) BuildRouter() (*llm.Router, error) {
+	r := llm.NewRouter()
+	for _, pc := range f.Providers {
+		key := os.Getenv(pc.APIKeyEnv)
+		if key == "" {
+			return nil, fmt.Errorf("config: provider %s 的密钥环境变量 %s 未设置",
+				pc.Name, pc.APIKeyEnv)
+		}
+		p, err := llm.NewOpenAICompatible(llm.OpenAIConfig{
+			Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Timeout: pc.Timeout,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := r.AddProvider(p); err != nil {
+			return nil, err
+		}
+	}
+	for _, rc := range f.Routes {
+		if err := r.SetRoute(llm.Route{
+			Purpose:   llm.Purpose(rc.Purpose),
+			Provider:  rc.Provider,
+			Model:     rc.Model,
+			MaxTokens: rc.MaxTokens,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if f.Fallback != nil {
+		if err := r.SetFallback(llm.Route{
+			Provider:  f.Fallback.Provider,
+			Model:     f.Fallback.Model,
+			MaxTokens: f.Fallback.MaxTokens,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+// BuildRegistry 按配置构造工具授权表。
+func (f *File) BuildRegistry() (*policy.Registry, error) {
+	reg := policy.NewRegistry()
+	for _, t := range f.Tools {
+		privacy, err := parsePrivacy(t.MaxPrivacy)
+		if err != nil {
+			return nil, err
+		}
+		trust, err := parseTrust(t.Trust)
+		if err != nil {
+			return nil, err
+		}
+		side, err := parseSideEffect(t.SideEffect)
+		if err != nil {
+			return nil, err
+		}
+		if err := reg.Register(policy.ToolGrant{
+			Name:          t.Name,
+			MaxPrivacy:    privacy,
+			TrustCeiling:  trust,
+			SideEffect:    side,
+			EgressDomains: t.EgressDomains,
+			AllowedFields: t.AllowedFields,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return reg, nil
+}
+
+// BuildApprovalPolicy 按配置构造审批策略。
+func (f *File) BuildApprovalPolicy() *policy.Policy {
+	p := &policy.Policy{
+		Caps: policy.Caps{
+			DailyAutoAmountCents: yuanToCents(f.Approval.Caps.DailyAutoAmountYuan),
+			DailyAutoCount:       f.Approval.Caps.DailyAutoCount,
+			PerTaskAmountCents:   yuanToCents(f.Approval.Caps.PerTaskAmountYuan),
+		},
+	}
+	for _, r := range f.Approval.Rules {
+		p.Rules = append(p.Rules, policy.Rule{
+			Tool:  r.Tool,
+			Never: r.Never,
+			AutoIf: policy.Condition{
+				AmountBelowCents: yuanToCents(r.AmountBelowYuan),
+				Domain:           core.Domain(r.Domain),
+				LeadTimeAbove:    r.LeadTimeAbove,
+			},
+		})
+	}
+	return p
+}
+
+// MCPServers 返回已批准的 MCP server 列表。
+func (f *File) MCPServers() ([]mcpgw.ServerSpec, error) {
+	out := make([]mcpgw.ServerSpec, 0, len(f.MCP))
+	for _, m := range f.MCP {
+		kind := mcpgw.TransportKind(m.Transport)
+		if kind != mcpgw.TransportCommand && kind != mcpgw.TransportHTTP {
+			return nil, fmt.Errorf("config: MCP server %s 的传输方式非法: %q", m.Name, m.Transport)
+		}
+		out = append(out, mcpgw.ServerSpec{
+			Name: m.Name, Transport: kind,
+			Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL,
+		})
+	}
+	return out, nil
+}
+
+func parsePrivacy(s string) (core.PrivacyLevel, error) {
+	switch s {
+	case "public":
+		return core.PrivacyPublic, nil
+	case "", "normal":
+		return core.PrivacyNormal, nil
+	case "sensitive":
+		return core.PrivacySensitive, nil
+	case "secret":
+		// 允许配成 secret 等于允许把绝密数据交给工具，这条没有开关。
+		return 0, fmt.Errorf("max_privacy 不允许配置为 secret：绝密数据不传给任何工具")
+	default:
+		return 0, fmt.Errorf("max_privacy 取值非法: %q", s)
+	}
+}
+
+func parseTrust(s string) (core.TrustLevel, error) {
+	switch s {
+	case "", "external":
+		return core.TrustExternal, nil
+	case "tool_output":
+		return core.TrustToolOutput, nil
+	case "connector":
+		return core.TrustConnector, nil
+	case "user", "system":
+		return 0, fmt.Errorf("trust 不允许配置为 %q：工具输出不能具备指令资格", s)
+	default:
+		return 0, fmt.Errorf("trust 取值非法: %q", s)
+	}
+}
+
+func parseSideEffect(s string) (core.SideEffect, error) {
+	switch core.SideEffect(s) {
+	case core.SideEffectNone, core.SideEffectReadOnly,
+		core.SideEffectReversible, core.SideEffectIrreversible:
+		return core.SideEffect(s), nil
+	case "":
+		// 不写就按最保守的处理，而不是按最宽松的。
+		return core.SideEffectIrreversible, nil
+	default:
+		return "", fmt.Errorf("side_effect 取值非法: %q", s)
+	}
+}
+
+func yuanToCents(y float64) int64 {
+	if y <= 0 {
+		return 0
+	}
+	return int64(y*100 + 0.5)
+}
