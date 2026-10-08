@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/store"
 )
 
@@ -24,6 +25,13 @@ type Store interface {
 	Deactivate(ctx context.Context, id string) error
 	// DeactivateForTask 让一个任务的全部订阅失效。
 	DeactivateForTask(ctx context.Context, taskID string) error
+
+	// SaveForTask 记录一个事件，并把它放进指定任务的收件箱。
+	SaveForTask(ctx context.Context, e *Event, taskID string) error
+	// InboxOf 返回任务收件箱里尚未送达的事件，按发生时间升序。
+	InboxOf(ctx context.Context, taskID string) ([]*Event, error)
+	// ClearInbox 把这些事件标记为已送达。
+	ClearInbox(ctx context.Context, eventIDs []string) error
 }
 
 // TaskWaker 是事件总线唤醒任务所需的能力，由 store.TaskStore 提供。
@@ -86,6 +94,72 @@ type delivery struct {
 	Payload    json.RawMessage `json:"payload,omitempty"`
 }
 
+// Deliver 把一个事件直接送给指定任务，不经过订阅匹配。
+//
+// 用于"用户对这个任务说了句话"：任务在等待就立刻唤醒；
+// 任务此刻正在跑或在排队，消息进收件箱，它下一次推进时取走。
+// 两种情况消息都不会丢——用户不需要挑任务正好在等的时候才说话。
+// 返回值报告任务是否被立刻唤醒。
+func (b *Bus) Deliver(ctx context.Context, taskID string, e *Event) (bool, error) {
+	if err := e.Validate(); err != nil {
+		return false, err
+	}
+	out, err := deliveryOf(e)
+	if err != nil {
+		return false, err
+	}
+	step := core.NewStep(taskID, 1, core.StepWait, nil)
+	step.SideEffect = core.SideEffectNone
+	step.Complete(out, e.Trust)
+
+	err = b.tasks.WakeWithStep(ctx, taskID, "收到新消息", step)
+	switch {
+	case err == nil:
+		// 任务醒了，它之前等的东西不再作数。
+		if derr := b.store.DeactivateForTask(ctx, taskID); derr != nil {
+			return true, derr
+		}
+		return true, b.store.SaveEvent(ctx, e)
+	case errors.Is(err, store.ErrStateConflict):
+		return false, b.store.SaveForTask(ctx, e, taskID)
+	default:
+		return false, err
+	}
+}
+
+// Pending 实现 kernel.Inbox：返回任务收件箱里尚未送达的消息。
+func (b *Bus) Pending(ctx context.Context, taskID string) ([]kernel.InboxMessage, error) {
+	events, err := b.store.InboxOf(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]kernel.InboxMessage, 0, len(events))
+	for _, e := range events {
+		content, err := deliveryOf(e)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, kernel.InboxMessage{ID: e.ID, Content: content, Trust: e.Trust})
+	}
+	return out, nil
+}
+
+// MarkDelivered 实现 kernel.Inbox。
+func (b *Bus) MarkDelivered(ctx context.Context, ids []string) error {
+	return b.store.ClearInbox(ctx, ids)
+}
+
+func deliveryOf(e *Event) (json.RawMessage, error) {
+	out, err := json.Marshal(delivery{
+		EventID: e.ID, Topic: e.Topic, Source: e.Source,
+		OccurredAt: e.OccurredAt, Payload: e.Payload,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("event: 序列化事件失败: %w", err)
+	}
+	return out, nil
+}
+
 // Publish 记录一个事件并唤醒所有命中的等待任务，返回被唤醒的任务数。
 //
 // 事件内容作为一条已完成的步骤写进任务日志，信任等级沿用事件自身的：
@@ -105,12 +179,9 @@ func (b *Bus) Publish(ctx context.Context, e *Event) (int, error) {
 		return 0, err
 	}
 
-	out, err := json.Marshal(delivery{
-		EventID: e.ID, Topic: e.Topic, Source: e.Source,
-		OccurredAt: e.OccurredAt, Payload: e.Payload,
-	})
+	out, err := deliveryOf(e)
 	if err != nil {
-		return 0, fmt.Errorf("event: 序列化事件失败: %w", err)
+		return 0, err
 	}
 
 	woken := 0

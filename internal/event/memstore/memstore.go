@@ -14,10 +14,11 @@ type Store struct {
 	mu     sync.Mutex
 	events []event.Event
 	subs   []event.Subscription
+	inbox  map[string]string // 事件 ID -> 等它送达的任务 ID
 }
 
 // New 创建一个空的内存存储。
-func New() *Store { return &Store{} }
+func New() *Store { return &Store{inbox: make(map[string]string)} }
 
 var _ event.Store = (*Store)(nil)
 
@@ -76,6 +77,38 @@ func (s *Store) DeactivateForTask(_ context.Context, taskID string) error {
 		if s.subs[i].TaskID == taskID {
 			s.subs[i].Active = false
 		}
+	}
+	return nil
+}
+
+func (s *Store) SaveForTask(ctx context.Context, e *event.Event, taskID string) error {
+	if err := s.SaveEvent(ctx, e); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inbox[e.ID] = taskID
+	return nil
+}
+
+func (s *Store) InboxOf(_ context.Context, taskID string) ([]*event.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*event.Event, 0)
+	for i := range s.events {
+		if s.inbox[s.events[i].ID] == taskID {
+			e := s.events[i]
+			out = append(out, &e)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) ClearInbox(_ context.Context, ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		delete(s.inbox, id)
 	}
 	return nil
 }

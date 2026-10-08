@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
 )
 
@@ -30,6 +31,59 @@ func (s *EventStore) SaveEvent(ctx context.Context, e *event.Event) error {
 		e.ID, e.Topic, nullJSON(e.Payload), int16(e.Trust), e.Source, e.OccurredAt, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入事件失败: %w", err)
+	}
+	return nil
+}
+
+func (s *EventStore) SaveForTask(ctx context.Context, e *event.Event, taskID string) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO events (id, topic, payload, trust, source, occurred_at, created_at, inbox_task_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+		e.ID, e.Topic, nullJSON(e.Payload), int16(e.Trust), e.Source, e.OccurredAt, e.CreatedAt, taskID)
+	if err != nil {
+		return fmt.Errorf("pg: 写入收件箱失败: %w", err)
+	}
+	return nil
+}
+
+func (s *EventStore) InboxOf(ctx context.Context, taskID string) ([]*event.Event, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, topic, payload, trust, source, occurred_at, created_at
+		  FROM events
+		 WHERE inbox_task_id = $1
+		 ORDER BY occurred_at, id`, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("pg: 读取收件箱失败: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*event.Event, 0)
+	for rows.Next() {
+		var (
+			e       event.Event
+			payload []byte
+			trust   int16
+		)
+		if err := rows.Scan(&e.ID, &e.Topic, &payload, &trust, &e.Source, &e.OccurredAt, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("pg: 解析收件箱失败: %w", err)
+		}
+		e.Payload = payload
+		e.Trust = core.TrustLevel(trust)
+		out = append(out, &e)
+	}
+	return out, rows.Err()
+}
+
+func (s *EventStore) ClearInbox(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE events SET inbox_task_id = NULL WHERE id = ANY($1)`, ids); err != nil {
+		return fmt.Errorf("pg: 清理收件箱失败: %w", err)
 	}
 	return nil
 }

@@ -40,6 +40,8 @@ type Decision struct {
 	TokensIn  int64
 	TokensOut int64
 	CostCents int64
+	// CostMicros 是不足一分的开销，单位为百万分之一元。见 Cost.Micros。
+	CostMicros int64
 }
 
 // Planner 决定任务的下一步。实现可以是一次 LLM 推理，也可以是固定流程。
@@ -49,11 +51,12 @@ type Planner interface {
 
 // Result 是一次实际执行的结果。
 type Result struct {
-	Output    json.RawMessage
-	Trust     core.TrustLevel
-	TokensIn  int64
-	TokensOut int64
-	CostCents int64
+	Output     json.RawMessage
+	Trust      core.TrustLevel
+	TokensIn   int64
+	TokensOut  int64
+	CostCents  int64
+	CostMicros int64
 }
 
 // ApprovalOutcome 是一次动作的审批判定。
@@ -91,6 +94,39 @@ type Subscriber interface {
 	Subscribe(ctx context.Context, taskID string, w *core.WakeCondition) error
 }
 
+// Epilogue 在任务完成之后做收尾：提炼记忆、沉淀可复用的流程。
+//
+// 它在任务已经进入 done 之后调用，失败只记审计，不改变任务结果——
+// 收尾没做成不该让一个已经办完的事变成"失败"。返回值是收尾本身消耗的模型用量。
+type Epilogue interface {
+	TaskFinished(ctx context.Context, t *core.Task, history []*core.Step) (Cost, error)
+}
+
+// Cost 是一次模型调用的开销。
+type Cost struct {
+	TokensIn  int64
+	TokensOut int64
+	// Micros 是金额，单位为百万分之一元。单次调用常常不到一分钱，
+	// 用分记会被舍成 0，累计再多也触不到预算上限。
+	Micros int64
+}
+
+// InboxMessage 是一条在任务没有等待时到达、尚未送进日志的消息。
+type InboxMessage struct {
+	ID      string
+	Content json.RawMessage
+	Trust   core.TrustLevel
+}
+
+// Inbox 保存任务不在等待时收到的消息。
+//
+// 长程任务是断断续续推进的：用户今天补一份材料、过几天再补一份，
+// 不会挑任务正好在等的时候才说话。消息先进收件箱，任务下次推进时取走。
+type Inbox interface {
+	Pending(ctx context.Context, taskID string) ([]InboxMessage, error)
+	MarkDelivered(ctx context.Context, ids []string) error
+}
+
 var (
 	// ErrNeedsReconciliation 表示有一个不可逆步骤状态不明，必须由用户裁决。
 	ErrNeedsReconciliation = errors.New("kernel: 不可逆步骤状态不明，需人工确认")
@@ -105,6 +141,8 @@ type Engine struct {
 	act      Actuator
 	approver Approver
 	subs     Subscriber
+	epilogue Epilogue
+	inbox    Inbox
 	now      func() time.Time
 }
 
@@ -138,6 +176,31 @@ func (e *Engine) Advance(ctx context.Context, taskID string) error {
 		return fmt.Errorf("%w: 当前 %s", ErrNotRunning, t.State)
 	}
 
+	// 墙钟只累计真正在跑的时间。长程任务九成时间在等——等用户、等事件、等明天，
+	// 把等待算进去的话，一个等了三天的任务一醒来就会被判超限。
+	began := e.now()
+	err = e.advance(ctx, t)
+	t.Usage.WallClock += e.now().Sub(began)
+	if uerr := e.store.UpdateTaskRuntime(context.WithoutCancel(ctx), t); uerr != nil && err == nil {
+		err = uerr
+	}
+	return err
+}
+
+// WithEpilogue 接入任务完成后的收尾。
+func (e *Engine) WithEpilogue(ep Epilogue) *Engine {
+	e.epilogue = ep
+	return e
+}
+
+// WithInbox 接入任务收件箱。
+func (e *Engine) WithInbox(in Inbox) *Engine {
+	e.inbox = in
+	return e
+}
+
+func (e *Engine) advance(ctx context.Context, t *core.Task) error {
+	taskID := t.ID
 	history, err := e.store.ListSteps(ctx, taskID)
 	if err != nil {
 		return err
@@ -166,13 +229,18 @@ func (e *Engine) Advance(ctx context.Context, taskID string) error {
 			fmt.Sprintf("等待用户确认：%s", s.ToolName))
 	}
 
-	// 3. 预算与截止时间检查，先于任何新动作。
+	// 3. 取走收件箱里的消息，让 Planner 这一轮就能看到。
+	if history, err = e.drainInbox(ctx, t, history); err != nil {
+		return err
+	}
+
+	// 4. 预算与截止时间检查，先于任何新动作。
 	done, err := e.checkLimits(ctx, t)
 	if err != nil || done {
 		return err
 	}
 
-	// 4. 询问 Planner 下一步做什么。
+	// 5. 询问 Planner 下一步做什么。
 	d, err := e.planner.Decide(ctx, t, history)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -187,12 +255,23 @@ func (e *Engine) Advance(ctx context.Context, taskID string) error {
 
 	switch d.Kind {
 	case DecideFinish:
-		return e.transition(ctx, t, core.StateDone, orDefault(d.Reason, "任务完成"))
+		if err := e.transition(ctx, t, core.StateDone, orDefault(d.Reason, "任务完成")); err != nil {
+			return err
+		}
+		return e.runEpilogue(ctx, t, history)
 	case DecideFail:
 		return e.failTask(ctx, t, orDefault(d.Reason, "Planner 判定失败"))
 	case DecideWait:
 		if d.Wake == nil {
 			return e.failTask(ctx, t, "Planner 要求等待但未给出唤醒条件")
+		}
+		if len(d.Input) > 0 {
+			// 等待之前有话要留在日志里（例如向用户提的问题）。
+			note, err := e.recordNote(ctx, t, history, d.Input, core.TrustToolOutput)
+			if err != nil {
+				return err
+			}
+			history = append(history, note)
 		}
 		if d.Wake.Kind == core.WakeEvent {
 			if e.subs == nil {
@@ -284,8 +363,7 @@ func (e *Engine) execute(ctx context.Context, t *core.Task, s *core.Step) error 
 	}
 
 	t.Usage.Tokens += res.TokensIn + res.TokensOut
-	t.Usage.CostCents += res.CostCents
-	t.Usage.WallClock = e.now().Sub(t.CreatedAt)
+	addCost(t, res.CostCents, res.CostMicros)
 	if err := e.store.UpdateTaskRuntime(ctx, t); err != nil {
 		return err
 	}
@@ -400,14 +478,81 @@ func (e *Engine) recordPlannerFailure(ctx context.Context, t *core.Task, history
 	return e.afterFailure(ctx, t, s.Err)
 }
 
+// recordNote 往日志里追加一条已完成的记录步骤，并返回它。
+func (e *Engine) recordNote(ctx context.Context, t *core.Task, history []*core.Step, note json.RawMessage, trust core.TrustLevel) (*core.Step, error) {
+	seq := nextSeq(history)
+	s := core.NewStep(t.ID, seq, core.StepWait, nil)
+	s.SideEffect = core.SideEffectNone
+	s.Complete(note, trust)
+	if err := e.store.AppendStep(ctx, s); err != nil {
+		return nil, err
+	}
+	t.NextSeq = seq + 1
+	return s, e.store.UpdateTaskRuntime(ctx, t)
+}
+
+// drainInbox 把收件箱里的消息写成步骤。
+//
+// 先写步骤再标记已送达：中间崩溃的话同一条消息会出现两次，
+// 这比丢掉用户补来的材料好得多。
+func (e *Engine) drainInbox(ctx context.Context, t *core.Task, history []*core.Step) ([]*core.Step, error) {
+	if e.inbox == nil {
+		return history, nil
+	}
+	msgs, err := e.inbox.Pending(ctx, t.ID)
+	if err != nil || len(msgs) == 0 {
+		return history, err
+	}
+	ids := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		s, err := e.recordNote(ctx, t, history, m.Content, m.Trust)
+		if err != nil {
+			return history, err
+		}
+		history = append(history, s)
+		ids = append(ids, m.ID)
+	}
+	return history, e.inbox.MarkDelivered(ctx, ids)
+}
+
+// runEpilogue 在任务完成后做收尾。失败不影响任务结果，但必须留痕。
+func (e *Engine) runEpilogue(ctx context.Context, t *core.Task, history []*core.Step) error {
+	if e.epilogue == nil {
+		return nil
+	}
+	cost, err := e.epilogue.TaskFinished(ctx, t, history)
+	t.Usage.Tokens += cost.TokensIn + cost.TokensOut
+	addCost(t, 0, cost.Micros)
+	if err == nil {
+		return nil
+	}
+	return e.store.Audit(ctx, store.AuditEntry{
+		Actor:     "system",
+		Action:    "task.epilogue_failed",
+		TaskID:    t.ID,
+		Detail:    err.Error(),
+		TrustAtOp: t.Origin,
+	})
+}
+
+// microsPerCent 是一分钱对应的百万分之一元数。
+const microsPerCent = 10000
+
+// addCost 把一笔开销计入任务。不足一分的部分留在 CostMicros 里继续累计。
+func addCost(t *core.Task, cents, micros int64) {
+	t.Usage.CostCents += cents
+	t.Usage.CostMicros += micros
+	t.Usage.CostCents += t.Usage.CostMicros / microsPerCent
+	t.Usage.CostMicros %= microsPerCent
+}
+
 // chargeDecision 把决策本身的模型用量计入任务。
 func (e *Engine) chargeDecision(ctx context.Context, t *core.Task, d Decision) error {
-	if d.TokensIn == 0 && d.TokensOut == 0 && d.CostCents == 0 {
+	if d.TokensIn == 0 && d.TokensOut == 0 && d.CostCents == 0 && d.CostMicros == 0 {
 		return nil
 	}
 	t.Usage.Tokens += d.TokensIn + d.TokensOut
-	t.Usage.CostCents += d.CostCents
-	t.Usage.WallClock = e.now().Sub(t.CreatedAt)
+	addCost(t, d.CostCents, d.CostMicros)
 	return e.store.UpdateTaskRuntime(ctx, t)
 }
 
@@ -445,9 +590,7 @@ func (e *Engine) requestApproval(ctx context.Context, t *core.Task, history []*c
 
 // checkLimits 检查预算与截止时间。返回 true 表示任务已因超限而离开 running 状态。
 func (e *Engine) checkLimits(ctx context.Context, t *core.Task) (bool, error) {
-	usage := t.Usage
-	usage.WallClock = e.now().Sub(t.CreatedAt)
-	if over, which := t.Budget.Exceeded(usage); over {
+	if over, which := t.Budget.Exceeded(t.Usage); over {
 		return true, e.transition(ctx, t, core.StateSuspended, fmt.Sprintf("预算超限: %s", which))
 	}
 	if t.Deadline != nil && e.now().After(*t.Deadline) {

@@ -25,6 +25,7 @@ type File struct {
 	MCP       []MCPConfig      `yaml:"mcp_servers"`
 	Tools     []ToolConfig     `yaml:"tools"`
 	Approval  ApprovalConfig   `yaml:"approval"`
+	Reply     ReplyConfig      `yaml:"reply"`
 }
 
 // ProviderConfig 是一家模型服务。
@@ -45,6 +46,17 @@ type RouteConfig struct {
 	Provider  string `yaml:"provider"`
 	Model     string `yaml:"model"`
 	MaxTokens int    `yaml:"max_tokens"`
+	// 每百万 token 的单价（元）。不填则这条路由不计费。
+	InputYuanPerMTok  float64 `yaml:"input_yuan_per_mtok"`
+	OutputYuanPerMTok float64 `yaml:"output_yuan_per_mtok"`
+}
+
+// ReplyConfig 控制助手回复的风格。
+type ReplyConfig struct {
+	// Style 取值 concise / balanced / detailed，不填按 concise。
+	Style string `yaml:"style"`
+	// Custom 是用户自己写的额外要求，如"不要用表情""结论放第一句"。
+	Custom string `yaml:"custom"`
 }
 
 // MCPConfig 是一个已批准的 MCP server。
@@ -133,12 +145,29 @@ func (f *File) validate() error {
 			return fmt.Errorf("config: 工具 %s: %w", t.Name, err)
 		}
 	}
+	switch f.Reply.Style {
+	case "", "concise", "balanced", "detailed":
+	default:
+		return fmt.Errorf("config: reply.style 取值非法: %q（可选 concise / balanced / detailed）", f.Reply.Style)
+	}
+	for _, rc := range append(append([]RouteConfig{}, f.Routes...), fallbackOf(f)...) {
+		if rc.InputYuanPerMTok < 0 || rc.OutputYuanPerMTok < 0 {
+			return fmt.Errorf("config: 模型 %s 的单价不能为负", rc.Model)
+		}
+	}
 	for _, r := range f.Approval.Rules {
 		if r.Domain != "" && !core.Domain(r.Domain).Valid() {
 			return fmt.Errorf("config: 审批规则 %s 的域取值非法: %q", r.Tool, r.Domain)
 		}
 	}
 	return nil
+}
+
+func fallbackOf(f *File) []RouteConfig {
+	if f.Fallback == nil {
+		return nil
+	}
+	return []RouteConfig{*f.Fallback}
 }
 
 // BuildRouter 按配置构造 LLM 路由。密钥从环境变量读取。
@@ -162,19 +191,23 @@ func (f *File) BuildRouter() (*llm.Router, error) {
 	}
 	for _, rc := range f.Routes {
 		if err := r.SetRoute(llm.Route{
-			Purpose:   llm.Purpose(rc.Purpose),
-			Provider:  rc.Provider,
-			Model:     rc.Model,
-			MaxTokens: rc.MaxTokens,
+			Purpose:           llm.Purpose(rc.Purpose),
+			Provider:          rc.Provider,
+			Model:             rc.Model,
+			MaxTokens:         rc.MaxTokens,
+			InputYuanPerMTok:  rc.InputYuanPerMTok,
+			OutputYuanPerMTok: rc.OutputYuanPerMTok,
 		}); err != nil {
 			return nil, err
 		}
 	}
 	if f.Fallback != nil {
 		if err := r.SetFallback(llm.Route{
-			Provider:  f.Fallback.Provider,
-			Model:     f.Fallback.Model,
-			MaxTokens: f.Fallback.MaxTokens,
+			Provider:          f.Fallback.Provider,
+			Model:             f.Fallback.Model,
+			MaxTokens:         f.Fallback.MaxTokens,
+			InputYuanPerMTok:  f.Fallback.InputYuanPerMTok,
+			OutputYuanPerMTok: f.Fallback.OutputYuanPerMTok,
 		}); err != nil {
 			return nil, err
 		}

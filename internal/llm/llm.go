@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // Role 是消息角色。
@@ -47,6 +48,8 @@ type Response struct {
 	Content string
 	Usage   Usage
 	Model   string
+	// CostMicros 是这次调用的开销，单位为百万分之一元。路由没配单价时为 0。
+	CostMicros int64
 }
 
 // Provider 是一家模型服务的适配器。
@@ -83,11 +86,22 @@ const (
 
 // Route 把一个用途绑定到具体的 provider 与模型。
 type Route struct {
-	Purpose  Purpose
-	Provider string
-	Model    string
-	// MaxCostCentsPerCall 是单次调用的成本上限估算，0 表示不限。
+	Purpose   Purpose
+	Provider  string
+	Model     string
 	MaxTokens int
+	// InputYuanPerMTok / OutputYuanPerMTok 是每百万 token 的单价（元）。
+	// 不配就不计费——金额预算也就对这条路由不起作用。
+	InputYuanPerMTok  float64
+	OutputYuanPerMTok float64
+}
+
+// costMicros 按单价算出一次调用的开销。
+//
+// 单价是"元/百万 token"，结果是"百万分之一元"，两个百万正好约掉。
+func (r Route) costMicros(u Usage) int64 {
+	return int64(math.Round(float64(u.PromptTokens)*r.InputYuanPerMTok +
+		float64(u.CompletionTokens)*r.OutputYuanPerMTok))
 }
 
 // Router 按用途把请求分发给不同的 provider。
@@ -164,6 +178,7 @@ func (r *Router) Complete(ctx context.Context, purpose Purpose, req Request) (Re
 		return Response{}, fmt.Errorf("llm: 用途 %s 调用 %s/%s 失败: %w",
 			purpose, route.Provider, route.Model, err)
 	}
+	resp.CostMicros = route.costMicros(resp.Usage)
 	return resp, nil
 }
 

@@ -139,7 +139,7 @@ const taskColumns = `
 	budget_max_tokens, budget_max_cost_cents, budget_max_wall_ns,
 	usage_tokens, usage_cost_cents, usage_wall_ns,
 	deadline, wake, next_seq, lease_owner, lease_expires_at,
-	created_at, updated_at`
+	created_at, updated_at, usage_cost_micros`
 
 func (s *Store) CreateTask(ctx context.Context, t *core.Task) error {
 	if err := t.Validate(); err != nil {
@@ -151,14 +151,14 @@ func (s *Store) CreateTask(ctx context.Context, t *core.Task) error {
 	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO tasks (`+taskColumns+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
 		t.ID, nullString(t.ParentID), t.Title, t.Goal, string(t.State), t.Reason,
 		string(t.Domain), string(t.Visibility), t.VisibilityTarget, int16(t.Origin),
 		t.Priority, nonNilTags(t.Tags),
 		t.Budget.MaxTokens, t.Budget.MaxCostCents, int64(t.Budget.MaxWallClock),
 		t.Usage.Tokens, t.Usage.CostCents, int64(t.Usage.WallClock),
 		t.Deadline, wake, t.NextSeq, t.LeaseOwner, t.LeaseExpiresAt,
-		t.CreatedAt, t.UpdatedAt)
+		t.CreatedAt, t.UpdatedAt, t.Usage.CostMicros)
 	if err != nil {
 		return fmt.Errorf("pg: 创建任务失败: %w", err)
 	}
@@ -221,10 +221,11 @@ func (s *Store) UpdateTaskRuntime(ctx context.Context, t *core.Task) error {
 		UPDATE tasks
 		   SET usage_tokens = $2, usage_cost_cents = $3, usage_wall_ns = $4,
 		       next_seq = $5, wake = $6, deadline = $7, priority = $8,
+		       usage_cost_micros = $9,
 		       updated_at = now()
 		 WHERE id = $1`,
 		t.ID, t.Usage.Tokens, t.Usage.CostCents, int64(t.Usage.WallClock),
-		t.NextSeq, wake, t.Deadline, t.Priority)
+		t.NextSeq, wake, t.Deadline, t.Priority, t.Usage.CostMicros)
 	if err != nil {
 		return fmt.Errorf("pg: 更新任务运行时失败: %w", err)
 	}
@@ -496,7 +497,7 @@ func scanTask(sc scanner) (*core.Task, error) {
 		&t.Budget.MaxTokens, &t.Budget.MaxCostCents, &maxWall,
 		&t.Usage.Tokens, &t.Usage.CostCents, &usedWall,
 		&t.Deadline, &wake, &t.NextSeq, &t.LeaseOwner, &t.LeaseExpiresAt,
-		&t.CreatedAt, &t.UpdatedAt)
+		&t.CreatedAt, &t.UpdatedAt, &t.Usage.CostMicros)
 	if err != nil {
 		return nil, err
 	}

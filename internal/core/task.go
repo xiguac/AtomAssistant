@@ -99,8 +99,11 @@ type Budget struct {
 
 // Usage 是任务已消耗的资源。
 type Usage struct {
-	Tokens    int64         `json:"tokens"`
-	CostCents int64         `json:"cost_cents"`
+	Tokens    int64 `json:"tokens"`
+	CostCents int64 `json:"cost_cents"`
+	// CostMicros 是不足一分的零头，单位为百万分之一元，满一分就进位到 CostCents。
+	CostMicros int64 `json:"cost_micros"`
+	// WallClock 只累计任务真正在执行的时间，不含等待。
 	WallClock time.Duration `json:"wall_clock"`
 }
 
