@@ -1,0 +1,112 @@
+# 原子助手配置示例
+#
+# 用法：ATOM_CONFIG=./config.yaml go run ./cmd/atomd
+# 不设置 ATOM_CONFIG 时 atomd 跑在 demo 模式，不会产生任何真实副作用。
+#
+# 校验配置而不启动：go run ./cmd/atomd -check
+
+# ---------------------------------------------------------------
+# 模型服务。密钥只能通过环境变量提供，不允许写在这个文件里——
+# 配置文件常被复制、备份、贴进聊天窗口求助，密钥不该跟着一起走。
+# ---------------------------------------------------------------
+providers:
+  - name: deepseek
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    timeout: 120s
+
+# ---------------------------------------------------------------
+# 按用途路由模型。规划用强模型，打标/摘要/抽取用便宜模型——
+# 后者的调用量通常是前者的几十倍，这是成本控制里最有效的一招。
+#
+# purpose 取值: plan / extract / summarize / vision
+# ---------------------------------------------------------------
+routes:
+  - purpose: plan
+    provider: deepseek
+    model: deepseek-chat
+    max_tokens: 4000
+  - purpose: extract
+    provider: deepseek
+    model: deepseek-chat
+    max_tokens: 1000
+
+fallback:
+  provider: deepseek
+  model: deepseek-chat
+  max_tokens: 2000
+
+# ---------------------------------------------------------------
+# 已批准的 MCP server。transport 取值: command / http
+#
+# env 里只列出这个 server 确实需要的变量。主进程的环境不会被继承——
+# 否则数据库密码和模型密钥会一并交给第三方工具。
+# ---------------------------------------------------------------
+mcp_servers: []
+# mcp_servers:
+#   - name: maps
+#     transport: command
+#     command: /usr/local/bin/mcp-amap
+#     env:
+#       - AMAP_KEY=xxx
+#   - name: flight
+#     transport: http
+#     url: https://mcp.example.com/mcp
+
+# ---------------------------------------------------------------
+# 工具授权边界。对应用户在 App 上批准某个工具时的选择。
+# 目录里可见 ≠ 可调用：没有在这里授权的工具，调用会被直接拒绝。
+#
+#   max_privacy   允许传给它的最高隐私等级: public / normal / sensitive
+#                 不接受 secret——绝密数据不传给任何工具，这条没有开关
+#   trust         它的输出信任上限: external / tool_output / connector
+#                 不接受 user / system——工具输出不能具备指令资格
+#   side_effect   none / read_only / reversible / irreversible
+#                 不写按 irreversible 处理（最保守）
+#   egress_domains  允许的出站域名。不写表示不允许任何网络出站
+#   allowed_fields  允许传入的参数字段。不写则不做字段裁剪
+# ---------------------------------------------------------------
+tools: []
+# tools:
+#   - name: maps.geocode
+#     max_privacy: normal
+#     trust: connector
+#     side_effect: read_only
+#     egress_domains: [restapi.amap.com]
+#     allowed_fields: [address, city]
+#
+#   - name: maps.book_ride
+#     max_privacy: sensitive
+#     trust: connector
+#     side_effect: irreversible
+#     egress_domains: [restapi.amap.com]
+#     allowed_fields: [origin, destination, car_type, amount_cents]
+
+# ---------------------------------------------------------------
+# 审批策略。默认一律手动确认，下面的规则是"放宽"。
+#
+# 三条不受配置影响的硬规则：
+#   1. 参数含绝密数据(L3) → 直接拒绝，连审批机会都不给
+#   2. 由截图/邮件/网页等 untrusted 内容驱动的写操作 → 无论金额一律手动
+#   3. 只读操作 → 始终放行，不消耗配额
+# ---------------------------------------------------------------
+approval:
+  rules:
+    # 私人出行且金额低于 100 元时自动放行
+    - tool: maps.book_ride
+      amount_below_yuan: 100
+      domain: personal
+
+    # 距事件开始还有 24 小时以上才自动改日程
+    - tool: calendar.update
+      lead_time_above: 24h
+
+    # 发消息永远手动确认
+    - tool: mail.send
+      never: true
+
+  # 累计帽子。只设单次阈值是个洞：100 元以下自动放行可以被拆成 50 次。
+  caps:
+    daily_auto_amount_yuan: 500
+    daily_auto_count: 20
+    per_task_amount_yuan: 1000
