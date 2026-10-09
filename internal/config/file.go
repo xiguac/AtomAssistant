@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/channel/qq"
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
 	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
@@ -34,6 +38,75 @@ type File struct {
 	Payment   PaymentConfig    `yaml:"payment"`
 	// Connectors 是直连开放协议的内建连接器：日历（CalDAV）、邮件（IMAP/SMTP）。
 	Connectors ConnectorsConfig `yaml:"connectors"`
+	// Channels 是用户可以和助手对话的消息渠道（QQ 机器人等）。
+	//
+	// 这一节只能由用户亲手编辑：写在这里的渠道，其主人发来的消息带着用户等级的信任。
+	// 助手没有任何办法往这里添加渠道，见 docs/安全模型.md §3.1.1。
+	Channels []ChannelConfig `yaml:"channels"`
+}
+
+// ChannelConfig 是一个消息渠道。
+type ChannelConfig struct {
+	// Name 是渠道的名字，自己起，不能重复，不能含 /。
+	Name string `yaml:"name"`
+	// Type 是渠道的种类，目前支持 qq。
+	Type string `yaml:"type"`
+	// AppID 与 Secret 是在对应平台上创建机器人时拿到的凭据。
+	// Secret 必须是保险库句柄（vault://名字），授权名单里要有 channel.<渠道名>。
+	AppID  string `yaml:"app_id"`
+	Secret string `yaml:"secret"`
+	// Owners 是主人在这个渠道里的账号标识。只有他们发来的消息会被处理。
+	// 第一次接入时留空：给机器人发一句话，它会把你的标识回给你。
+	Owners []string `yaml:"owners"`
+	// Sandbox 为真时连 QQ 的沙箱环境（机器人还没上线、只在沙箱里调试时用）。
+	Sandbox bool `yaml:"sandbox"`
+	// APIBase 与 TokenURL 覆盖平台接口的地址，只在对着自建的模拟服务调试时才需要。
+	APIBase  string `yaml:"api_base"`
+	TokenURL string `yaml:"token_url"`
+}
+
+// qqAPIBase 定出 QQ 接口的地址：显式指定的优先，其次是沙箱，都没有则用正式环境。
+func (c ChannelConfig) qqAPIBase() string {
+	if c.APIBase != "" {
+		return c.APIBase
+	}
+	if c.Sandbox {
+		return qq.SandboxAPIBase
+	}
+	return ""
+}
+
+// VaultUser 返回这个渠道在保险库授权名单里的名字。
+func (c ChannelConfig) VaultUser() string { return "channel." + c.Name }
+
+// BuildChannels 按配置构造消息渠道。
+func (f *File) BuildChannels(secrets SecretLender, log *slog.Logger) ([]channel.Binding, error) {
+	var out []channel.Binding
+	for _, c := range f.Channels {
+		if c.Name == "" || strings.Contains(c.Name, "/") {
+			return nil, fmt.Errorf("config: 渠道名 %q 不合法（不能为空，不能含 /）", c.Name)
+		}
+		switch c.Type {
+		case "qq":
+			if c.AppID == "" {
+				return nil, fmt.Errorf("config: 渠道 %s 缺少 app_id", c.Name)
+			}
+			secret, err := secrets.Lend(c.Secret, c.VaultUser())
+			if err != nil {
+				return nil, fmt.Errorf("config: 渠道 %s 的 secret: %w", c.Name, err)
+			}
+			out = append(out, channel.Binding{
+				Adapter: &qq.Bot{
+					Label: c.Name, AppID: c.AppID, Secret: secret, Log: log,
+					APIBase: c.qqAPIBase(), TokenURL: c.TokenURL,
+				},
+				Owners: c.Owners,
+			})
+		default:
+			return nil, fmt.Errorf("config: 渠道 %s 的类型 %q 不支持（目前支持 qq）", c.Name, c.Type)
+		}
+	}
+	return out, nil
 }
 
 // ConnectorsConfig 是内建连接器的配置。不写的那一项就不接入。

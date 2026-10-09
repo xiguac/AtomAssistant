@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/store"
@@ -133,4 +134,27 @@ func wake(ctx context.Context, s store.TaskStore, taskID string, from core.TaskS
 		return nil
 	}
 	return err
+}
+
+// 任务进入等待确认时，原因是按这个格式拼出来的：
+// 等待用户确认：<工具>（<策略给的理由>；助手的理由：<助手为什么想这么做>）
+const (
+	approvalPrefix = "等待用户确认："
+	assistantWhy   = "；助手的理由："
+)
+
+// SplitApprovalReason 把等待确认的原因拆回两部分：策略为什么拦下，助手为什么想这么做。
+// 不是这个格式的原样放进 policy 返回。
+func SplitApprovalReason(reason string) (policy, why string) {
+	rest, ok := strings.CutPrefix(reason, approvalPrefix)
+	if !ok {
+		return reason, ""
+	}
+	open := strings.Index(rest, "（")
+	if open < 0 || !strings.HasSuffix(rest, "）") {
+		return "", ""
+	}
+	inner := strings.TrimSuffix(rest[open+len("（"):], "）")
+	policy, why, _ = strings.Cut(inner, assistantWhy)
+	return policy, why
 }

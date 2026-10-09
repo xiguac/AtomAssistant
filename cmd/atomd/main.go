@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/agent"
+	"github.com/xiguac/atomhelper/internal/channel"
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/demo"
@@ -109,6 +110,20 @@ func run(migrateOnly, checkOnly bool) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// 消息渠道：主人在聊天软件里发来的话变成任务，任务的进展推回去。
+	if len(parts.channels) > 0 {
+		hub, err := channel.NewHub(parts.channels,
+			&channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()}, st.Channels(), log)
+		if err != nil {
+			return err
+		}
+		go func() {
+			if err := hub.Run(ctx); err != nil {
+				log.Error("消息渠道异常退出", "err", err)
+			}
+		}()
+	}
+
 	if cfg.WebhookAddr != "" {
 		stopWebhook, err := serveWebhook(ctx, cfg, bus, log)
 		if err != nil {
@@ -160,6 +175,7 @@ type parts struct {
 	actuator kernel.Actuator
 	approver kernel.Approver
 	epilogue kernel.Epilogue
+	channels []channel.Binding
 	close    func()
 }
 
@@ -291,7 +307,21 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		log.Info("已接入邮件", "收信", box.IMAPAddr, "发信", box.SMTPAddr, "账号", box.Username)
 	}
 
+	channels, err := file.BuildChannels(safe, log)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range channels {
+		if len(c.Owners) == 0 {
+			log.Warn("消息渠道还没有主人，目前不会处理任何消息。给机器人发一句话，它会把你的标识回给你",
+				"渠道", c.Adapter.Name())
+		} else {
+			log.Info("已接入消息渠道", "渠道", c.Adapter.Name(), "主人数", len(c.Owners))
+		}
+	}
+
 	return &parts{
+		channels: channels,
 		planner:  planner,
 		actuator: actuator,
 		approver: approver,

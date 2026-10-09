@@ -77,3 +77,49 @@ connectors:
 		t.Fatalf("明文密码应被拒绝: %v", err)
 	}
 }
+
+func TestChannels_按配置构造(t *testing.T) {
+	f, err := LoadFile(writeConfig(t, `
+channels:
+  - name: qq
+    type: qq
+    app_id: "1024"
+    secret: vault://qqbot
+    owners: [OPENID_A]
+  - name: qq-test
+    type: qq
+    app_id: "2048"
+    secret: vault://qqbot2
+    sandbox: true
+`))
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	lender := &fakeLender{}
+	got, err := f.BuildChannels(lender, nil)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("应构造出两个渠道: %v %v", got, err)
+	}
+	if got[0].Adapter.Name() != "qq" || len(got[0].Owners) != 1 || len(got[1].Owners) != 0 {
+		t.Fatalf("渠道名或主人不对: %+v", got)
+	}
+	// 每个渠道用自己的名字去借密钥，保险库才能分别授权。
+	if strings.Join(lender.asked, ",") != "channel.qq=vault://qqbot,channel.qq-test=vault://qqbot2" {
+		t.Fatalf("借用身份不对: %v", lender.asked)
+	}
+
+	for name, body := range map[string]string{
+		"明文密钥":     "channels:\n  - {name: qq, type: qq, app_id: '1', secret: abcdef}\n",
+		"不支持的类型":   "channels:\n  - {name: wx, type: wechat, app_id: '1', secret: 'vault://x'}\n",
+		"缺 app_id": "channels:\n  - {name: qq, type: qq, secret: 'vault://x'}\n",
+		"名字含斜杠":    "channels:\n  - {name: a/b, type: qq, app_id: '1', secret: 'vault://x'}\n",
+	} {
+		f, err := LoadFile(writeConfig(t, body))
+		if err != nil {
+			t.Fatalf("%s: 加载失败: %v", name, err)
+		}
+		if _, err := f.BuildChannels(lender, nil); err == nil {
+			t.Errorf("%s: 应被拒绝", name)
+		}
+	}
+}

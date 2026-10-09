@@ -126,7 +126,7 @@ func (s *Store) ResetForTest(ctx context.Context) error {
 		DROP TABLE IF EXISTS audit_log, task_steps, tasks,
 			memory_pending, memory_revisions, memories,
 			event_subscriptions, events, vault_items, schedules, skills,
-			style_samples, style_profiles, schema_migrations CASCADE`)
+			style_samples, style_profiles, channel_chats, channel_notices, schema_migrations CASCADE`)
 	if err != nil {
 		return fmt.Errorf("pg: 重置数据库失败: %w", err)
 	}

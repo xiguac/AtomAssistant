@@ -19,6 +19,10 @@ const (
 	OutcomeDeny Outcome = "deny"
 )
 
+// ReasonNoRule 是没有为某个工具配置放行规则时的理由。它是最常见的一种，
+// 展示给用户时可以省略——每次确认都看到这句话没有信息量。
+const ReasonNoRule = "未配置自动放行规则，默认手动确认"
+
 // Decision 是判定结果及其理由。理由要能直接展示给用户。
 type Decision struct {
 	Outcome Outcome
@@ -113,7 +117,7 @@ func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
 
 	rule, found := p.ruleFor(req.Tool)
 	if !found {
-		return Decision{OutcomeManual, "未配置自动放行规则，默认手动确认"}
+		return Decision{OutcomeManual, ReasonNoRule}
 	}
 	if rule.Never {
 		return Decision{OutcomeManual, fmt.Sprintf("%s 被设置为始终手动确认", req.Tool)}

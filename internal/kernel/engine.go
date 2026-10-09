@@ -362,7 +362,7 @@ func (e *Engine) runStep(ctx context.Context, t *core.Task, history []*core.Step
 	case ApprovalManual:
 		// 用户要看到的不只是"策略为什么拦下"，还有"助手为什么想这么做"。
 		if d.Reason != "" {
-			reason += "；助手的理由：" + d.Reason
+			reason += assistantWhy + d.Reason
 		}
 		return e.requestApproval(ctx, t, history, d, reason)
 	}
@@ -633,7 +633,7 @@ func (e *Engine) requestApproval(ctx context.Context, t *core.Task, history []*c
 		return err
 	}
 	return e.transition(ctx, t, core.StateWaiting,
-		fmt.Sprintf("等待用户确认：%s（%s）", d.ToolName, reason))
+		fmt.Sprintf("%s%s（%s）", approvalPrefix, d.ToolName, reason))
 }
 
 // checkLimits 检查预算与截止时间。返回 true 表示任务已因超限而离开 running 状态。
