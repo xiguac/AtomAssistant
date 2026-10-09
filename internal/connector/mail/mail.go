@@ -68,6 +68,8 @@ const (
 const (
 	// MaxResults 是一次搜索最多返回的邮件数。
 	MaxResults = 50
+	// localScan 是发件人或标题需要在本地比对时，最多查看最新的多少封。
+	localScan = 300
 	// ChunkBytes 是一次读取返回的正文长度。正文要进模型的上下文，长信分段读。
 	ChunkBytes = 1500
 	// maxFetchBytes 是从服务器取一封信的字节上限，挡住带大附件的信。
@@ -243,7 +245,11 @@ func (c *Client) resolve(conn *client.Client, name string) (string, error) {
 			return f.Name, nil
 		}
 	}
-	return "", fmt.Errorf("%w: 没有文件夹 %q", ErrNotFound, name)
+	names := make([]string, 0, len(list))
+	for _, f := range list {
+		names = append(names, f.Name)
+	}
+	return "", fmt.Errorf("%w: 没有文件夹 %q（现有：%s）", ErrNotFound, name, strings.Join(names, "、"))
 }
 
 // Summary 是一封邮件的概要。
@@ -374,12 +380,10 @@ func (c *Client) Search(ctx context.Context, q Query) ([]Summary, error) {
 		return nil, fmt.Errorf("%w: 打不开文件夹 %q: %v", ErrNotFound, folder, err)
 	}
 	crit := imap.NewSearchCriteria()
-	if v := strings.TrimSpace(q.From); v != "" {
-		crit.Header.Add("From", v)
-	}
-	if v := strings.TrimSpace(q.Subject); v != "" {
-		crit.Header.Add("Subject", v)
-	}
+	// 发件人和标题不交给服务器比对，取回概要之后在本地比。各家服务器在这件事上太不一致：
+	// 中文在信里是编码过的，很多服务器不解码就比，搜"李伟"什么都搜不到；有的连大小写都分。
+	localFrom := strings.ToLower(strings.TrimSpace(q.From))
+	localSubject := strings.ToLower(strings.TrimSpace(q.Subject))
 	if v := strings.TrimSpace(q.Text); v != "" {
 		crit.Text = []string{v}
 	}
@@ -400,8 +404,13 @@ func (c *Client) Search(ctx context.Context, q Query) ([]Summary, error) {
 	}
 	// 编号越大越新。只取最新的那一批的概要，而不是把整个文件夹拉回来。
 	sort.Slice(uids, func(i, j int) bool { return uids[i] > uids[j] })
-	if len(uids) > limit {
-		uids = uids[:limit]
+	scan := limit
+	if localFrom != "" || localSubject != "" {
+		// 要在本地比对时多看一些，但仍然只看最新的一段，不把整个文件夹拉回来。
+		scan = localScan
+	}
+	if len(uids) > scan {
+		uids = uids[:scan]
 	}
 	set := new(imap.SeqSet)
 	set.AddNum(uids...)
@@ -412,12 +421,22 @@ func (c *Client) Search(ctx context.Context, q Query) ([]Summary, error) {
 	}()
 	var out []Summary
 	for m := range ch {
-		out = append(out, summarize(m, status.UidValidity, folder))
+		sum := summarize(m, status.UidValidity, folder)
+		if localFrom != "" && !strings.Contains(strings.ToLower(sum.From), localFrom) {
+			continue
+		}
+		if localSubject != "" && !strings.Contains(strings.ToLower(sum.Subject), localSubject) {
+			continue
+		}
+		out = append(out, sum)
 	}
 	if err := <-done; err != nil {
 		return nil, fmt.Errorf("mail: 读取邮件概要失败: %w", err)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Date.After(out[j].Date) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out, nil
 }
 
@@ -431,7 +450,8 @@ type Message struct {
 	NextOffset  int      `json:"next_offset,omitempty"`
 	Attachments []string `json:"attachments,omitempty"`
 
-	messageID string
+	// MessageID 是这封信的全局编号（Message-ID 信头），不给模型看。
+	MessageID string `json:"-"`
 	replyTo   string
 }
 
@@ -472,7 +492,7 @@ func (c *Client) read(conn *client.Client, id string, offset int) (Message, erro
 	}
 	out := Message{Summary: summarize(head, r.validity, r.folder)}
 	if e := head.Envelope; e != nil {
-		out.Cc, out.messageID = addresses(e.Cc), e.MessageId
+		out.Cc, out.MessageID = addresses(e.Cc), e.MessageId
 		if len(e.ReplyTo) > 0 && e.ReplyTo[0] != nil {
 			out.replyTo = e.ReplyTo[0].Address()
 		} else if len(e.From) > 0 && e.From[0] != nil {
@@ -680,6 +700,8 @@ type Sent struct {
 	// Saved 表示是否已在"已发送"里留底。
 	Saved bool   `json:"saved_to_sent"`
 	Note  string `json:"note,omitempty"`
+	// MessageID 是这封信的全局编号。靠它能在"已发送"里认出哪些信是助手代写的。
+	MessageID string `json:"message_id"`
 }
 
 func parseList(kind string, list []string) ([]*gomail.Address, error) {
@@ -752,7 +774,7 @@ func (c *Client) Send(ctx context.Context, o Outgoing) (Sent, error) {
 				subject = "Re: " + subject
 			}
 		}
-		if id := strings.Trim(orig.messageID, "<>"); id != "" {
+		if id := strings.Trim(orig.MessageID, "<>"); id != "" {
 			header.SetMsgIDList("In-Reply-To", []string{id})
 			header.SetMsgIDList("References", []string{id})
 		}
@@ -800,7 +822,11 @@ func (c *Client) Send(ctx context.Context, o Outgoing) (Sent, error) {
 		return Sent{}, err
 	}
 
-	out := Sent{To: rcpt, Subject: subject}
+	sentID, err := header.MessageID()
+	if err != nil {
+		return Sent{}, fmt.Errorf("mail: 读取邮件编号失败: %w", err)
+	}
+	out := Sent{To: rcpt, Subject: subject, MessageID: sentID}
 	if err := c.keepCopy(ctx, buf.Bytes(), now); err != nil {
 		out.Note = "邮件已发出，但没能在「已发送」里留底：" + err.Error()
 	} else {

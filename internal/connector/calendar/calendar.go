@@ -92,6 +92,8 @@ type Event struct {
 	AllDay   bool      `json:"all_day,omitempty"`
 	Location string    `json:"location,omitempty"`
 	Notes    string    `json:"notes,omitempty"`
+	// Organizer 是发起这条日程的人。自己建的日程没有这一项，别人发来的邀请才有。
+	Organizer string `json:"organizer,omitempty"`
 	// Recurring 为真表示这是一条重复日程中的一次。改或删它影响的是整个系列。
 	Recurring bool `json:"recurring,omitempty"`
 }
@@ -397,9 +399,25 @@ func (c *Client) decode(id, calName string, e *ical.Event) (Event, bool) {
 	return Event{
 		ID: id, Calendar: calName,
 		Title: text(ical.PropSummary), Location: text(ical.PropLocation), Notes: text(ical.PropDescription),
-		Start: start.In(c.loc()), End: end.In(c.loc()), AllDay: allDay,
+		Start: start.In(c.loc()), End: end.In(c.loc()), AllDay: allDay, Organizer: organizer(e),
 		Recurring: e.Props.Get(ical.PropRecurrenceRule) != nil,
 	}, true
+}
+
+// organizer 取出日程的发起人：有名字就带上名字。
+func organizer(e *ical.Event) string {
+	prop := e.Props.Get(ical.PropOrganizer)
+	if prop == nil {
+		return ""
+	}
+	addr := strings.TrimSpace(prop.Value)
+	if len(addr) >= 7 && strings.EqualFold(addr[:7], "mailto:") {
+		addr = addr[7:]
+	}
+	if name := strings.TrimSpace(prop.Params.Get("CN")); name != "" && name != addr {
+		return name + " <" + addr + ">"
+	}
+	return addr
 }
 
 // Draft 是新建日程的内容。

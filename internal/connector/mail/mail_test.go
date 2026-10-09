@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/emersion/go-imap"
 )
 
 func TestSecurity_不在明文连接上发密码(t *testing.T) {
@@ -120,6 +123,7 @@ func TestMail_对真实服务器(t *testing.T) {
 		}
 	}
 	me, boss := box("me"), box("boss")
+	boss.Name = "老板"
 
 	// 测试服务器的新邮箱只有收件箱，把常见的几个文件夹建出来。
 	for _, c := range []*Client{me, boss} {
@@ -175,6 +179,16 @@ func TestMail_对真实服务器(t *testing.T) {
 		t.Fatalf("按标题搜索不对: %v %+v", err, found)
 	}
 	review := found[0]
+	// 按发件人的中文名字搜：名字在信里是编码过的，不能指望服务器替我们解码比对。
+	if byName, err := me.Search(ctx, Query{From: "BOSS"}); err != nil || len(byName) != 2 {
+		t.Fatalf("按发件人搜索不对: %v %+v", err, byName)
+	}
+	if byName, err := me.Search(ctx, Query{From: "老板"}); err != nil || len(byName) != 2 {
+		t.Fatalf("按发件人的中文名字应搜得到: %v %+v", err, byName)
+	}
+	if none, err := me.Search(ctx, Query{From: "老王"}); err != nil || len(none) != 0 {
+		t.Fatalf("不存在的发件人不应有结果: %v %+v", err, none)
+	}
 
 	// 读信：分段返回，而且不把信标成已读。
 	msg, err := me.Read(ctx, review.ID, 0)
@@ -208,6 +222,19 @@ func TestMail_对真实服务器(t *testing.T) {
 	if reply.Subject != "Re: 周五评审改期" || len(reply.To) != 1 || reply.To[0] != boss.Username || !reply.Saved {
 		t.Fatalf("回复应沿用原信的标题和发件人: %+v", reply)
 	}
+	// 回信要带上原信的编号，对方的邮件客户端才会把它和原信归到同一个会话里。
+	var got []Summary
+	for i := 0; i < 20 && len(got) == 0; i++ {
+		time.Sleep(200 * time.Millisecond)
+		got, _ = boss.Search(ctx, Query{Subject: "Re:"})
+	}
+	if len(got) != 1 {
+		t.Fatalf("对方应收到回信: %+v", got)
+	}
+	if header := rawHeader(t, boss, got[0].ID); !strings.Contains(header, "In-Reply-To: <") || !strings.Contains(header, "References: <") {
+		t.Fatalf("回信应带着原信的编号: %q", header)
+	}
+
 	mine, err := me.Search(ctx, Query{Folder: "sent"})
 	if err != nil || len(mine) != 1 || mine[0].Unread {
 		t.Fatalf("已发送里应有这封回复且是已读: %v %+v", err, mine)
@@ -245,4 +272,33 @@ func TestMail_对真实服务器(t *testing.T) {
 			t.Errorf("%s: 期望 ErrInvalid，实际 %v", name, err)
 		}
 	}
+}
+
+// rawHeader 取一封信的原始信头。
+func rawHeader(t *testing.T, c *Client, id string) string {
+	t.Helper()
+	conn, err := c.dial(context.Background())
+	if err != nil {
+		t.Fatalf("登录失败: %v", err)
+	}
+	defer func() { _ = conn.Logout() }()
+	r, err := c.open(conn, id, true)
+	if err != nil {
+		t.Fatalf("打开失败: %v", err)
+	}
+	section := &imap.BodySectionName{BodyPartName: imap.BodyPartName{Specifier: imap.HeaderSpecifier}, Peek: true}
+	ch := make(chan *imap.Message, 1)
+	done := make(chan error, 1)
+	go func() { done <- conn.UidFetch(one(r.uid), []imap.FetchItem{section.FetchItem()}, ch) }()
+	var out string
+	for m := range ch {
+		for _, lit := range m.Body {
+			raw, _ := io.ReadAll(lit)
+			out = string(raw)
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("取信头失败: %v", err)
+	}
+	return out
 }

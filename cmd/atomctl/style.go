@@ -69,7 +69,7 @@ func styleShow(ctx context.Context, st *pg.Store) error {
 		if profile != nil {
 			fmt.Printf("概述（%s 提炼）：%s\n", profile.UpdatedAt.Local().Format("2006-01-02 15:04"), profile.Description)
 		} else {
-			fmt.Println("概述：样本还不够，暂未提炼")
+			fmt.Println("概述：暂未提炼（样本攒够后，在下一个任务结束时提炼）")
 		}
 		fmt.Println("最近的样本：")
 		for _, s := range samples {
@@ -113,11 +113,20 @@ func styleLearnMail(st *pg.Store, cfg *config.Config, learner *style.Learner, li
 	if err != nil {
 		return err
 	}
-	added, skipped := 0, 0
+	// 助手代写的信也在"已发送"里。那不是用户写的，学进去就成了助手跟自己学。
+	ghost, err := st.AssistantSentMail(ctx)
+	if err != nil {
+		return err
+	}
+	added, skipped, ghosted := 0, 0, 0
 	for _, m := range list {
 		msg, err := box.Read(ctx, m.ID, 0)
 		if err != nil {
 			return fmt.Errorf("读取 %s 失败: %w", m.ID, err)
+		}
+		if ghost[strings.Trim(msg.MessageID, "<>")] {
+			ghosted++
+			continue
 		}
 		own := mail.OwnWords(msg.Text)
 		if own == "" {
@@ -133,8 +142,8 @@ func styleLearnMail(st *pg.Store, cfg *config.Config, learner *style.Learner, li
 		}
 		added += n
 	}
-	fmt.Printf("看了 %d 封你发出的信，新增 %d 条样本，跳过 %d 封（没有你自己写的内容、含敏感信息或已经学过）。\n",
-		len(list), added, skipped)
+	fmt.Printf("看了已发送里最近的 %d 封信，新增 %d 条样本；跳过 %d 封（没有你自己写的内容、含敏感信息或已经学过），"+
+		"另有 %d 封是助手代写的，不算你写的。\n", len(list), added, skipped, ghosted)
 	fmt.Println("样本只保存在你自己的数据库里。概述会在下一个任务结束时由 atomd 提炼，用 atomctl style show 查看。")
 	return nil
 }

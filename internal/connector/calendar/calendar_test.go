@@ -107,6 +107,7 @@ UID:b
 DTSTAMP:20260901T000000Z
 DTSTART;TZID=China Standard Time:20261009T150000
 DTEND;TZID=China Standard Time:20261009T160000
+ORGANIZER;CN=李伟:mailto:liwei@example.com
 SUMMARY:周会
 END:VEVENT
 END:VCALENDAR
@@ -114,6 +115,10 @@ END:VCALENDAR
 	got = c.occurrences("/b", "工作", odd, at("2026-10-09 00:00"), at("2026-10-10 00:00"))
 	if len(got) != 1 || got[0].Start.Format("15:04") != "15:00" {
 		t.Fatalf("时区名认不出时应按本地时区理解: %+v", got)
+	}
+	// 别人发来的邀请要看得出是谁发起的。
+	if got[0].Organizer != "李伟 <liwei@example.com>" {
+		t.Fatalf("应带上发起人: %q", got[0].Organizer)
 	}
 }
 

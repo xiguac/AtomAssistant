@@ -123,3 +123,29 @@ func (s *StyleStore) Clear(ctx context.Context) error {
 	}
 	return nil
 }
+
+// AssistantSentMail 返回助手发出过的邮件的编号（Message-ID，不带尖括号）。
+//
+// 学习用户写邮件的口气时要靠它把助手代写的信剔出去：那些信在"已发送"里和用户亲手写的
+// 混在一起，不剔掉的话助手就是在跟自己学，越学越像它自己。
+func (s *Store) AssistantSentMail(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT output->>'message_id' FROM task_steps
+		 WHERE tool_name = 'mail.send' AND status = 'done' AND output->>'message_id' <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)
+		}
+		out[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)
+	}
+	return out, nil
+}

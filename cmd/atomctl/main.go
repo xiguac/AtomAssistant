@@ -283,7 +283,10 @@ func show(ctx context.Context, st *pg.Store, id string) error {
 	}
 	fmt.Fprintf(w, "创建/更新\t%s / %s\n",
 		t.CreatedAt.Local().Format(time.RFC3339), t.UpdatedAt.Local().Format(time.RFC3339))
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return showPending(ctx, st, id)
 }
 
 func steps(ctx context.Context, st *pg.Store, id string) error {
