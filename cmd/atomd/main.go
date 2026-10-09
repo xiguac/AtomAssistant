@@ -28,6 +28,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomhelper/internal/style"
 	"github.com/xiguac/atomhelper/internal/vault"
 	"github.com/xiguac/atomhelper/internal/webhook"
 )
@@ -247,6 +248,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		}
 	}
 
+	epilogue := agent.NewEpilogue(router, memory.NewPipeline(memStore, nil))
+	// 表达风格：从用户亲口说的话里学，替他写东西、对他说话时用。
+	if file.Reply.LearnVoice() {
+		voice := style.NewLearner(st.Style(), router)
+		planner = planner.WithVoice(voice)
+		epilogue = epilogue.WithVoice(voice)
+	}
+
 	// 内建连接器：密码每次连接时从保险库现取，配置里只有句柄。
 	actuator = actuator.WithAudit(agent.NewStoreAudit(st))
 	cal, err := file.Calendar(safe)
@@ -273,7 +282,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		actuator: actuator,
 		approver: approver,
 		// 任务完成后提炼记忆与流程，经写入管线落库。
-		epilogue: agent.NewEpilogue(router, memory.NewPipeline(memStore, nil)),
+		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
 }

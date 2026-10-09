@@ -146,7 +146,13 @@ type ReplyConfig struct {
 	Style string `yaml:"style"`
 	// Custom 是用户自己写的额外要求，如"不要用表情""结论放第一句"。
 	Custom string `yaml:"custom"`
+	// Voice 控制是否学习用户本人的说话方式：learn（默认）/ off。
+	// 学到之后，助手替用户写东西、对用户说话时会向他的语气靠拢。
+	Voice string `yaml:"voice"`
 }
+
+// LearnVoice 报告是否学习用户的表达风格。
+func (r ReplyConfig) LearnVoice() bool { return r.Voice != "off" }
 
 // MCPConfig 是一个已批准的 MCP server。
 type MCPConfig struct {
@@ -269,6 +275,11 @@ func (f *File) validate() error {
 	case "", "concise", "balanced", "detailed":
 	default:
 		return fmt.Errorf("config: reply.style 取值非法: %q（可选 concise / balanced / detailed）", f.Reply.Style)
+	}
+	switch f.Reply.Voice {
+	case "", "learn", "off":
+	default:
+		return fmt.Errorf("config: reply.voice 取值非法: %q（可选 learn / off）", f.Reply.Voice)
 	}
 	for _, rc := range append(append([]RouteConfig{}, f.Routes...), fallbackOf(f)...) {
 		if rc.InputYuanPerMTok < 0 || rc.OutputYuanPerMTok < 0 {

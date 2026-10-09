@@ -152,6 +152,7 @@ type Planner struct {
 	memory  MemoryProvider
 	vault   VaultLister
 	skills  SkillProvider
+	voice   VoiceProvider
 	// pay 为真表示接入了付款能力，付款工具对模型可见。
 	pay bool
 	// paidResources 为真表示允许请求付费资源。
@@ -182,6 +183,12 @@ func NewPlanner(model Completer, catalog ToolCatalog, opts PlannerOptions) *Plan
 // 并向模型开放 memory.expand 用于按需展开索引行。
 func (p *Planner) WithMemory(m MemoryProvider) *Planner {
 	p.memory = m
+	return p
+}
+
+// WithVoice 接入表达风格。接入后助手替用户写东西、对用户说话时会向他本人的说话方式靠拢。
+func (p *Planner) WithVoice(v VoiceProvider) *Planner {
+	p.voice = v
 	return p
 }
 
@@ -374,10 +381,23 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 	if err != nil {
 		return kernel.Decision{}, err
 	}
+	style := p.opts.styleRule()
+	if p.voice != nil {
+		v, err := p.voice.Voice(ctx)
+		if err != nil {
+			return kernel.Decision{}, fmt.Errorf("agent: 读取表达风格失败: %w", err)
+		}
+		// 还什么都没学到时不提这回事，免得模型去找一段并不存在的材料。
+		if !v.Empty() {
+			style += "\n\n" + voiceRule
+			// 紧跟在任务定义之后：先知道"替谁说话"，再看任务做到哪一步了。
+			segs = append(segs[:1], append([]llm.Segment{voiceSegment(v)}, segs[1:]...)...)
+		}
+	}
 	msgs, err := llm.Build(segs, llm.BuildOptions{
 		// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
 		SystemPrompt: plannerSystemPrompt +
-			"\n\n" + p.opts.styleRule() +
+			"\n\n" + style +
 			"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
 			"\n\n可用工具：\n" + p.toolList(),
 		MaxChars: p.opts.MaxChars,

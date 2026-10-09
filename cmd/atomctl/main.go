@@ -57,6 +57,11 @@ const usage = `用法:
                                  提交开通过程中支付宝给你的验证码
   atomctl pay wallet close       关闭授权
 
+  atomctl style show             查看助手学到的你的说话方式：概述和最近的样本
+  atomctl style learn-mail [数量]
+                                 从「已发送」里你自己写的信学习你写邮件的口气，默认看最近 30 封
+  atomctl style forget           忘掉学到的一切，从头学
+
   atomctl connector check        试连配置里的日历和邮件，确认账号、密码和服务器地址都对
 
   atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
@@ -152,6 +157,8 @@ func run(args []string) error {
 		return payCmd(ctx, cfg, args[1:])
 	case "connector":
 		return connectorCmd(st, cfg, args[1:])
+	case "style":
+		return styleCmd(ctx, st, cfg, args[1:])
 	case "skill":
 		return skillCmd(ctx, st, cfg, args[1:])
 	case "run":

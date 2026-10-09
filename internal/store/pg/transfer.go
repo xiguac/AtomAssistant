@@ -18,7 +18,7 @@ import (
 type Section string
 
 const (
-	// SectionMemory 长期记忆：记忆、版本链、待裁决候选。
+	// SectionMemory 长期记忆：记忆、版本链、待裁决候选，以及学到的表达风格。
 	SectionMemory Section = "memory"
 	// SectionTasks 任务：任务、步骤日志、审计、定时任务。
 	SectionTasks Section = "tasks"
@@ -33,7 +33,7 @@ const (
 // sectionTables 列出每个板块的表，顺序即导入顺序：被引用的表在前。
 // 表名只来自这里，不接受外部输入，所以拼进 SQL 是安全的。
 var sectionTables = map[Section][]string{
-	SectionMemory: {"memories", "memory_revisions", "memory_pending"},
+	SectionMemory: {"memories", "memory_revisions", "memory_pending", "style_samples", "style_profiles"},
 	SectionTasks:  {"tasks", "task_steps", "audit_log", "schedules"},
 	SectionEvents: {"events", "event_subscriptions"},
 	SectionVault:  {"vault_items"},

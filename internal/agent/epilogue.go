@@ -12,6 +12,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/style"
 )
 
 const epilogueSystemPrompt = `你负责在一次任务结束后，提炼值得长期记住的东西。目标是让助手越用越懂这个用户，
@@ -66,6 +67,7 @@ type MemoryWriter interface {
 type Epilogue struct {
 	model    Completer
 	writer   MemoryWriter
+	voice    VoiceLearner
 	maxChars int
 	now      func() time.Time
 }
@@ -80,6 +82,24 @@ func NewEpilogue(model Completer, writer MemoryWriter) *Epilogue {
 		maxChars: 24000,
 		now:      func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// WithVoice 让收尾时顺带学习用户的表达风格。
+func (e *Epilogue) WithVoice(v VoiceLearner) *Epilogue {
+	e.voice = v
+	return e
+}
+
+// learnVoice 把这次任务里用户亲口说的话收作风格样本，样本攒够了就重新提炼概述。
+func (e *Epilogue) learnVoice(ctx context.Context, t *core.Task, history []*core.Step) (kernel.Cost, error) {
+	if e.voice == nil {
+		return kernel.Cost{}, nil
+	}
+	if _, err := e.voice.Observe(ctx, style.SceneChat, "task:"+t.ID, voiceTexts(t, history)); err != nil {
+		return kernel.Cost{}, err
+	}
+	c, err := e.voice.Refresh(ctx)
+	return kernel.Cost{TokensIn: c.TokensIn, TokensOut: c.TokensOut, Micros: c.Micros}, err
 }
 
 type extractedMemory struct {
@@ -98,6 +118,17 @@ type extractedMemory struct {
 
 // TaskFinished 从一次完成的任务里提炼记忆候选并送进写入管线。
 func (e *Epilogue) TaskFinished(ctx context.Context, t *core.Task, history []*core.Step) (kernel.Cost, error) {
+	// 学说话方式和提炼记忆是两件不相干的事：一件失败不该连累另一件，两边的花费和错误合在一起报。
+	voiceCost, voiceErr := e.learnVoice(ctx, t, history)
+	cost, err := e.extract(ctx, t, history)
+	cost.TokensIn += voiceCost.TokensIn
+	cost.TokensOut += voiceCost.TokensOut
+	cost.Micros += voiceCost.Micros
+	return cost, errors.Join(voiceErr, err)
+}
+
+// extract 从一次完成的任务里提炼记忆候选并送进写入管线。
+func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.Step) (kernel.Cost, error) {
 	userSaid := userStatements(t, history)
 
 	segs := []llm.Segment{{
