@@ -240,9 +240,16 @@ type ProviderConfig struct {
 	//
 	// 刻意不允许在配置文件里直接写密钥：配置文件常被复制、备份、
 	// 贴进聊天窗口求助，密钥不该跟着一起走。
-	APIKeyEnv string        `yaml:"api_key_env"`
-	Timeout   time.Duration `yaml:"timeout"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	// APIKey 是密钥在保险库里的句柄（vault://名字），与 api_key_env 二选一。
+	// 用它的话密钥可以在管理后台里填，不必登上服务器改环境变量。
+	// 保险库里那一条的授权名单要有 provider.<服务名>。
+	APIKey  string        `yaml:"api_key"`
+	Timeout time.Duration `yaml:"timeout"`
 }
+
+// VaultUser 返回这家模型服务在保险库授权名单里的名字。
+func (p ProviderConfig) VaultUser() string { return "provider." + p.Name }
 
 // RouteConfig 把一个用途绑定到具体模型。
 type RouteConfig struct {
@@ -371,8 +378,11 @@ func LoadFile(path string) (*File, error) {
 
 func (f *File) validate() error {
 	for _, p := range f.Providers {
-		if p.Name == "" || p.BaseURL == "" || p.APIKeyEnv == "" {
-			return fmt.Errorf("config: provider 必须配齐 name / base_url / api_key_env")
+		if p.Name == "" || p.BaseURL == "" || (p.APIKeyEnv == "") == (p.APIKey == "") {
+			return fmt.Errorf("config: provider 必须配齐 name / base_url，密钥用 api_key_env 或 api_key（保险库句柄）二选一")
+		}
+		if p.APIKey != "" && !strings.HasPrefix(p.APIKey, "vault://") {
+			return fmt.Errorf("config: provider %s 的 api_key 只能写保险库句柄（vault://名字），不能直接写密钥", p.Name)
 		}
 	}
 	for _, t := range f.Tools {
@@ -416,12 +426,26 @@ func fallbackOf(f *File) []RouteConfig {
 	return []RouteConfig{*f.Fallback}
 }
 
-// BuildRouter 按配置构造 LLM 路由。密钥从环境变量读取。
-func (f *File) BuildRouter() (*llm.Router, error) {
+// BuildRouter 按配置构造 LLM 路由。密钥从环境变量或保险库读取。
+// 没有任何 provider 用保险库时 secrets 可以为 nil。
+func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Router, error) {
 	r := llm.NewRouter()
 	for _, pc := range f.Providers {
-		key := os.Getenv(pc.APIKeyEnv)
-		if key == "" {
+		var key string
+		if pc.APIKey != "" {
+			if secrets == nil {
+				return nil, fmt.Errorf("config: provider %s 的密钥在保险库里，但保险库不可用", pc.Name)
+			}
+			take, err := secrets.Lend(pc.APIKey, pc.VaultUser())
+			if err != nil {
+				return nil, fmt.Errorf("config: provider %s 的 api_key: %w", pc.Name, err)
+			}
+			// 模型密钥每次请求都要用，所以启动时取一次、留在进程里，和从环境变量读是一样的。
+			if key, err = take(ctx); err != nil {
+				return nil, fmt.Errorf("config: 从保险库取 provider %s 的密钥失败（存了吗？授权名单里有 %s 吗？）: %w",
+					pc.Name, pc.VaultUser(), err)
+			}
+		} else if key = os.Getenv(pc.APIKeyEnv); key == "" {
 			return nil, fmt.Errorf("config: provider %s 的密钥环境变量 %s 未设置",
 				pc.Name, pc.APIKeyEnv)
 		}

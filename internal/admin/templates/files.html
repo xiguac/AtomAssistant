@@ -1,0 +1,32 @@
+{{define "content"}}
+{{with .Data}}
+{{if .Enabled}}
+<section>
+  <h2>工作区{{if .Dir}} / {{.Dir}}{{end}}</h2>
+  <div class="muted">助手只能读写这里的文件。把要处理的文件传上来，它生成的文件也在这里取。</div>
+  <table style="margin-top:8px">
+    {{if .Dir}}<tr><td colspan="3"><a href="/files?dir={{.Parent}}">← 上一级</a></td></tr>{{end}}
+    {{range .Entries}}<tr>
+      <td>{{if .Dir}}<a href="/files?dir={{.Path}}">{{.Path}}/</a>{{else}}<a href="/files/download?path={{.Path}}">{{.Path}}</a>{{end}}</td>
+      <td class="muted" style="width:110px">{{if not .Dir}}{{.Size}} 字节{{end}}</td>
+      <td class="muted" style="width:110px;white-space:nowrap">{{when .Modified}}</td>
+    </tr>{{else}}<tr><td class="muted">这里还没有文件。</td></tr>{{end}}
+  </table>
+</section>
+
+<section>
+  <h2>上传</h2>
+  <form method="post" action="/files" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="dir" value="{{.Dir}}">
+    <input type="file" name="file">
+    <div class="row" style="margin-top:10px"><button>上传到这里</button></div>
+  </form>
+  <div class="muted" style="margin-top:8px">同名的文件会被替换，旧的那份自动留底，不会丢。单个文件最大 50 MB。</div>
+</section>
+{{else}}
+<section><h2>文件</h2><div class="muted">在「配置」里加上 files 一节并重启，这里就能用了：<pre>files:
+  dir: /var/lib/atomhelper/files</pre></div></section>
+{{end}}
+{{end}}
+{{end}}

@@ -1,0 +1,56 @@
+# 原子助手的配置。在管理后台的「配置」页里改，保存后点重启生效。
+# 密码和密钥不要写在这里：存进「保险库」，这里写 vault://名字。
+# 各项的完整说明见仓库里的 config.example.yaml。
+
+# ---- 模型 ----
+# 先到「保险库」存一条：名字 deepseek，内容是 API Key，可用工具填 provider.deepseek
+providers:
+  - name: deepseek
+    base_url: https://api.deepseek.com
+    api_key: vault://deepseek
+    timeout: 120s
+routes:
+  - purpose: plan
+    provider: deepseek
+    model: deepseek-chat
+    max_tokens: 4000
+fallback:
+  provider: deepseek
+  model: deepseek-chat
+  max_tokens: 3000
+
+reply:
+  style: concise
+
+# ---- 文件处理 ----
+files:
+  dir: /var/lib/atomhelper/files
+
+# ---- 节假日（公开订阅，不需要账号） ----
+connectors:
+  holidays:
+    url: https://calendars.icloud.com/holidays/cn_zh.ics
+  # 日历和邮件：先到「保险库」存 App 专用密码（名字 icloud，可用工具填 connector.calendar, connector.mail），再去掉下面的注释
+  # calendar:
+  #   url: https://caldav.icloud.com
+  #   username: you@icloud.com
+  #   password: vault://icloud
+  # mail:
+  #   imap: imap.mail.me.com:993
+  #   smtp: smtp.mail.me.com:587
+  #   username: you@icloud.com
+  #   password: vault://icloud
+
+# ---- 消息渠道 ----
+# channels:
+#   - name: qq
+#     type: qq
+#     app_id: "102012345"
+#     secret: vault://qqbot
+#     owners: []
+
+mcp_servers: []
+tools: []
+approval:
+  rules: []
+  caps: {daily_auto_amount_yuan: 500, daily_auto_count: 20, per_task_amount_yuan: 1000}

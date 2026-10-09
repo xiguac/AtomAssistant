@@ -1,0 +1,35 @@
+[Unit]
+Description=AtomHelper 原子助手
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atomhelper
+Group=atomhelper
+# 密钥只在这个文件里：数据库连接串、保险库密钥、后台口令的摘要。root 可写，服务账号只读。
+EnvironmentFile=/etc/atomhelper/env
+# 程序在 /opt/atomhelper/current（指向某个版本目录的链接），数据在 /var/lib/atomhelper。
+# 更新程序只是换这个链接指向哪里，数据一个字节都不动。
+ExecStart=/opt/atomhelper/current/atomd
+WorkingDirectory=/var/lib/atomhelper
+# 在后台点"重启"、或者进程自己退出，都由这里拉起新的。
+Restart=always
+RestartSec=2
+# 给调度器一点时间把在跑的任务放回队列。
+TimeoutStopSec=30
+
+# 收紧权限：服务账号只能写自己的数据目录，碰不到系统的其他地方。
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/atomhelper
+
+[Install]
+WantedBy=multi-user.target

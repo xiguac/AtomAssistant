@@ -1,0 +1,45 @@
+{{define "content"}}
+<section>
+  <h2>交代一件事</h2>
+  <form method="post" action="/tasks">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <textarea name="goal" placeholder="比如：下周五下午三点跟供应商开会，3 号会议室，记一下"></textarea>
+    <div class="row" style="margin-top:10px"><button>交给助手</button></div>
+  </form>
+</section>
+
+{{with .Data}}
+<section>
+  <h2>等你处理（{{len .Waiting}}）</h2>
+  {{if .Waiting}}<table>
+    {{range .Waiting}}<tr>
+      <td style="width:38%"><a href="/tasks/{{.ID}}">{{short .Title 30}}</a></td>
+      <td>{{short .Reason 90}}</td>
+      <td class="muted" style="white-space:nowrap">{{when .UpdatedAt}}</td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted">没有需要你确认或回答的。</div>{{end}}
+</section>
+
+<section>
+  <h2>进行中（{{len .Active}}）</h2>
+  {{if .Active}}<table>
+    {{range .Active}}<tr>
+      <td style="width:38%"><a href="/tasks/{{.ID}}">{{short .Title 30}}</a></td>
+      <td><span class="tag">{{stateName .State}}</span> {{short .Reason 70}}</td>
+      <td class="muted" style="white-space:nowrap">{{when .UpdatedAt}}</td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted">没有正在进行的任务。</div>{{end}}
+</section>
+
+<section>
+  <h2>最近结束的</h2>
+  {{if .Recent}}<table>
+    {{range .Recent}}<tr>
+      <td style="width:38%"><a href="/tasks/{{.ID}}">{{short .Title 30}}</a></td>
+      <td><span class="tag">{{stateName .State}}</span> {{short .Reason 70}}</td>
+      <td class="muted" style="white-space:nowrap">{{when .UpdatedAt}}</td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted">还没有。</div>{{end}}
+</section>
+{{end}}
+{{end}}

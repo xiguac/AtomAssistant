@@ -1,0 +1,22 @@
+{{define "content"}}
+<section>
+  <h2>配置</h2>
+  <div class="muted">
+    文件位置：<code>{{index .Data "Path"}}</code>。保存前会先校验，有错的一个字都不会写进去；旧的那份留一个 .bak 备份。
+    密码和密钥不要写在这里——存进「保险库」，这里写 <code>vault://名字</code>。保存之后要重启才生效。
+  </div>
+  <form method="post" action="/config" style="margin-top:10px">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <textarea class="code" name="text" spellcheck="false">{{index .Data "Text"}}</textarea>
+    <div class="row" style="margin-top:10px"><button>校验并保存</button></div>
+  </form>
+</section>
+
+<section>
+  <h2>重启</h2>
+  <div class="muted">让改过的配置和保险库里新存的密钥生效。正在执行的任务会先放回队列，重启后接着做，不会丢。</div>
+  <form method="post" action="/restart" style="margin-top:10px">
+    <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="plain">重启助手</button>
+  </form>
+</section>
+{{end}}

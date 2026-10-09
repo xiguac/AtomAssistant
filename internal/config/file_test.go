@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,12 +171,12 @@ func TestBuildRouter_密钥缺失时报错且不写进配置(t *testing.T) {
 		t.Fatalf("加载失败: %v", err)
 	}
 	t.Setenv("DEEPSEEK_API_KEY", "")
-	if _, err := f.BuildRouter(); err == nil {
+	if _, err := f.BuildRouter(context.Background(), nil); err == nil {
 		t.Fatal("密钥环境变量未设置时应报错")
 	}
 
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
-	r, err := f.BuildRouter()
+	r, err := f.BuildRouter(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("构造路由失败: %v", err)
 	}

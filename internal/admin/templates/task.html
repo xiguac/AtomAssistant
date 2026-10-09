@@ -1,0 +1,58 @@
+{{define "content"}}
+{{with .Data}}
+<section>
+  <h2>{{.Task.Title}} <span class="tag">{{stateName .Task.State}}</span></h2>
+  <pre>{{.Task.Goal}}</pre>
+  {{if .Task.Reason}}<div style="white-space:pre-wrap">{{.Task.Reason}}</div>{{end}}
+  <div class="muted" style="margin-top:8px">
+    {{when .Task.CreatedAt}} 创建 · 已用 {{.Task.Usage.Tokens}} tokens、{{.Task.Usage.CostCents}} 分 · 来源 {{.Task.Origin}}
+    {{range .Task.Tags}} · <span class="tag">{{.}}</span>{{end}}
+  </div>
+</section>
+
+{{if .Pending}}
+<section>
+  <h2>等你确认：{{.Pending.Tool}}</h2>
+  <div class="muted">批准之前看清楚它要做什么。下面是这一步的完整参数。</div>
+  <pre>{{.Params}}</pre>
+  <div class="row">
+    <form method="post" action="/tasks/{{.Task.ID}}/approve">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button>批准</button>
+    </form>
+  </div>
+  <form method="post" action="/tasks/{{.Task.ID}}/reject" style="margin-top:12px">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>不批准的话，告诉它哪里要改</label>
+    <input type="text" name="reason" placeholder="比如：改到下午四点；语气再正式一点">
+    <div class="row" style="margin-top:8px"><button class="bad">打回</button></div>
+  </form>
+</section>
+{{else if .Asking}}
+<section>
+  <h2>对这个任务说话</h2>
+  <form method="post" action="/tasks/{{.Task.ID}}/reply">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <textarea name="text" placeholder="回答它的提问，或者随时补充材料"></textarea>
+    <div class="row" style="margin-top:8px"><button>发送</button></div>
+  </form>
+</section>
+{{end}}
+
+<section>
+  <h2>做过的步骤（{{len .Steps}}）</h2>
+  {{if .Steps}}<table>
+    <tr><th style="width:44px">#</th><th style="width:170px">动作</th><th>结果</th></tr>
+    {{range .Steps}}<tr>
+      <td>{{.Seq}}</td>
+      <td>{{if .ToolName}}{{.ToolName}}{{else}}{{.Type}}{{end}}<br><span class="muted">{{.Status}}</span>
+        {{if eq (print .OutputTrust) "external"}}<br><span class="tag ext">外部内容</span>{{end}}</td>
+      <td>
+        {{if .Err}}<div style="color:var(--bad)">{{.Err}}</div>{{end}}
+        {{if .In}}<details><summary>参数</summary><pre>{{.In}}</pre></details>{{end}}
+        {{if .Out}}<details><summary>输出</summary><pre>{{.Out}}</pre></details>{{end}}
+      </td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted">还没有开始。</div>{{end}}
+</section>
+{{end}}
+{{end}}

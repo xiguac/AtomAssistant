@@ -40,6 +40,15 @@ type Config struct {
 	WebhookAddr  string
 	WebhookToken string
 
+	// AdminAddr 是网页管理后台的监听地址，如 127.0.0.1:8780。为空则不开。
+	// 不是本机地址时必须同时给出 TLS 证书，否则拒绝启动。
+	AdminAddr string
+	// AdminPasswordHash 是后台登录口令的 bcrypt 摘要，用 atomctl admin passwd 生成。
+	AdminPasswordHash string
+	// AdminTLSCert 与 AdminTLSKey 是后台的 TLS 证书和私钥文件。
+	AdminTLSCert string
+	AdminTLSKey  string
+
 	// SkillScanner 是 Skill 安装前扫描器的可执行文件，空值按 skillspector。
 	// SkillScannerArgs 是追加给它的参数，按空白分隔。
 	// 这两项只能由用户在环境里配置：助手没有任何途径改它们，也就关不掉扫描。
@@ -61,6 +70,11 @@ func Load() (*Config, error) {
 
 		WebhookAddr:  os.Getenv("ATOM_WEBHOOK_ADDR"),
 		WebhookToken: os.Getenv("ATOM_WEBHOOK_TOKEN"),
+
+		AdminAddr:         os.Getenv("ATOM_ADMIN_ADDR"),
+		AdminPasswordHash: os.Getenv("ATOM_ADMIN_PASSWORD_HASH"),
+		AdminTLSCert:      os.Getenv("ATOM_ADMIN_TLS_CERT"),
+		AdminTLSKey:       os.Getenv("ATOM_ADMIN_TLS_KEY"),
 
 		SkillScanner:     os.Getenv("ATOM_SKILL_SCANNER"),
 		SkillScannerArgs: strings.Fields(os.Getenv("ATOM_SKILL_SCANNER_ARGS")),

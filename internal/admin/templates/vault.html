@@ -1,0 +1,42 @@
+{{define "content"}}
+<section>
+  <h2>保险库</h2>
+  <div class="muted">
+    密码、密钥、证件号这类东西放在这里。存进去之后<strong>谁也读不出来</strong>——包括这个后台和助手自己，
+    只有你点名的那些工具能在调用的一瞬间用到它。要改就存一条同名的把它换掉。
+  </div>
+  {{if .Data}}<table style="margin-top:10px">
+    <tr><th>名字</th><th>用途</th><th>哪些工具能用</th><th>存入时间</th><th></th></tr>
+    {{range .Data}}<tr>
+      <td><code>vault://{{.Label}}</code></td>
+      <td>{{.Note}}</td>
+      <td>{{if .AllowedTools}}{{join .AllowedTools "、"}}{{else}}<span class="muted">谁都不能用</span>{{end}}</td>
+      <td class="muted" style="white-space:nowrap">{{when .CreatedAt}}</td>
+      <td><form method="post" action="/vault/delete">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
+        <button class="bad">删除</button></form></td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted" style="margin-top:10px">还是空的。</div>{{end}}
+</section>
+
+<section>
+  <h2>存入一条</h2>
+  <form method="post" action="/vault" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>名字（字母、数字、中文、_ - .），配置里用 vault://名字 来引用它</label>
+    <input type="text" name="label" placeholder="deepseek">
+    <label>用途（给你自己和助手看的说明，不要把秘密写在这里）</label>
+    <input type="text" name="note" placeholder="DeepSeek 的 API Key">
+    <label>内容</label>
+    <input type="password" name="value" autocomplete="new-password">
+    <label>哪些工具能用它（逗号或空格分隔）</label>
+    <input type="text" name="tools" placeholder="provider.deepseek">
+    <div class="row" style="margin-top:12px"><button>存入</button></div>
+  </form>
+  <div class="muted" style="margin-top:12px">
+    工具的名字这样写：模型服务是 <code>provider.服务名</code>；日历是 <code>connector.calendar</code>；邮件是 <code>connector.mail</code>；
+    消息渠道是 <code>channel.渠道名</code>；MCP 工具写它的全名，如 <code>maps.book_ride</code>。
+    一条内容可以同时给几个工具用，比如 iCloud 的 App 专用密码写 <code>connector.calendar, connector.mail</code>。
+  </div>
+</section>
+{{end}}

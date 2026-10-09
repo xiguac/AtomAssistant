@@ -149,6 +149,36 @@ atomctl vault put qqbot "QQ 机器人 AppSecret" channel.qq
 连接方式是我们主动连出去的 WebSocket，不需要公网地址，放在家里的机器或内网服务器上也能用。
 飞书、钉钉沿用同一套接口，尚未实现。
 
+### 网页管理后台与部署
+
+在浏览器里看任务、批准动作、往保险库里存密钥、改配置、传文件。它经手的是最敏感的东西，所以：
+
+- 必须登录，口令只以 bcrypt 摘要的形式存在；连续输错会暂时锁住。
+- **默认只听本机**，经 SSH 隧道访问。监听地址不是本机时必须同时配置 TLS 证书，否则拒绝启动。
+- 每个改动都要带防伪令牌；保险库在这里同样只进不出；页面上别人写的内容一律转义。
+- 助手本身起不来时（比如模型密钥还没存），后台照常可用，并在页面顶上写明原因——缺什么就在这里补什么，然后点重启。
+
+模型的 API Key 也可以放进保险库：配置里写 `api_key: vault://deepseek`，保险库那一条授权给 `provider.deepseek`。
+
+部署到服务器（程序和数据分开放，更新程序不动数据）：
+
+```
+/opt/atomhelper/releases/<版本>/   程序的各个版本，current 链接指向正在用的
+/var/lib/atomhelper/               数据：config/ 配置，files/ 文件工作区
+/etc/atomhelper/env                密钥：数据库连接串、保险库密钥、后台口令摘要
+```
+
+```bash
+cp deploy/deploy.env.example deploy/deploy.env   # 填上服务器地址和 SSH 私钥路径
+deploy/deploy.sh setup     # 第一次：装 PostgreSQL、建账号和目录、装 systemd 服务、上传程序
+deploy/deploy.sh passwd    # 设置后台口令并启动（口令在你的终端里输入，不落在任何文件里）
+deploy/deploy.sh tunnel    # 打开隧道，然后访问 http://127.0.0.1:8780
+deploy/deploy.sh           # 之后每次更新：编译、上传、切换；新版本起不来会自动退回上一版
+```
+
+服务器不需要为它开任何入站端口：后台走 SSH 隧道（用的是 SSH 本来就开着的 22），
+QQ 机器人、模型、日历、邮件都是助手主动连出去的。
+
 ### 处理文件
 
 助手能读写常见的办公文件。全部在本机完成，用的是开放的文件格式和纯 Go 的实现：
@@ -442,10 +472,10 @@ Postgres 契约测试默认跳过，需要真实数据库：
 
 ```bash
 docker compose up -d
-ATOM_TEST_DSN='postgres://postgres:atom@127.0.0.1:55432/atomhelper' go test ./internal/store/pg/
+ATOM_TEST_DSN='postgres://postgres:atom@127.0.0.1:55432/atomhelper_test' go test -p 1 ./...
 ```
 
-注意该测试会清空目标库，**不要指向生产数据库**。
+注意该测试会清空目标库，**不要指向生产数据库**。用到数据库的几个包共用这一个库，所以要加 `-p 1` 让它们一个一个跑。
 
 日历和邮件连接器的集成测试同样默认跳过，需要本地的测试服务器：
 

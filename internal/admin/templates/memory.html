@@ -1,0 +1,30 @@
+{{define "content"}}
+{{with .Data}}
+<section>
+  <h2>等你确认的（{{len .Pending}}）</h2>
+  <div class="muted">这些是助手从做过的事里提炼出来的，还没有生效。你确认了，它之后才会照着来。</div>
+  {{if .Pending}}<table style="margin-top:8px">
+    {{range .Pending}}<tr>
+      <td style="width:110px"><span class="tag">{{.Candidate.Kind}}</span><br><span class="muted">{{.Candidate.Domain}}</span></td>
+      <td><div style="white-space:pre-wrap">{{.Candidate.Value}}</div></td>
+      <td style="width:150px"><div class="row">
+        <form method="post" action="/memory/confirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>确认</button></form>
+        <form method="post" action="/memory/dismiss"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="bad">否决</button></form>
+      </div></td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted" style="margin-top:8px">没有。</div>{{end}}
+</section>
+
+<section>
+  <h2>已经记住的（{{len .Memories}}）</h2>
+  {{if .Memories}}<table>
+    <tr><th style="width:110px">类型</th><th style="width:150px">关于</th><th>内容</th></tr>
+    {{range .Memories}}<tr>
+      <td><span class="tag">{{.Kind}}</span></td>
+      <td>{{.Subject}}{{if .Domain}}<br><span class="muted">{{.Domain}}</span>{{end}}</td>
+      <td><div style="white-space:pre-wrap">{{short .Current.Value 400}}</div></td>
+    </tr>{{end}}
+  </table>{{else}}<div class="muted">还没有。</div>{{end}}
+</section>
+{{end}}
+{{end}}

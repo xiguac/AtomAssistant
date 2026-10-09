@@ -14,9 +14,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/xiguac/atomhelper/internal/admin"
 	"github.com/xiguac/atomhelper/internal/agent"
 	"github.com/xiguac/atomhelper/internal/channel"
 	"github.com/xiguac/atomhelper/internal/config"
@@ -52,12 +54,6 @@ func run(migrateOnly, checkOnly bool) error {
 	}
 	log := newLogger(cfg.LogLevel)
 
-	// 配置错误要在连数据库之前就暴露出来。
-	file, err := config.LoadFile(cfg.ConfigPath)
-	if err != nil {
-		return err
-	}
-
 	initCtx, cancelInit := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelInit()
 
@@ -75,9 +71,35 @@ func run(migrateOnly, checkOnly bool) error {
 		return nil
 	}
 
-	parts, err := build(initCtx, cfg, file, st, log)
+	// 收到信号后取消 ctx，调度器会把在跑的任务放回队列再退出，
+	// 下次启动能立刻接着跑，不必等租约过期。
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// 事件与任务同库：订阅和收件箱都在数据库里，进程重启不丢。
+	bus := event.NewBus(st.Events(), st)
+
+	// 管理后台先于助手本身启动：配置没填完、密钥还没存的时候，
+	// 用户得有个地方把它们填上——而这个地方就是后台。
+	var problem atomic.Value
+	problem.Store("")
+	adminOn := cfg.AdminAddr != "" && !checkOnly
+	if adminOn {
+		if err := startAdmin(ctx, cfg, st, bus, stop, func() string { return problem.Load().(string) }, log); err != nil {
+			return err
+		}
+	}
+
+	parts, err := assemble(initCtx, cfg, st, log)
 	if err != nil {
-		return err
+		if !adminOn {
+			return err
+		}
+		// 助手起不来，但后台要留着：否则用户连修的地方都没有。
+		log.Error("助手未能启动，目前只有管理后台在运行", "err", err)
+		problem.Store(err.Error())
+		<-ctx.Done()
+		return nil
 	}
 	defer parts.close()
 
@@ -86,8 +108,6 @@ func run(migrateOnly, checkOnly bool) error {
 		return nil
 	}
 
-	// 事件与任务同库：订阅和收件箱都在数据库里，进程重启不丢。
-	bus := event.NewBus(st.Events(), st)
 	engine := kernel.NewEngine(st, parts.planner, parts.actuator).
 		WithSubscriber(bus).
 		WithInbox(bus)
@@ -104,11 +124,6 @@ func run(migrateOnly, checkOnly bool) error {
 		LeaseDuration:    cfg.LeaseDuration,
 		MaxStepsPerClaim: cfg.MaxStepsPerClaim,
 	}, log).WithCron(schedule.NewRunner(st.Schedules(), st, core.DefaultBudget()))
-
-	// 收到信号后取消 ctx，调度器会把在跑的任务放回队列再退出，
-	// 下次启动能立刻接着跑，不必等租约过期。
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// 消息渠道：主人在聊天软件里发来的话变成任务，任务的进展推回去。
 	if len(parts.channels) > 0 {
@@ -133,6 +148,54 @@ func run(migrateOnly, checkOnly bool) error {
 	}
 
 	return sched.Run(ctx)
+}
+
+// assemble 读取配置文件并装出各个部件。
+func assemble(ctx context.Context, cfg *config.Config, st *pg.Store, log *slog.Logger) (*parts, error) {
+	file, err := config.LoadFile(cfg.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	return build(ctx, cfg, file, st, log)
+}
+
+// startAdmin 启动网页管理后台。
+func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, bus *event.Bus,
+	restart func(), status func() string, log *slog.Logger) error {
+	tls := cfg.AdminTLSCert != "" && cfg.AdminTLSKey != ""
+	if err := admin.CheckAddr(cfg.AdminAddr, tls); err != nil {
+		return err
+	}
+	safe, err := vault.Open(st.Vault(), cfg.VaultKey)
+	if err != nil {
+		return err
+	}
+	srv, err := admin.New(admin.Options{
+		Store: st, Vault: safe,
+		Tasks:        &channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()},
+		ConfigPath:   cfg.ConfigPath,
+		PasswordHash: cfg.AdminPasswordHash,
+		TLS:          tls,
+		// 让进程正常退出，由 systemd 拉起新的。
+		Restart: restart,
+		Status:  status,
+		Log:     log,
+	})
+	if err != nil {
+		return err
+	}
+	// 先同步确认端口能用再转到后台去服务：端口被占这类问题要在启动时就报出来。
+	ln, err := net.Listen("tcp", cfg.AdminAddr)
+	if err != nil {
+		return fmt.Errorf("管理后台监听 %s 失败: %w", cfg.AdminAddr, err)
+	}
+	_ = ln.Close()
+	go func() {
+		if err := srv.Serve(ctx, cfg.AdminAddr, cfg.AdminTLSCert, cfg.AdminTLSKey); err != nil {
+			log.Error("管理后台异常退出", "err", err)
+		}
+	}()
+	return nil
 }
 
 // serveWebhook 启动 Webhook 入口，返回一个用于关停它的函数。
@@ -186,16 +249,6 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		return &parts{planner: demo.Planner{}, actuator: demo.Actuator{}, close: func() {}}, nil
 	}
 
-	router, err := file.BuildRouter()
-	if err != nil {
-		return nil, err
-	}
-	registry, err := file.BuildRegistry()
-	if err != nil {
-		return nil, err
-	}
-	guard := policy.NewGuard(policy.NewClassifier(), registry)
-
 	// 保险库：明文只在网关调用工具的那一刻出现，模型与日志只见句柄。
 	safe, err := vault.Open(st.Vault(), cfg.VaultKey)
 	if err != nil {
@@ -204,6 +257,17 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if cfg.VaultKey == "" {
 		log.Warn("未设置 ATOM_VAULT_KEY，保险库处于锁定状态，引用保险库条目的工具调用会被拒绝")
 	}
+
+	// 模型密钥可以放在保险库里，所以路由排在保险库之后。
+	router, err := file.BuildRouter(ctx, safe)
+	if err != nil {
+		return nil, err
+	}
+	registry, err := file.BuildRegistry()
+	if err != nil {
+		return nil, err
+	}
+	guard := policy.NewGuard(policy.NewClassifier(), registry)
 
 	gw, err := mcpgw.New(mcpgw.Options{
 		Secrets:  safe,

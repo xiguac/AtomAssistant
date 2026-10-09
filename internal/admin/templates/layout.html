@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原子助手</title>
+<style>
+:root { --fg:#1f2d3d; --muted:#6b7785; --line:#e3e8ee; --bg:#f6f8fa; --accent:#2f6fed; --warn:#b54708; --bad:#b42318; --ok:#067647; }
+* { box-sizing: border-box; }
+body { margin:0; font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color:var(--fg); background:var(--bg); }
+header { background:#fff; border-bottom:1px solid var(--line); padding:0 20px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+header b { margin-right:16px; padding:14px 0; }
+header a { padding:14px 10px; color:var(--muted); text-decoration:none; border-bottom:2px solid transparent; }
+header a.on { color:var(--fg); border-bottom-color:var(--accent); }
+header form { margin-left:auto; }
+main { max-width:980px; margin:20px auto; padding:0 16px; }
+section { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin-bottom:16px; }
+h2 { font-size:16px; margin:0 0 10px; }
+table { width:100%; border-collapse:collapse; }
+th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font-weight:500; font-size:13px; }
+tr:last-child td { border-bottom:0; }
+a { color:var(--accent); }
+input[type=text], input[type=password], textarea, input[type=file] { width:100%; padding:8px 10px; border:1px solid #cfd6de; border-radius:6px; font:inherit; background:#fff; }
+textarea { min-height:90px; resize:vertical; }
+textarea.code { font:13px/1.5 Consolas,"SFMono-Regular",Menlo,monospace; min-height:460px; white-space:pre; overflow-wrap:normal; overflow-x:auto; }
+label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+button { padding:7px 14px; border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:6px; font:inherit; cursor:pointer; }
+button.plain { background:#fff; color:var(--fg); border-color:#cfd6de; }
+button.bad { background:#fff; color:var(--bad); border-color:#f0b8b3; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.msg { padding:10px 14px; border-radius:6px; margin-bottom:16px; white-space:pre-wrap; }
+.msg.ok { background:#ecfdf3; color:var(--ok); border:1px solid #abefc6; }
+.msg.err { background:#fef3f2; color:var(--bad); border:1px solid #fecdca; }
+.msg.warn { background:#fffaeb; color:var(--warn); border:1px solid #fedf89; }
+.muted { color:var(--muted); font-size:13px; }
+pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; margin:6px 0; overflow-x:auto; white-space:pre-wrap; word-break:break-word; font:13px/1.5 Consolas,Menlo,monospace; }
+.tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; background:var(--bg); border:1px solid var(--line); color:var(--muted); }
+.tag.ext { background:#fffaeb; border-color:#fedf89; color:var(--warn); }
+details summary { cursor:pointer; color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+{{if .CSRF}}
+<header>
+  <b>原子助手</b>
+  <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}">任务</a>
+  <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}">保险库</a>
+  <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}">记忆</a>
+  <a href="/files" class="{{if eq .Page "files"}}on{{end}}">文件</a>
+  <a href="/config" class="{{if eq .Page "config"}}on{{end}}">配置</a>
+  <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="plain">退出</button></form>
+</header>
+{{end}}
+<main>
+{{if and .CSRF .Status}}<div class="msg warn">助手本身还没有运行，目前只有这个后台可用。原因：
+{{.Status}}
+
+把缺的东西补上（密钥存进「保险库」，其余写进「配置」），然后在「配置」页点重启。</div>{{end}}
+{{if .Notice}}<div class="msg ok">{{.Notice}}</div>{{end}}
+{{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>

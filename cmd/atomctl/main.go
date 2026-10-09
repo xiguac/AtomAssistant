@@ -66,6 +66,9 @@ const usage = `用法:
   atomctl file list [目录]       看工作区里有什么
   atomctl file dir               打印工作区在磁盘上的位置（也可以直接往里拷文件）
 
+  atomctl admin passwd           为网页管理后台设置登录口令：从标准输入读口令，打印要放进
+                                 环境变量 ATOM_ADMIN_PASSWORD_HASH 的摘要
+
   atomctl connector check        试连配置里的日历和邮件，确认账号、密码和服务器地址都对
 
   atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
@@ -163,6 +166,8 @@ func run(args []string) error {
 		return connectorCmd(st, cfg, args[1:])
 	case "file":
 		return fileCmd(cfg, args[1:])
+	case "admin":
+		return adminCmd(args[1:])
 	case "style":
 		return styleCmd(ctx, st, cfg, args[1:])
 	case "skill":
