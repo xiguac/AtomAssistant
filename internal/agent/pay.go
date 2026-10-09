@@ -254,7 +254,12 @@ func (a *Actuator) runPay(ctx context.Context, t *core.Task, s *core.Step) (json
 // 照常分级的话每一笔付款都会被判成"含绝密数据"而直接拒绝。
 // 所以这两个字段不分级；服务内容和收款方是自由文本，仍然分级——
 // 模型若把证件号之类的东西塞进去，照样会被拦下。
+//
+// 日历的日程 id 同理：它是服务器上的一个路径，里面常常带着一长串编号。
 func classifiable(d kernel.Decision) json.RawMessage {
+	if isCalendarTool(d.ToolName) {
+		return without(d.Input, "id")
+	}
 	if !isPayTool(d.ToolName) {
 		return d.Input
 	}
@@ -270,6 +275,22 @@ func classifiable(d kernel.Decision) json.RawMessage {
 	out, err := json.Marshal(in)
 	if err != nil {
 		return d.Input
+	}
+	return out
+}
+
+// without 返回去掉指定字段后的参数。解析不了就原样交回去，由分级器按最保守的方式处理。
+func without(raw json.RawMessage, fields ...string) json.RawMessage {
+	var in map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return raw
+	}
+	for _, f := range fields {
+		delete(in, f)
+	}
+	out, err := json.Marshal(in)
+	if err != nil {
+		return raw
 	}
 	return out
 }

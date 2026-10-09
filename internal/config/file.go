@@ -2,12 +2,15 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/xiguac/atomhelper/internal/connector/calendar"
+	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
@@ -28,6 +31,90 @@ type File struct {
 	Approval  ApprovalConfig   `yaml:"approval"`
 	Reply     ReplyConfig      `yaml:"reply"`
 	Payment   PaymentConfig    `yaml:"payment"`
+	// Connectors 是直连开放协议的内建连接器：日历（CalDAV）、邮件（IMAP/SMTP）。
+	Connectors ConnectorsConfig `yaml:"connectors"`
+}
+
+// ConnectorsConfig 是内建连接器的配置。不写的那一项就不接入。
+type ConnectorsConfig struct {
+	Calendar *CalendarConfig `yaml:"calendar"`
+	Mail     *MailConfig     `yaml:"mail"`
+}
+
+// 连接器在保险库授权名单里的名字。密码条目要把对应的名字列进可用工具，连接器才取得到。
+const (
+	VaultUserCalendar = "connector.calendar"
+	VaultUserMail     = "connector.mail"
+)
+
+// CalendarConfig 是日历连接器（CalDAV）的配置。
+type CalendarConfig struct {
+	// URL 是 CalDAV 服务器地址，iCloud 是 https://caldav.icloud.com。
+	URL      string `yaml:"url"`
+	Username string `yaml:"username"`
+	// Password 必须是保险库句柄（vault://名字），不接受明文。
+	// iCloud 要用"App 专用密码"，不是 Apple ID 的登录密码。
+	Password string `yaml:"password"`
+	// DefaultCalendar 是新建日程默认写入的日历名。账户里只有一个日历时可以不写。
+	DefaultCalendar string `yaml:"default_calendar"`
+}
+
+// MailConfig 是邮件连接器（IMAP/SMTP）的配置。
+type MailConfig struct {
+	// IMAP 是收信服务器，写成 主机:端口，iCloud 是 imap.mail.me.com:993。
+	IMAP string `yaml:"imap"`
+	// SMTP 是发信服务器，iCloud 是 smtp.mail.me.com:587。不写则助手只能读和整理，不能发信。
+	SMTP     string `yaml:"smtp"`
+	Username string `yaml:"username"`
+	// Password 必须是保险库句柄（vault://名字），不接受明文。
+	Password string `yaml:"password"`
+	// From 是发信地址，不写按 username。Name 是发信时显示的名字。
+	From string `yaml:"from"`
+	Name string `yaml:"name"`
+	// 加密方式 tls / starttls / none，不写按端口推断。none 只允许用于本机地址。
+	IMAPSecurity string `yaml:"imap_security"`
+	SMTPSecurity string `yaml:"smtp_security"`
+}
+
+// SecretLender 按句柄借出保险库里的值，由 *vault.Vault 提供。
+type SecretLender interface {
+	Lend(handle, user string) (func(ctx context.Context) (string, error), error)
+}
+
+// Calendar 按配置构造日历连接器。没有配置时返回 nil。
+func (f *File) Calendar(secrets SecretLender) (*calendar.Client, error) {
+	c := f.Connectors.Calendar
+	if c == nil {
+		return nil, nil
+	}
+	if c.URL == "" || c.Username == "" {
+		return nil, fmt.Errorf("config: connectors.calendar 必须配齐 url / username / password")
+	}
+	secret, err := secrets.Lend(c.Password, VaultUserCalendar)
+	if err != nil {
+		return nil, fmt.Errorf("config: connectors.calendar.password: %w", err)
+	}
+	return &calendar.Client{Endpoint: c.URL, Username: c.Username, Secret: secret, Default: c.DefaultCalendar}, nil
+}
+
+// Mail 按配置构造邮件连接器。没有配置时返回 nil。
+func (f *File) Mail(secrets SecretLender) (*mail.Client, error) {
+	c := f.Connectors.Mail
+	if c == nil {
+		return nil, nil
+	}
+	if c.IMAP == "" || c.Username == "" {
+		return nil, fmt.Errorf("config: connectors.mail 必须配齐 imap / username / password")
+	}
+	secret, err := secrets.Lend(c.Password, VaultUserMail)
+	if err != nil {
+		return nil, fmt.Errorf("config: connectors.mail.password: %w", err)
+	}
+	return &mail.Client{
+		IMAPAddr: c.IMAP, IMAPSecurity: mail.Security(c.IMAPSecurity),
+		SMTPAddr: c.SMTP, SMTPSecurity: mail.Security(c.SMTPSecurity),
+		Username: c.Username, From: c.From, Name: c.Name, Secret: secret,
+	}, nil
 }
 
 // ProviderConfig 是一家模型服务。

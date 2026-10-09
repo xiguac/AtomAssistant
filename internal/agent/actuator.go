@@ -41,6 +41,28 @@ type Actuator struct {
 	payer  Payer
 	// resources 非空时启用付费资源（HTTP 402）。
 	resources PaidResources
+	calendar  CalendarService
+	mail      MailService
+	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
+	audit mcpgw.AuditSink
+}
+
+// WithCalendar 接入日历连接器。
+func (a *Actuator) WithCalendar(c CalendarService) *Actuator {
+	a.calendar = c
+	return a
+}
+
+// WithMail 接入邮件连接器。
+func (a *Actuator) WithMail(m MailService) *Actuator {
+	a.mail = m
+	return a
+}
+
+// WithAudit 让内建连接器的调用留下审计记录。
+func (a *Actuator) WithAudit(sink mcpgw.AuditSink) *Actuator {
+	a.audit = sink
+	return a
 }
 
 // WithPaidResources 接入付费资源。必须同时接入 Payer。
@@ -124,6 +146,28 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		}
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if isConnectorTool(s.ToolName) {
+		var out json.RawMessage
+		var err error
+		if isCalendarTool(s.ToolName) {
+			out, err = a.runCalendar(ctx, s)
+		} else {
+			out, err = a.runMail(ctx, s)
+		}
+		trust := connectorTrust(s.ToolName)
+		if a.audit != nil {
+			detail := fmt.Sprintf("成功，副作用=%s", s.SideEffect)
+			if err != nil {
+				detail = "失败: " + err.Error()
+			}
+			// 审计只记做了什么，不记内容。审计写不进去不影响这一步的结果。
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, trust, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		return kernel.Result{Output: out, Trust: trust}, nil
 	}
 	if isResourceTool(s.ToolName) {
 		out, err := a.runResource(ctx, t, s)

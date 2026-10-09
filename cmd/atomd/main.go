@@ -247,6 +247,27 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		}
 	}
 
+	// 内建连接器：密码每次连接时从保险库现取，配置里只有句柄。
+	actuator = actuator.WithAudit(agent.NewStoreAudit(st))
+	cal, err := file.Calendar(safe)
+	if err != nil {
+		return nil, err
+	}
+	if cal != nil {
+		planner = planner.WithCalendar(true)
+		actuator = actuator.WithCalendar(cal)
+		log.Info("已接入日历", "服务器", cal.Endpoint, "账号", cal.Username)
+	}
+	box, err := file.Mail(safe)
+	if err != nil {
+		return nil, err
+	}
+	if box != nil {
+		planner = planner.WithMail(true, box.SMTPAddr != "")
+		actuator = actuator.WithMail(box)
+		log.Info("已接入邮件", "收信", box.IMAPAddr, "发信", box.SMTPAddr, "账号", box.Username)
+	}
+
 	return &parts{
 		planner:  planner,
 		actuator: actuator,

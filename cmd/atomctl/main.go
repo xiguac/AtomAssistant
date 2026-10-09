@@ -57,16 +57,19 @@ const usage = `用法:
                                  提交开通过程中支付宝给你的验证码
   atomctl pay wallet close       关闭授权
 
+  atomctl connector check        试连配置里的日历和邮件，确认账号、密码和服务器地址都对
+
   atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
   atomctl vault put <名字> <用途说明> [工具,工具...]
                                  存入一条敏感信息。值从标准输入读取，不出现在命令行里
+                                 日历和邮件的密码也存在这里，工具名单写 connector.calendar,connector.mail
   atomctl vault list             列出条目的名字、用途与授权的工具（看不到值）
   atomctl vault rm <名字>        删除一条
 
   atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / vault / skills / all
   atomctl import <文件>          导入。已存在的数据不会被覆盖
 
-环境变量: ATOM_DSN（必填）
+环境变量: ATOM_DSN（必填）；用到保险库的命令还要 ATOM_VAULT_KEY，connector 还要 ATOM_CONFIG
 `
 
 func main() {
@@ -147,6 +150,8 @@ func run(args []string) error {
 		return scheduleCmd(ctx, st, args[1:])
 	case "pay":
 		return payCmd(ctx, cfg, args[1:])
+	case "connector":
+		return connectorCmd(st, cfg, args[1:])
 	case "skill":
 		return skillCmd(ctx, st, cfg, args[1:])
 	case "run":

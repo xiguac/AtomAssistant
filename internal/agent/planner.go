@@ -156,6 +156,8 @@ type Planner struct {
 	pay bool
 	// paidResources 为真表示允许请求付费资源。
 	paidResources bool
+	// 已接入的内建连接器。canSend 为真表示邮件连接器配了发信服务器。
+	hasCalendar, hasMail, canSend bool
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -232,14 +234,28 @@ func (p *Planner) WithPaidResources(enabled bool) *Planner {
 	return p
 }
 
+// WithCalendar 向模型开放日历工具。实际执行由 Actuator 上的 CalendarService 完成。
+func (p *Planner) WithCalendar(enabled bool) *Planner {
+	p.hasCalendar = enabled
+	return p
+}
+
+// WithMail 向模型开放邮件工具。canSend 为假时只能读和整理，不能发信。
+func (p *Planner) WithMail(enabled, canSend bool) *Planner {
+	p.hasMail, p.canSend = enabled, canSend
+	return p
+}
+
 // builtins 返回当前这次决策可用的内置工具。
 //
 // 清单和记忆展开只读写任务自己的东西，任何任务都能用。付款不一样：
 // 任务绑定了 Skill 时，只有 Skill 明确声明了付款工具才给——
 // 否则一个别人写的流程，装上之后就凭空有了花钱的能力。
+// 日历和邮件同理：它们读的是用户最私人的数据，流程没声明就碰不到。
 func (p *Planner) builtins() []mcpgw.ToolInfo {
 	tools := builtinTools(p.memory != nil)
 	gated := append(payTools(p.pay), resourceTools(p.pay && p.paidResources)...)
+	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)
 	for _, t := range gated {
 		if p.permits(t.Name) {
 			tools = append(tools, t)

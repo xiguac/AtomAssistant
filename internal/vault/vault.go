@@ -204,6 +204,20 @@ func (v *Vault) reveal(ctx context.Context, label, tool string) (string, error) 
 	return string(plain), nil
 }
 
+// Lend 返回一个取值函数，供内建连接器（日历、邮件）在每次连接服务器时取密码。
+//
+// 它和 Inject 是同一道门：user 是连接器的名字（如 connector.calendar），
+// 必须在这一条的授权名单里；handle 必须是完整的句柄。值只在返回的那一刻存在于内存，
+// 调用方用完即弃，不得保存、不得写日志。这个函数只应由进程内我们自己的连接器调用——
+// 运维 CLI 里依然没有、也不应该有"把值打印出来"的命令。
+func (v *Vault) Lend(handle, user string) (func(ctx context.Context) (string, error), error) {
+	label, ok := strings.CutPrefix(strings.TrimSpace(handle), HandlePrefix)
+	if !ok || !ValidLabel(label) {
+		return nil, fmt.Errorf("%w: 这里必须写保险库句柄（形如 %s名字），不能直接写密码", ErrInvalid, HandlePrefix)
+	}
+	return func(ctx context.Context) (string, error) { return v.reveal(ctx, label, user) }, nil
+}
+
 // Injection 是一次把句柄换成明文的结果。
 type Injection struct {
 	// Params 是替换后的参数，只能交给工具，不能落任何日志。
