@@ -24,6 +24,7 @@ import (
 	"net"
 	netmail "net/mail"
 	"net/smtp"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -691,12 +692,39 @@ type Outgoing struct {
 	Body    string
 	// ReplyTo 是要回复的那封邮件的 ID。填了之后收件人和标题可以不写，按原信补上。
 	ReplyTo string
+	// Attachments 是随信发出的附件。
+	Attachments []Attachment
+}
+
+// Attachment 是一个附件。
+type Attachment struct {
+	Name string
+	Data []byte
+}
+
+// MaxAttachmentBytes 是一封信的附件总大小上限。多数邮件服务商的上限在 20 到 25 MB 之间。
+const MaxAttachmentBytes = 20 << 20
+
+// 常见办公文件的类型。认不出的按通用的二进制文件发。
+var attachmentTypes = map[string]string{
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".pdf":  "application/pdf",
+	".csv":  "text/csv",
+	".txt":  "text/plain",
+	".md":   "text/markdown",
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".zip":  "application/zip",
 }
 
 // Sent 是发信的结果。
 type Sent struct {
 	To      []string `json:"to"`
 	Subject string   `json:"subject"`
+	// Attachments 是随信发出的附件名。
+	Attachments []string `json:"attachments,omitempty"`
 	// Saved 表示是否已在"已发送"里留底。
 	Saved bool   `json:"saved_to_sent"`
 	Note  string `json:"note,omitempty"`
@@ -794,19 +822,21 @@ func (c *Client) Send(ctx context.Context, o Outgoing) (Sent, error) {
 		header.SetAddressList("Cc", cc)
 	}
 	header.SetSubject(subject)
-	header.Set("Content-Type", "text/plain; charset=utf-8")
 	if err := header.GenerateMessageID(); err != nil {
 		return Sent{}, fmt.Errorf("mail: 生成邮件编号失败: %w", err)
 	}
+	total := 0
+	for _, a := range o.Attachments {
+		if strings.TrimSpace(a.Name) == "" || strings.ContainsAny(a.Name, "\r\n/\\") {
+			return Sent{}, fmt.Errorf("%w: 附件名 %q 不合法", ErrInvalid, a.Name)
+		}
+		if total += len(a.Data); total > MaxAttachmentBytes {
+			return Sent{}, fmt.Errorf("%w: 附件合计超过了 %d MB", ErrInvalid, MaxAttachmentBytes>>20)
+		}
+	}
+	text := strings.ReplaceAll(strings.ReplaceAll(o.Body, "\r\n", "\n"), "\n", "\r\n")
 	var buf bytes.Buffer
-	w, err := gomail.CreateSingleInlineWriter(&buf, header)
-	if err != nil {
-		return Sent{}, fmt.Errorf("mail: 组装邮件失败: %w", err)
-	}
-	if _, err := io.WriteString(w, strings.ReplaceAll(strings.ReplaceAll(o.Body, "\r\n", "\n"), "\n", "\r\n")); err != nil {
-		return Sent{}, fmt.Errorf("mail: 组装邮件失败: %w", err)
-	}
-	if err := w.Close(); err != nil {
+	if err := assemble(&buf, header, text, o.Attachments); err != nil {
 		return Sent{}, fmt.Errorf("mail: 组装邮件失败: %w", err)
 	}
 
@@ -827,12 +857,66 @@ func (c *Client) Send(ctx context.Context, o Outgoing) (Sent, error) {
 		return Sent{}, fmt.Errorf("mail: 读取邮件编号失败: %w", err)
 	}
 	out := Sent{To: rcpt, Subject: subject, MessageID: sentID}
+	for _, a := range o.Attachments {
+		out.Attachments = append(out.Attachments, a.Name)
+	}
 	if err := c.keepCopy(ctx, buf.Bytes(), now); err != nil {
 		out.Note = "邮件已发出，但没能在「已发送」里留底：" + err.Error()
 	} else {
 		out.Saved = true
 	}
 	return out, nil
+}
+
+// assemble 把信头、正文和附件写成一封完整的邮件。
+func assemble(buf *bytes.Buffer, header gomail.Header, text string, attachments []Attachment) error {
+	if len(attachments) == 0 {
+		header.Set("Content-Type", "text/plain; charset=utf-8")
+		w, err := gomail.CreateSingleInlineWriter(buf, header)
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, text); err != nil {
+			return err
+		}
+		return w.Close()
+	}
+	mw, err := gomail.CreateWriter(buf, header)
+	if err != nil {
+		return err
+	}
+	var inline gomail.InlineHeader
+	inline.Set("Content-Type", "text/plain; charset=utf-8")
+	body, err := mw.CreateSingleInline(inline)
+	if err != nil {
+		return err
+	}
+	if _, err := io.WriteString(body, text); err != nil {
+		return err
+	}
+	if err := body.Close(); err != nil {
+		return err
+	}
+	for _, a := range attachments {
+		var h gomail.AttachmentHeader
+		kind := attachmentTypes[strings.ToLower(path.Ext(a.Name))]
+		if kind == "" {
+			kind = "application/octet-stream"
+		}
+		h.Set("Content-Type", kind)
+		h.SetFilename(a.Name)
+		w, err := mw.CreateAttachment(h)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(a.Data); err != nil {
+			return err
+		}
+		if err := w.Close(); err != nil {
+			return err
+		}
+	}
+	return mw.Close()
 }
 
 // deliver 通过 SMTP 把邮件交出去。

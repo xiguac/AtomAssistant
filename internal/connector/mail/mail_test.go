@@ -235,12 +235,35 @@ func TestMail_对真实服务器(t *testing.T) {
 		t.Fatalf("回信应带着原信的编号: %q", header)
 	}
 
-	mine, err := me.Search(ctx, Query{Folder: "sent"})
+	mine, err := me.Search(ctx, Query{Folder: "sent", Subject: "Re:"})
 	if err != nil || len(mine) != 1 || mine[0].Unread {
 		t.Fatalf("已发送里应有这封回复且是已读: %v %+v", err, mine)
 	}
 	if got, _ := me.Read(ctx, mine[0].ID, 0); got.Text != "收到，周五见。" {
 		t.Fatalf("留底的正文不对: %q", got.Text)
+	}
+
+	// 带附件：对方收到的信里看得到附件名，正文不受影响。
+	withFile, err := me.Send(ctx, Outgoing{To: []string{boss.Username}, Subject: "十月报表", Body: "报表见附件。",
+		Attachments: []Attachment{{Name: "十月报表.xlsx", Data: []byte("PK 假装是个表格")}, {Name: "说明.txt", Data: []byte("说明")}}})
+	if err != nil || len(withFile.Attachments) != 2 {
+		t.Fatalf("带附件发信失败: %v %+v", err, withFile)
+	}
+	var report []Summary
+	for i := 0; i < 20 && len(report) == 0; i++ {
+		time.Sleep(200 * time.Millisecond)
+		report, _ = boss.Search(ctx, Query{Subject: "十月报表"})
+	}
+	if len(report) != 1 {
+		t.Fatalf("对方应收到带附件的信: %+v", report)
+	}
+	received, err := boss.Read(ctx, report[0].ID, 0)
+	if err != nil || received.Text != "报表见附件。" || strings.Join(received.Attachments, ",") != "十月报表.xlsx,说明.txt" {
+		t.Fatalf("附件名或正文不对: %v %q %v", err, received.Text, received.Attachments)
+	}
+	if _, err := me.Send(ctx, Outgoing{To: []string{boss.Username}, Subject: "x", Body: "y",
+		Attachments: []Attachment{{Name: "a/b.txt", Data: []byte("x")}}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("附件名带路径应被拒绝: %v", err)
 	}
 
 	// 删除就是移进废纸篓。

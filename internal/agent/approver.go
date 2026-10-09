@@ -130,7 +130,8 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 	// "周三手术复查"写不进日历的助手没法用。所以日历工具不适用"含绝密数据直接拒绝"，
 	// 降一级按敏感数据对待——其余规则照旧：写操作默认要确认，外部内容驱动的一律要确认。
 	// 这个例外只给日历。邮件是发给别人的，照常拦。
-	if isCalendarTool(d.ToolName) && maxPrivacy.NeverLeavesInstance() {
+	// 写进本机工作区的文件同理：它连这台机器都没离开。
+	if (isCalendarTool(d.ToolName) || isFileWrite(d.ToolName)) && maxPrivacy.NeverLeavesInstance() {
 		maxPrivacy = core.PrivacySensitive
 	}
 

@@ -239,6 +239,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if file.Connectors.Calendar != nil {
 		agent.CalendarDefaults(approval)
 	}
+	// 写进本机工作区的文件同理：覆盖时旧的会留底，不必逐个确认。
+	workspace, err := file.Workspace()
+	if err != nil {
+		return nil, err
+	}
+	if workspace != nil {
+		agent.FileDefaults(approval)
+	}
 	approver := agent.NewApprover(approval, policy.NewClassifier(), agent.NewMemoryUsageTracker()).
 		WithHistory(st)
 
@@ -287,6 +295,11 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		planner = planner.WithCalendar(true)
 		actuator = actuator.WithCalendar(cal)
 		log.Info("已接入日历", "服务器", cal.Endpoint, "账号", cal.Username)
+	}
+	if workspace != nil {
+		planner = planner.WithFiles(true)
+		actuator = actuator.WithFiles(workspace)
+		log.Info("已启用文件处理", "工作区", workspace.Root)
 	}
 	feed, err := file.Holidays()
 	if err != nil {

@@ -44,6 +44,7 @@ type Actuator struct {
 	calendar  CalendarService
 	mail      MailService
 	holidays  HolidayService
+	files     FileService
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
 }
@@ -51,6 +52,12 @@ type Actuator struct {
 // WithCalendar 接入日历连接器。
 func (a *Actuator) WithCalendar(c CalendarService) *Actuator {
 	a.calendar = c
+	return a
+}
+
+// WithFiles 接入文件工作区。
+func (a *Actuator) WithFiles(f FileService) *Actuator {
+	a.files = f
 	return a
 }
 
@@ -152,6 +159,22 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 			return kernel.Result{}, err
 		}
 		// 清单是模型自己写的，信任等级与模型输出一致。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if isFileTool(s.ToolName) {
+		out, err := a.runFile(ctx, s)
+		if a.audit != nil {
+			detail := fmt.Sprintf("成功，副作用=%s", s.SideEffect)
+			if err != nil {
+				detail = "失败: " + err.Error()
+			}
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustToolOutput, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 工作区里的文件是用户自己放进来的，读它不算"助手从外面取回了内容"；
+		// 但文件里的文字不是用户此刻的指示，仍然低于 user，进上下文时在围栏里。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
 	if s.ToolName == ToolHolidays {

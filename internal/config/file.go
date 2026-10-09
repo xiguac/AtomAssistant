@@ -17,6 +17,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/pay"
@@ -43,6 +44,25 @@ type File struct {
 	// 这一节只能由用户亲手编辑：写在这里的渠道，其主人发来的消息带着用户等级的信任。
 	// 助手没有任何办法往这里添加渠道，见 docs/安全模型.md §3.1.1。
 	Channels []ChannelConfig `yaml:"channels"`
+	// Files 是文件处理的配置。不写这一节，助手没有任何读写文件的工具。
+	Files *FilesConfig `yaml:"files"`
+}
+
+// FilesConfig 是文件处理的配置。
+type FilesConfig struct {
+	// Dir 是工作区目录：助手只能读写这个目录里的文件。把要处理的文件放进来，生成的文件也在这里。
+	Dir string `yaml:"dir"`
+}
+
+// Workspace 按配置打开文件工作区。没有配置时返回 nil。
+func (f *File) Workspace() (*files.Workspace, error) {
+	if f.Files == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(f.Files.Dir) == "" {
+		return nil, fmt.Errorf("config: files.dir 不能为空")
+	}
+	return files.Open(f.Files.Dir)
 }
 
 // ChannelConfig 是一个消息渠道。

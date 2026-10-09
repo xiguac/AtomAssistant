@@ -62,6 +62,10 @@ const usage = `用法:
                                  从「已发送」里你自己写的信学习你写邮件的口气，默认看最近 30 封
   atomctl style forget           忘掉学到的一切，从头学
 
+  atomctl file add <文件> [名字] 把一个文件放进助手的工作区，之后就可以让它读、改、照着做别的文件
+  atomctl file list [目录]       看工作区里有什么
+  atomctl file dir               打印工作区在磁盘上的位置（也可以直接往里拷文件）
+
   atomctl connector check        试连配置里的日历和邮件，确认账号、密码和服务器地址都对
 
   atomctl vault keygen           生成保险库密钥，放进环境变量 ATOM_VAULT_KEY
@@ -157,6 +161,8 @@ func run(args []string) error {
 		return payCmd(ctx, cfg, args[1:])
 	case "connector":
 		return connectorCmd(st, cfg, args[1:])
+	case "file":
+		return fileCmd(cfg, args[1:])
 	case "style":
 		return styleCmd(ctx, st, cfg, args[1:])
 	case "skill":

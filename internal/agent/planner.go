@@ -132,7 +132,7 @@ func (o *PlannerOptions) applyDefaults() {
 		o.RecentSteps = 6
 	}
 	if o.MaxChars <= 0 {
-		o.MaxChars = 24000
+		o.MaxChars = 36000
 	}
 	if o.MaxWait <= 0 {
 		o.MaxWait = 7 * 24 * time.Hour
@@ -163,6 +163,8 @@ type Planner struct {
 	hasCalendar, hasMail, canSend bool
 	// hasHolidays 为真表示接入了节假日数据。
 	hasHolidays bool
+	// hasFiles 为真表示启用了文件处理。
+	hasFiles bool
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -251,6 +253,12 @@ func (p *Planner) WithCalendar(enabled bool) *Planner {
 	return p
 }
 
+// WithFiles 向模型开放文件工具。
+func (p *Planner) WithFiles(enabled bool) *Planner {
+	p.hasFiles = enabled
+	return p
+}
+
 // WithHolidays 向模型开放节假日查询。
 func (p *Planner) WithHolidays(enabled bool) *Planner {
 	p.hasHolidays = enabled
@@ -277,6 +285,9 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	}
 	gated := append(payTools(p.pay), resourceTools(p.pay && p.paidResources)...)
 	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)
+	if p.hasFiles {
+		gated = append(gated, fileToolset...)
+	}
 	for _, t := range gated {
 		if p.permits(t.Name) {
 			tools = append(tools, t)
@@ -408,13 +419,17 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 			segs = append(segs[:1], append([]llm.Segment{voiceSegment(v)}, segs[1:]...)...)
 		}
 	}
+	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
+	system := plannerSystemPrompt +
+		"\n\n" + style +
+		"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
+		"\n\n可用工具：\n" + p.toolList()
 	msgs, err := llm.Build(segs, llm.BuildOptions{
-		// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-		SystemPrompt: plannerSystemPrompt +
-			"\n\n" + style +
-			"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
-			"\n\n可用工具：\n" + p.toolList(),
-		MaxChars: p.opts.MaxChars,
+		SystemPrompt: system,
+		// 预算只管任务的上下文，系统提示是另算的固定开销。
+		// 工具一多系统提示就长；若让它从同一份预算里扣，接的工具越多、留给任务的越少，
+		// 少到一定程度，步骤的结果会被整段裁掉——模型看不到自己刚做了什么，只会一遍遍重做。
+		MaxChars: p.opts.MaxChars + len(system),
 	})
 	if err != nil {
 		return kernel.Decision{}, err
@@ -644,7 +659,8 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 			Source:  "步骤日志摘要",
 		})
 	}
-	for _, s := range history[cut:] {
+	recent := history[cut:]
+	for i, s := range recent {
 		segs = append(segs, llm.Segment{
 			Role:    llm.RoleUser,
 			Content: describeStep(s),
@@ -652,10 +668,16 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 			// 工具返回的文本在这里依然是 untrusted。
 			Trust:  s.OutputTrust,
 			Source: fmt.Sprintf("步骤 %d 输出", s.Seq),
+			// 最近几步无论预算多紧都留着：看不到刚才那一步的结果，下一步就无从决定。
+			// 钉住只是不裁剪，该进围栏的照样在围栏里。
+			Pinned: i >= len(recent)-pinnedSteps,
 		})
 	}
 	return segs
 }
+
+// pinnedSteps 是不参与预算裁剪的最近步骤数。
+const pinnedSteps = 3
 
 func (p *Planner) toolList() string {
 	// 显式复制：直接 append 到 Catalog() 的返回值上会依赖它的容量，
@@ -677,7 +699,7 @@ func (p *Planner) toolList() string {
 	for _, t := range tools {
 		fmt.Fprintf(&sb, "- %s: %s\n", t.Name, t.Description)
 		if len(t.InputSchema) > 0 {
-			fmt.Fprintf(&sb, "  入参: %s\n", truncate(string(t.InputSchema), 400))
+			fmt.Fprintf(&sb, "  入参: %s\n", truncate(string(t.InputSchema), 1500))
 		}
 	}
 	return sb.String()
