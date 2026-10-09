@@ -85,10 +85,15 @@ var calendarToolset = []mcpgw.ToolInfo{
 		core.SideEffectReversible),
 	builtin(ToolCalendarUpdate,
 		`修改一条已有的日程。id 取自 `+ToolCalendarEvents+` 的结果，原样照抄。只写要改的项。`+
-			`只改 start_at 时时长保持不变。重复日程只能改标题、地点和备注，改的是整个系列。`,
+			`只改 start_at 时时长保持不变。`+
+			`重复日程（recurring 为 true）：调课、调休、某一次临时改期或取消时，必须填 occurrence 指明是哪一次`+
+			`（写那一次在 `+ToolCalendarEvents+` 结果里的 start），这样只动这一次，其他各次照常；`+
+			`这一次不上了就再加 cancel 为 true。不填 occurrence 改的是整个系列，只能改标题、地点和备注。`,
 		`{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},`+
 			`"start_at":{"type":"string"},"end_at":{"type":"string"},"all_day":{"type":"boolean"},`+
-			`"location":{"type":"string"},"notes":{"type":"string"}},"required":["id"]}`,
+			`"location":{"type":"string"},"notes":{"type":"string"},`+
+			`"occurrence":{"type":"string","description":"只改重复日程里的这一次：这一次的开始时间"},`+
+			`"cancel":{"type":"boolean","description":"与 occurrence 一起用：取消这一次"}},"required":["id"]}`,
 		core.SideEffectReversible),
 	builtin(ToolCalendarDelete,
 		`删除一条日程。id 取自 `+ToolCalendarEvents+` 的结果，原样照抄。重复日程会整个系列一起删掉。`,
@@ -229,6 +234,9 @@ type calendarInput struct {
 	AllDay   *bool   `json:"all_day"`
 	Location *string `json:"location"`
 	Notes    *string `json:"notes"`
+	// Occurrence 与 Cancel 用于只改或取消重复日程里的某一次。
+	Occurrence *string `json:"occurrence"`
+	Cancel     bool    `json:"cancel"`
 }
 
 // runCalendar 执行日历类内置工具。
@@ -325,9 +333,12 @@ func (a *Actuator) runCalendar(ctx context.Context, s *core.Step) (json.RawMessa
 		return json.Marshal(map[string]any{"created": viewEvent(e)})
 
 	case ToolCalendarUpdate:
-		p := calendar.Patch{Title: in.Title, AllDay: in.AllDay, Location: in.Location, Notes: in.Notes}
+		p := calendar.Patch{Title: in.Title, AllDay: in.AllDay, Location: in.Location, Notes: in.Notes, Cancel: in.Cancel}
 		var err error
 		var dateOnly bool
+		if p.Occurrence, _, err = when(in.Occurrence); err != nil {
+			return nil, err
+		}
 		if p.Start, dateOnly, err = when(in.StartAt); err != nil {
 			return nil, err
 		}
@@ -341,6 +352,9 @@ func (a *Actuator) runCalendar(ctx context.Context, s *core.Step) (json.RawMessa
 		e, err := a.calendar.Update(ctx, in.ID, p)
 		if err != nil {
 			return nil, err
+		}
+		if in.Cancel {
+			return json.Marshal(map[string]any{"cancelled_occurrence": viewEvent(e)})
 		}
 		return json.Marshal(map[string]any{"updated": viewEvent(e)})
 
@@ -457,7 +471,7 @@ func (a *Actuator) runMail(ctx context.Context, s *core.Step) (json.RawMessage, 
 // 写操作的回执只是在复述刚才的参数，按普通工具输出对待。
 func connectorTrust(tool string) core.TrustLevel {
 	switch tool {
-	case ToolCalendarEvents, ToolMailSearch, ToolMailRead, ToolMailFolders, ToolCalendarList:
+	case ToolCalendarEvents, ToolMailSearch, ToolMailRead:
 		return core.TrustExternal
 	}
 	return core.TrustToolOutput

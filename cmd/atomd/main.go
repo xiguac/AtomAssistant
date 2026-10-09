@@ -218,8 +218,13 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		log.Info("模型路由", "用途", purpose, "provider", route.Provider, "模型", route.Model)
 	}
 
-	approver := agent.NewApprover(
-		file.BuildApprovalPolicy(), policy.NewClassifier(), agent.NewMemoryUsageTracker())
+	approval := file.BuildApprovalPolicy()
+	// 用户亲口交代的日程直接记，不再逐条确认；读过外部内容的任务不适用。
+	if file.Connectors.Calendar != nil {
+		agent.CalendarDefaults(approval)
+	}
+	approver := agent.NewApprover(approval, policy.NewClassifier(), agent.NewMemoryUsageTracker()).
+		WithHistory(st)
 
 	// 记忆与任务同库，共用连接池。
 	memStore := st.Memories()

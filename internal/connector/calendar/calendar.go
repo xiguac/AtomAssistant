@@ -546,40 +546,19 @@ type Patch struct {
 	AllDay   *bool
 	Location *string
 	Notes    *string
+
+	// Occurrence 非空表示只改重复日程里的这一次，值是这一次的开始时间。
+	// 调课、调休、某一周的例会挪个时间，改的都是"这一次"，系列里的其他各次不动。
+	Occurrence *time.Time
+	// Cancel 与 Occurrence 一起用：这一次取消，其他各次照常。
+	Cancel bool
 }
 
-// Update 修改一条日程。
-func (c *Client) Update(ctx context.Context, id string, p Patch) (Event, error) {
-	cal, err := c.owner(ctx, id)
-	if err != nil {
-		return Event{}, err
-	}
-	client, err := c.dial(ctx)
-	if err != nil {
-		return Event{}, err
-	}
-	obj, err := client.GetCalendarObject(ctx, id)
-	if err != nil {
-		return Event{}, fmt.Errorf("calendar: 读取日程失败: %w", err)
-	}
-	var event *ical.Event
-	for _, e := range obj.Data.Events() {
-		if e.Props.Get(ical.PropRecurrenceID) == nil {
-			event = &e
-			break
-		}
-	}
-	if event == nil {
-		return Event{}, fmt.Errorf("%w: %s 里没有日程", ErrNotFound, id)
-	}
-	current, ok := c.decode(id, cal.Name, event)
-	if !ok {
-		return Event{}, fmt.Errorf("calendar: 这条日程的时间无法解析，不能修改")
-	}
-
+// apply 把修改落到一个 VEVENT 上。current 是它修改前的样子。
+func (c *Client) apply(event *ical.Event, current Event, p Patch) error {
 	if p.Title != nil {
 		if strings.TrimSpace(*p.Title) == "" {
-			return Event{}, fmt.Errorf("%w: 标题不能改成空的", ErrInvalid)
+			return fmt.Errorf("%w: 标题不能改成空的", ErrInvalid)
 		}
 		event.Props.SetText(ical.PropSummary, strings.TrimSpace(*p.Title))
 	}
@@ -590,10 +569,10 @@ func (c *Client) Update(ctx context.Context, id string, p Patch) (Event, error) 
 		setText(event, ical.PropDescription, *p.Notes)
 	}
 	if p.Start != nil || p.End != nil || p.AllDay != nil {
-		// 重复日程的时间和它的重复规则、例外日期绑在一起，改一个要连带改一串。
-		// 做错了会让整个系列错位，所以在能正确处理之前宁可不做。
+		// 整个系列的时间和它的重复规则、例外日期绑在一起，改一个要连带改一串，
+		// 做错了会让整个系列错位。要挪时间，一次一次地挪。
 		if current.Recurring {
-			return Event{}, fmt.Errorf("%w: 修改重复日程的时间。可以改它的标题、地点和备注，时间请在日历里手动调整", ErrUnsupported)
+			return fmt.Errorf("%w: 一次改掉整个重复系列的时间。要改某一次，请指明是哪一次（occurrence）", ErrUnsupported)
 		}
 		start, end, allDay := current.Start, current.End, current.AllDay
 		if p.AllDay != nil {
@@ -610,7 +589,7 @@ func (c *Client) Update(ctx context.Context, id string, p Patch) (Event, error) 
 			end = *p.End
 		}
 		if !allDay && end.Before(start) {
-			return Event{}, fmt.Errorf("%w: 结束时间不能早于开始时间", ErrInvalid)
+			return fmt.Errorf("%w: 结束时间不能早于开始时间", ErrInvalid)
 		}
 		switch {
 		case allDay && p.End != nil:
@@ -622,10 +601,15 @@ func (c *Client) Update(ctx context.Context, id string, p Patch) (Event, error) 
 		}
 		c.setTimes(event, start, end, allDay)
 	}
+	touch(event)
+	return nil
+}
+
+// touch 更新修改时间并把序号加一：订阅了这条日程的其他客户端靠序号知道内容变了。
+func touch(event *ical.Event) {
 	now := time.Now().UTC()
 	event.Props.SetDateTime(ical.PropDateTimeStamp, now)
 	event.Props.SetDateTime(ical.PropLastModified, now)
-	// 序号加一：订阅了这条日程的其他客户端靠它知道内容变了。
 	seq := 0
 	if prop := event.Props.Get(ical.PropSequence); prop != nil {
 		if n, err := prop.Int(); err == nil {
@@ -635,12 +619,158 @@ func (c *Client) Update(ctx context.Context, id string, p Patch) (Event, error) 
 	next := ical.NewProp(ical.PropSequence)
 	next.Value = fmt.Sprint(seq + 1)
 	event.Props.Set(next)
+}
 
+// Update 修改一条日程。p.Occurrence 非空时只改重复日程里的那一次。
+func (c *Client) Update(ctx context.Context, id string, p Patch) (Event, error) {
+	cal, err := c.owner(ctx, id)
+	if err != nil {
+		return Event{}, err
+	}
+	client, err := c.dial(ctx)
+	if err != nil {
+		return Event{}, err
+	}
+	obj, err := client.GetCalendarObject(ctx, id)
+	if err != nil {
+		return Event{}, fmt.Errorf("calendar: 读取日程失败: %w", err)
+	}
+	var master *ical.Event
+	for _, e := range obj.Data.Events() {
+		if e.Props.Get(ical.PropRecurrenceID) == nil {
+			master = &e
+			break
+		}
+	}
+	if master == nil {
+		return Event{}, fmt.Errorf("%w: %s 里没有日程", ErrNotFound, id)
+	}
+	current, ok := c.decode(id, cal.Name, master)
+	if !ok {
+		return Event{}, fmt.Errorf("calendar: 这条日程的时间无法解析，不能修改")
+	}
+
+	target := master
+	if p.Occurrence != nil {
+		if target, err = c.occurrence(obj.Data, master, current, *p.Occurrence, p.Cancel); err != nil {
+			return Event{}, err
+		}
+	} else if p.Cancel {
+		return Event{}, fmt.Errorf("%w: 取消某一次要指明是哪一次（occurrence）；要删掉整条日程请用删除", ErrInvalid)
+	}
+	if target != nil {
+		before, ok := c.decode(id, cal.Name, target)
+		if !ok {
+			return Event{}, fmt.Errorf("calendar: 这一次日程的时间无法解析，不能修改")
+		}
+		if err := c.apply(target, before, p); err != nil {
+			return Event{}, err
+		}
+	}
 	if _, err := client.PutCalendarObject(ctx, id, obj.Data); err != nil {
 		return Event{}, fmt.Errorf("calendar: 写入日程失败: %w", err)
 	}
-	out, _ := c.decode(id, cal.Name, event)
+	if target == nil {
+		// 这一次被取消了。返回它原来的样子，供调用方说明取消的是哪一次。
+		current.Start, current.End = *p.Occurrence, p.Occurrence.Add(current.End.Sub(current.Start))
+		current.Recurring = true
+		return current, nil
+	}
+	out, _ := c.decode(id, cal.Name, target)
+	out.Recurring = current.Recurring
 	return out, nil
+}
+
+// sameForm 生成一个与系列开始时间写法一致的时间属性。
+//
+// 例外日期和"这一次"的标识必须和系列的开始时间用同一种写法（同一个时区、同为日期或同为时刻），
+// 日历软件才认得它们指的是系列里的哪一次。
+func (c *Client) sameForm(name string, master *ical.Event, at time.Time) *ical.Prop {
+	start := master.Props.Get(ical.PropDateTimeStart)
+	prop := ical.NewProp(name)
+	switch {
+	case len(start.Value) == len("20060102"):
+		prop.SetDate(at.In(c.loc()))
+	case start.Params.Get(ical.PropTimezoneID) != "":
+		if loc, err := time.LoadLocation(start.Params.Get(ical.PropTimezoneID)); err == nil {
+			prop.SetDateTime(at.In(loc))
+		} else {
+			prop.SetDateTime(at.UTC())
+		}
+	default:
+		prop.SetDateTime(at.UTC())
+	}
+	return prop
+}
+
+// occurrence 找到（或新建）重复日程里某一次对应的 VEVENT；cancel 为真时把这一次取消并返回 nil。
+//
+// at 可以是这一次按规则本来的时间，也可以是它被改期之后现在的时间——
+// 调用方看到的是现在的时间，不该要求它知道原来是几点。
+func (c *Client) occurrence(data *ical.Calendar, master *ical.Event, series Event, at time.Time, cancel bool) (*ical.Event, error) {
+	set, err := master.RecurrenceSet(c.loc())
+	if err != nil || set == nil {
+		return nil, fmt.Errorf("%w: 这不是一条重复日程，不需要指明是哪一次", ErrInvalid)
+	}
+	// 先看这一次是不是已经被单独改过。
+	original := at
+	var existing *ical.Component
+	for _, child := range data.Children {
+		if child.Name != ical.CompEvent {
+			continue
+		}
+		rid := child.Props.Get(ical.PropRecurrenceID)
+		if rid == nil {
+			continue
+		}
+		ridAt, err := c.propTime(rid)
+		if err != nil {
+			continue
+		}
+		now, ok := c.decode("", "", &ical.Event{Component: child})
+		if ridAt.Equal(at) || (ok && now.Start.Equal(at)) {
+			existing, original = child, ridAt
+			break
+		}
+	}
+	if existing == nil && len(set.Between(at, at, true)) == 0 {
+		return nil, fmt.Errorf("%w: 这个系列里没有 %s 开始的那一次（occurrence 要写那一次的开始时间）",
+			ErrNotFound, at.In(c.loc()).Format("2006-01-02 15:04"))
+	}
+
+	if cancel {
+		// 取消 = 在系列上记一个例外日期，并去掉为这一次单独存的内容。
+		master.Props.Add(c.sameForm(ical.PropExceptionDates, master, original))
+		touch(master)
+		if existing != nil {
+			kept := data.Children[:0]
+			for _, child := range data.Children {
+				if child != existing {
+					kept = append(kept, child)
+				}
+			}
+			data.Children = kept
+		}
+		return nil, nil
+	}
+	if existing != nil {
+		return &ical.Event{Component: existing}, nil
+	}
+
+	// 为这一次单独存一份：内容照抄系列，去掉重复规则，标明它顶替的是哪一次。
+	override := ical.NewEvent()
+	for name, props := range master.Props {
+		switch name {
+		case ical.PropRecurrenceRule, ical.PropRecurrenceDates, ical.PropExceptionDates:
+			continue
+		}
+		override.Props[name] = append([]ical.Prop(nil), props...)
+	}
+	override.Children = master.Children
+	override.Props.Set(c.sameForm(ical.PropRecurrenceID, master, original))
+	c.setTimes(override, original, original.Add(series.End.Sub(series.Start)), series.AllDay)
+	data.Children = append(data.Children, override.Component)
+	return override, nil
 }
 
 // Delete 删除一条日程。重复日程会整个系列一起删掉。
