@@ -1,30 +1,34 @@
 {{define "content"}}
-{{with .Data}}
-<section>
-  <h2>等你确认的（{{len .Pending}}）</h2>
-  <div class="muted">这些是助手从做过的事里提炼出来的，还没有生效。你确认了，它之后才会照着来。</div>
-  {{if .Pending}}<table style="margin-top:8px">
-    {{range .Pending}}<tr>
-      <td style="width:110px"><span class="tag">{{.Candidate.Kind}}</span><br><span class="muted">{{.Candidate.Domain}}</span></td>
-      <td><div style="white-space:pre-wrap">{{.Candidate.Value}}</div></td>
-      <td style="width:150px"><div class="row">
-        <form method="post" action="/memory/confirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button>确认</button></form>
-        <form method="post" action="/memory/dismiss"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="bad">否决</button></form>
-      </div></td>
-    </tr>{{end}}
-  </table>{{else}}<div class="muted" style="margin-top:8px">没有。</div>{{end}}
-</section>
+<h1>记忆</h1>
+<div class="sub">助手从做过的事里记下来的东西：你的情况、你的习惯、这类事该怎么办。它提炼出来的要你点头才算数。</div>
 
-<section>
-  <h2>已经记住的（{{len .Memories}}）</h2>
+{{with .Data}}
+<h2 style="margin-top:0">等你确认 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
+{{range .Pending}}
+<div class="attn" style="align-items:flex-start">
+  <div class="body">
+    <div style="margin-bottom:6px"><span class="pill plain">{{.Candidate.Kind}}</span>{{if .Candidate.Domain}} <span class="note muted">{{.Candidate.Domain}}</span>{{end}}</div>
+    <div style="white-space:pre-wrap;word-break:break-word">{{.Candidate.Value}}</div>
+  </div>
+  <div class="actions">
+    <form method="post" action="/memory/confirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sm">确认</button></form>
+    <form method="post" action="/memory/dismiss"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">否决</button></form>
+  </div>
+</div>
+{{else}}
+<div class="card empty">没有等你确认的。</div>
+{{end}}
+
+<h2>已经记住的 <span class="count">{{len .Memories}}</span></h2>
+<div class="card">
   {{if .Memories}}<table>
-    <tr><th style="width:110px">类型</th><th style="width:150px">关于</th><th>内容</th></tr>
-    {{range .Memories}}<tr>
-      <td><span class="tag">{{.Kind}}</span></td>
-      <td>{{.Subject}}{{if .Domain}}<br><span class="muted">{{.Domain}}</span>{{end}}</td>
-      <td><div style="white-space:pre-wrap">{{short .Current.Value 400}}</div></td>
-    </tr>{{end}}
-  </table>{{else}}<div class="muted">还没有。</div>{{end}}
-</section>
+    <thead><tr><th style="width:110px">类型</th><th style="width:170px">关于</th><th>内容</th></tr></thead>
+    <tbody>{{range .Memories}}<tr>
+      <td><span class="pill plain">{{.Kind}}</span></td>
+      <td>{{.Subject}}{{if .Domain}}<div class="note muted">{{.Domain}}</div>{{end}}</td>
+      <td><div style="white-space:pre-wrap;word-break:break-word">{{short .Current.Value 400}}</div></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">还没有。用得多了，这里会慢慢长出来。</div>{{end}}
+</div>
 {{end}}
 {{end}}

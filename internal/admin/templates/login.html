@@ -1,10 +1,17 @@
 {{define "content"}}
-<section style="max-width:380px;margin:80px auto">
-  <h2>原子助手 · 管理后台</h2>
-  <form method="post" action="/login">
-    <label>口令</label>
-    <input type="password" name="password" autofocus autocomplete="current-password">
-    <div class="row" style="margin-top:14px"><button>登录</button></div>
-  </form>
-</section>
+<div class="login">
+  <div class="card">
+    <div class="brand">
+      <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(28 14 14)"/><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(-28 14 14)"/><circle cx="14" cy="14" r="2.2" fill="currentColor" stroke="none"/></svg>
+      <div><b>原子助手</b><span>私人助手 · 管理后台</span></div>
+    </div>
+    {{if .Error}}<div class="banner bad" style="margin-bottom:16px"><div>{{.Error}}</div></div>{{end}}
+    <form method="post" action="/login">
+      <label for="pw">口令</label>
+      <input id="pw" type="password" name="password" autofocus autocomplete="current-password">
+      <button class="btn" style="width:100%;margin-top:16px">登录</button>
+    </form>
+    <div class="help" style="margin-top:16px">连续输错 5 次会暂停登录几分钟。</div>
+  </div>
+</div>
 {{end}}

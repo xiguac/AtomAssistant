@@ -1,45 +1,48 @@
 {{define "content"}}
-<section>
-  <h2>交代一件事</h2>
-  <form method="post" action="/tasks">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <textarea name="goal" placeholder="比如：下周五下午三点跟供应商开会，3 号会议室，记一下"></textarea>
-    <div class="row" style="margin-top:10px"><button>交给助手</button></div>
-  </form>
-</section>
+<h1>任务</h1>
+<div class="sub">交代一件事，或者处理等你确认的动作</div>
+
+<form method="post" action="/tasks" class="card">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="pad" style="padding-bottom:8px">
+    <textarea class="bare" name="goal" placeholder="比如：下周五下午三点跟供应商开会，3 号会议室，记一下"></textarea>
+  </div>
+  <div class="band foot">
+    <span class="note muted">一句话说清要办什么。它拿不准的会来问你。</span>
+    <button class="btn">交给助手</button>
+  </div>
+</form>
 
 {{with .Data}}
-<section>
-  <h2>等你处理（{{len .Waiting}}）</h2>
-  {{if .Waiting}}<table>
-    {{range .Waiting}}<tr>
-      <td style="width:38%"><a href="/tasks/{{.ID}}">{{short .Title 30}}</a></td>
-      <td>{{short .Reason 90}}</td>
-      <td class="muted" style="white-space:nowrap">{{when .UpdatedAt}}</td>
-    </tr>{{end}}
-  </table>{{else}}<div class="muted">没有需要你确认或回答的。</div>{{end}}
-</section>
+<h2>等你处理 <span class="count {{if .Waiting}}warn{{end}}">{{len .Waiting}}</span></h2>
+{{range .Waiting}}
+<a class="attn" href="/tasks/{{.ID}}">
+  <div class="body"><b>{{short .Title 40}}</b><span>{{waitKind .}}：{{short (waitText .) 120}}</span></div>
+  <span class="w">{{when .UpdatedAt}}</span>
+  <span class="btn sec sm">查看</span>
+</a>
+{{else}}
+<div class="card empty">没有需要你确认或回答的。</div>
+{{end}}
 
-<section>
-  <h2>进行中（{{len .Active}}）</h2>
-  {{if .Active}}<table>
-    {{range .Active}}<tr>
-      <td style="width:38%"><a href="/tasks/{{.ID}}">{{short .Title 30}}</a></td>
-      <td><span class="tag">{{stateName .State}}</span> {{short .Reason 70}}</td>
-      <td class="muted" style="white-space:nowrap">{{when .UpdatedAt}}</td>
-    </tr>{{end}}
-  </table>{{else}}<div class="muted">没有正在进行的任务。</div>{{end}}
-</section>
+<h2>进行中 <span class="count {{if .Active}}info{{end}}">{{len .Active}}</span></h2>
+<div class="card rows">
+  {{range .Active}}<a href="/tasks/{{.ID}}">
+    <span class="t">{{short .Title 30}}</span>
+    <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
+    <span class="d">{{short .Reason 100}}</span>
+    <span class="w">{{when .UpdatedAt}}</span>
+  </a>{{else}}<div class="empty" style="justify-content:center">没有正在进行的任务。</div>{{end}}
+</div>
 
-<section>
-  <h2>最近结束的</h2>
-  {{if .Recent}}<table>
-    {{range .Recent}}<tr>
-      <td style="width:38%"><a href="/tasks/{{.ID}}">{{short .Title 30}}</a></td>
-      <td><span class="tag">{{stateName .State}}</span> {{short .Reason 70}}</td>
-      <td class="muted" style="white-space:nowrap">{{when .UpdatedAt}}</td>
-    </tr>{{end}}
-  </table>{{else}}<div class="muted">还没有。</div>{{end}}
-</section>
+<h2>最近结束的</h2>
+<div class="card rows">
+  {{range .Recent}}<a href="/tasks/{{.ID}}">
+    <span class="t">{{short .Title 30}}</span>
+    <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
+    <span class="d">{{short .Reason 100}}</span>
+    <span class="w">{{when .UpdatedAt}}</span>
+  </a>{{else}}<div class="empty" style="justify-content:center">还没有。</div>{{end}}
+</div>
 {{end}}
 {{end}}

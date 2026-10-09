@@ -43,7 +43,9 @@ import (
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/files"
+	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
@@ -148,8 +150,13 @@ func New(opts Options) (*Server, error) {
 			}
 			return string(r)
 		},
-		"stateName": stateName,
-		"join":      strings.Join,
+		"stateName":  stateName,
+		"stateClass": stateClass,
+		"waitKind":   waitKind,
+		"waitText":   waitText,
+		"join":       strings.Join,
+		"size":       humanSize,
+		"add":        func(a, b int) int { return a + b },
 	}
 	pages, err := templateFS.ReadDir("templates")
 	if err != nil {
@@ -186,6 +193,61 @@ func stateName(st core.TaskState) string {
 		return "已取消"
 	}
 	return string(st)
+}
+
+// stateClass 给出一个任务状态对应的徽标样式：ok / warn / bad / info / idle。
+func stateClass(st core.TaskState) string {
+	switch st {
+	case core.StateDone:
+		return "ok"
+	case core.StateFailed, core.StateCancelled:
+		return "bad"
+	case core.StateRunning:
+		return "info"
+	case core.StateWaiting, core.StateSuspended:
+		return "warn"
+	}
+	return "idle"
+}
+
+// waitKind 说明一个任务在等用户做什么。
+func waitKind(t *core.Task) string {
+	switch {
+	case t.State == core.StateSuspended:
+		return "已挂起"
+	case t.Wake != nil && t.Wake.Kind == core.WakeApproval:
+		return "等你确认"
+	}
+	return "等你回答"
+}
+
+// waitText 用一句话说明任务在等什么，去掉内部的套话。
+func waitText(t *core.Task) string {
+	switch {
+	case t.State == core.StateSuspended:
+		return t.Reason
+	case t.Wake != nil && t.Wake.Kind == core.WakeApproval:
+		tool := strings.TrimPrefix(t.Reason, "等待用户确认：")
+		if i := strings.Index(tool, "（"); i > 0 {
+			tool = tool[:i]
+		}
+		if _, why := kernel.SplitApprovalReason(t.Reason); why != "" {
+			return tool + " —— " + why
+		}
+		return tool
+	}
+	return strings.TrimPrefix(t.Reason, "等待你的回复：")
+}
+
+// humanSize 把字节数写成人看的大小。
+func humanSize(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%d B", n)
 }
 
 func token() (string, error) {
@@ -448,12 +510,52 @@ type stepView struct {
 	In, Out string
 }
 
+// field 是等确认的动作里的一项参数。
+type field struct {
+	Key   string
+	Value string
+	// Long 为真表示值有多行（比如邮件正文），要单独成块展示。
+	Long bool
+}
+
 type taskData struct {
 	Task    *core.Task
 	Steps   []stepView
 	Pending *channel.Pending
-	Params  string
-	Asking  bool
+	Fields  []field
+	// Irreversible 为真表示等确认的这一步做了就收不回来。
+	Irreversible bool
+	// Why 是助手想这么做的理由，Rule 是策略要求确认的特别原因（平常的那种不显示）。
+	Why, Rule string
+	Asking    bool
+	// Question 是任务正在问用户的问题。
+	Question string
+}
+
+// fields 把动作的参数拆成一项一项，方便核对。
+func fields(raw json.RawMessage) []field {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return []field{{Key: "参数", Value: string(raw), Long: true}}
+	}
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]field, 0, len(keys))
+	for _, k := range keys {
+		v, ok := params[k].(string)
+		if !ok {
+			b, err := json.MarshalIndent(params[k], "", "  ")
+			if err != nil {
+				continue
+			}
+			v = string(b)
+		}
+		out = append(out, field{Key: k, Value: v, Long: strings.ContainsRune(v, '\n') || len([]rune(v)) > 80})
+	}
+	return out
 }
 
 func pretty(raw json.RawMessage, max int) string {
@@ -491,8 +593,20 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 	}
 	if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
 		if p, err := s.opts.Tasks.PendingAction(r.Context(), id); err == nil && p != nil {
-			d.Pending, d.Params = p, pretty(p.Params, 20000)
+			d.Pending, d.Fields = p, fields(p.Params)
+			d.Rule, d.Why = kernel.SplitApprovalReason(t.Reason)
+			if d.Rule == policy.ReasonNoRule {
+				d.Rule = ""
+			}
+			for _, st := range steps {
+				if st.Status == core.StepAwaiting {
+					d.Irreversible = st.SideEffect == core.SideEffectIrreversible
+				}
+			}
 		}
+	}
+	if needsUser(t) && d.Pending == nil && t.State == core.StateWaiting {
+		d.Question = strings.TrimPrefix(t.Reason, "等待你的回复：")
 	}
 	v.Data = d
 	s.render(w, "task", v)

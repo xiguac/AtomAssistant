@@ -5,61 +5,204 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>原子助手</title>
 <style>
-:root { --fg:#1f2d3d; --muted:#6b7785; --line:#e3e8ee; --bg:#f6f8fa; --accent:#2f6fed; --warn:#b54708; --bad:#b42318; --ok:#067647; }
-* { box-sizing: border-box; }
-body { margin:0; font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color:var(--fg); background:var(--bg); }
-header { background:#fff; border-bottom:1px solid var(--line); padding:0 20px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
-header b { margin-right:16px; padding:14px 0; }
-header a { padding:14px 10px; color:var(--muted); text-decoration:none; border-bottom:2px solid transparent; }
-header a.on { color:var(--fg); border-bottom-color:var(--accent); }
-header form { margin-left:auto; }
-main { max-width:980px; margin:20px auto; padding:0 16px; }
-section { background:#fff; border:1px solid var(--line); border-radius:8px; padding:16px 18px; margin-bottom:16px; }
-h2 { font-size:16px; margin:0 0 10px; }
+/* 视觉规范取自 Stitch 生成的设计系统 "Atom Precision Console"：
+   画布 #F8FAFC，白色卡片配 1px 细线边框，不用投影；主色深蓝 #1E40AF；
+   琥珀色只用于"等你处理"，绿色表示完成，红色表示失败；圆角 8px，徽标 4px。
+   字体用各平台自带的，不从外面加载任何东西——服务器在哪里都一样快，也不向第三方暴露访问。 */
+:root {
+  --canvas:#F8FAFC; --recess:#F1F5F9; --card:#FFFFFF; --line:#E2E8F0; --line-strong:#CBD5E1; --row:#F1F5F9;
+  --text:#0F172A; --text-2:#475569; --muted:#94A3B8;
+  --primary:#1E40AF; --primary-hover:#2563EB; --wash:#EFF6FF;
+  --ok:#047857; --ok-bg:#ECFDF5; --ok-line:#A7F3D0;
+  --warn:#B45309; --warn-bg:#FFFBEB; --warn-line:#FDE68A; --warn-bar:#F59E0B;
+  --bad:#B91C1C; --bad-bg:#FEF2F2; --bad-line:#FECACA;
+  --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --mono:"JetBrains Mono","SF Mono",Consolas,"Liberation Mono",Menlo,monospace;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; }
+body { font:14px/20px var(--sans); color:var(--text); background:var(--canvas); font-feature-settings:"tnum" 1; -webkit-font-smoothing:antialiased; }
+a { color:var(--primary); text-decoration:none; }
+a:hover { color:var(--primary-hover); }
+code, .mono { font-family:var(--mono); font-size:12px; }
+svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+
+/* 框架：固定侧栏 + 主区域 */
+.side { position:fixed; inset:0 auto 0 0; width:240px; background:var(--card); border-right:1px solid var(--line); display:flex; flex-direction:column; }
+.brand { display:flex; align-items:center; gap:10px; padding:22px 20px 26px; }
+.brand svg { width:28px; height:28px; color:var(--primary); }
+.brand b { display:block; font-size:16px; line-height:20px; font-weight:600; letter-spacing:-.005em; }
+.brand span { display:block; font-size:11px; line-height:14px; color:var(--muted); }
+.nav { padding:0 12px; display:flex; flex-direction:column; gap:2px; }
+.nav a { display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:8px; color:var(--text-2); font-size:13px; font-weight:500; }
+.nav a:hover { background:var(--canvas); color:var(--text); }
+.nav a.on { background:var(--wash); color:var(--primary); }
+.side-foot { margin-top:auto; border-top:1px solid var(--line); padding:14px 20px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--text-2); }
+.dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--ok); margin-right:8px; vertical-align:middle; }
+.dot.warn { background:var(--warn-bar); }
+.linkbtn { background:none; border:0; padding:0; font:inherit; font-size:12px; color:var(--text-2); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+.linkbtn:hover { color:var(--text); }
+.linkbtn svg.ico { width:14px; height:14px; }
+.main { margin-left:240px; padding:32px 32px 64px; }
+.wrap { max-width:960px; margin:0 auto; }
+.wrap.narrow { max-width:768px; }
+
+/* 标题 */
+.crumb { font-size:12px; color:var(--muted); margin-bottom:10px; }
+.crumb a { color:var(--text-2); }
+h1 { font-size:24px; line-height:32px; font-weight:600; letter-spacing:-.015em; margin:0; }
+.sub { color:var(--text-2); font-size:13px; line-height:18px; margin:6px 0 24px; max-width:720px; }
+h2 { font-size:16px; line-height:24px; font-weight:600; letter-spacing:-.005em; margin:28px 0 12px; display:flex; align-items:center; gap:10px; }
+.count { font-size:12px; line-height:16px; font-weight:500; padding:1px 8px; border-radius:9999px; background:var(--recess); color:var(--text-2); }
+.count.warn { background:#FEF3C7; color:var(--warn); }
+.count.info { background:var(--wash); color:var(--primary); }
+
+/* 卡片 */
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; }
+.pad { padding:16px 20px; }
+.band { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.band.foot { border-bottom:0; border-top:1px solid var(--line); }
+.card + .card { margin-top:16px; }
+.muted { color:var(--muted); }
+.note { color:var(--text-2); font-size:13px; line-height:18px; }
+.empty { padding:20px; color:var(--muted); font-size:13px; text-align:center; }
+
+/* 行列表 */
+.rows > * { display:flex; align-items:center; gap:16px; padding:0 20px; min-height:48px; border-bottom:1px solid var(--row); color:inherit; }
+.rows > *:last-child { border-bottom:0; }
+.rows > a:hover { background:var(--canvas); color:inherit; }
+.rows .t { width:200px; flex:none; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rows .d { flex:1; min-width:0; color:var(--text-2); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rows .w { flex:none; color:var(--text-2); font:12px/18px var(--mono); }
+.attn { display:flex; align-items:center; gap:16px; padding:14px 20px; background:var(--card); border:1px solid var(--line); border-left:3px solid var(--warn-bar); border-radius:8px; color:inherit; }
+.attn + .attn { margin-top:10px; }
+.attn:hover { border-color:var(--line-strong); border-left-color:var(--warn-bar); color:inherit; }
+.attn .body { flex:1; min-width:0; }
+.attn .body b { display:block; font-weight:500; }
+.attn .body span { display:block; color:var(--text-2); font-size:13px; line-height:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.attn .w { color:var(--text-2); font:12px/18px var(--mono); }
+
+/* 徽标 */
+.pill { display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 8px; border-radius:4px; font-size:12px; font-weight:500; white-space:nowrap; border:1px solid var(--line); background:var(--recess); color:var(--text-2); }
+.pill::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.pill.plain::before { display:none; }
+.pill.ok { background:var(--ok-bg); color:var(--ok); border-color:var(--ok-line); }
+.pill.warn { background:var(--warn-bg); color:var(--warn); border-color:var(--warn-line); }
+.pill.bad { background:var(--bad-bg); color:var(--bad); border-color:var(--bad-line); }
+.pill.info { background:var(--wash); color:var(--primary); border-color:#BFDBFE; }
+.chip { display:inline-block; padding:1px 7px; border-radius:4px; background:var(--recess); border:1px solid var(--line); color:var(--text-2); font:12px/18px var(--mono); margin:1px 4px 1px 0; }
+
+/* 表单 */
+label { display:block; font-size:13px; line-height:16px; font-weight:500; color:var(--text-2); margin-bottom:6px; }
+.help { font-size:12px; line-height:16px; color:var(--muted); margin-top:6px; }
+input[type=text], input[type=password], textarea { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:13px/20px var(--sans); padding:7px 10px; outline:0; }
+input[type=text], input[type=password] { height:36px; }
+input::placeholder, textarea::placeholder { color:var(--muted); }
+input:focus, textarea:focus { border-color:var(--primary-hover); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+textarea { min-height:96px; resize:vertical; display:block; }
+textarea.bare { border:0; box-shadow:none; padding:0; min-height:84px; font-size:14px; }
+textarea.code { font:12px/18px var(--mono); min-height:480px; border:0; border-radius:0; background:var(--canvas); padding:14px 20px; white-space:pre; overflow-wrap:normal; overflow-x:auto; box-shadow:none; tab-size:2; }
+input[type=file] { font:13px var(--sans); color:var(--text-2); }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px 20px; }
+.grid2 .full { grid-column:1 / -1; }
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:36px; padding:0 14px; border-radius:8px; border:1px solid var(--primary); background:var(--primary); color:#fff; font:500 13px/16px var(--sans); cursor:pointer; white-space:nowrap; }
+.btn:hover { background:var(--primary-hover); border-color:var(--primary-hover); color:#fff; }
+.btn:focus-visible, .linkbtn:focus-visible, a:focus-visible { outline:2px solid rgba(37,99,235,.3); outline-offset:2px; }
+.btn.sec { background:#fff; color:var(--text); border-color:var(--line); }
+.btn.sec:hover { background:var(--canvas); border-color:var(--line-strong); color:var(--text); }
+.btn.danger { background:var(--bad-bg); color:var(--bad); border-color:var(--bad-line); }
+.btn.danger:hover { background:#FEE2E2; }
+.btn.sm { height:32px; padding:0 12px; }
+.actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.grow { flex:1; min-width:200px; }
+
+/* 提示条 */
+.banner { display:flex; gap:12px; align-items:flex-start; padding:12px 16px; border-radius:8px; border:1px solid var(--line); background:var(--card); font-size:13px; line-height:20px; margin-bottom:20px; white-space:pre-wrap; }
+.banner svg.ico { margin-top:1px; }
+.banner.ok { background:var(--ok-bg); border-color:var(--ok-line); color:var(--ok); }
+.banner.bad { background:var(--bad-bg); border-color:var(--bad-line); color:var(--bad); }
+.banner.warn { background:var(--warn-bg); border-color:var(--warn-line); color:#7C2D12; }
+.banner.info { background:var(--recess); color:var(--text-2); }
+.banner .go { margin-left:auto; white-space:nowrap; color:inherit; text-decoration:underline; }
+
+/* 表格 */
 table { width:100%; border-collapse:collapse; }
-th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
-th { color:var(--muted); font-weight:500; font-size:13px; }
+th { text-align:left; font-size:11px; line-height:14px; font-weight:500; letter-spacing:.05em; color:var(--text-2); background:var(--canvas); padding:10px 16px; border-bottom:1px solid var(--line); white-space:nowrap; }
+th:first-child { border-top-left-radius:8px; } th:last-child { border-top-right-radius:8px; }
+td { padding:11px 16px; border-bottom:1px solid var(--row); vertical-align:top; font-size:13px; }
 tr:last-child td { border-bottom:0; }
-a { color:var(--accent); }
-input[type=text], input[type=password], textarea, input[type=file] { width:100%; padding:8px 10px; border:1px solid #cfd6de; border-radius:6px; font:inherit; background:#fff; }
-textarea { min-height:90px; resize:vertical; }
-textarea.code { font:13px/1.5 Consolas,"SFMono-Regular",Menlo,monospace; min-height:460px; white-space:pre; overflow-wrap:normal; overflow-x:auto; }
-label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
-button { padding:7px 14px; border:1px solid var(--accent); background:var(--accent); color:#fff; border-radius:6px; font:inherit; cursor:pointer; }
-button.plain { background:#fff; color:var(--fg); border-color:#cfd6de; }
-button.bad { background:#fff; color:var(--bad); border-color:#f0b8b3; }
-.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-.msg { padding:10px 14px; border-radius:6px; margin-bottom:16px; white-space:pre-wrap; }
-.msg.ok { background:#ecfdf3; color:var(--ok); border:1px solid #abefc6; }
-.msg.err { background:#fef3f2; color:var(--bad); border:1px solid #fecdca; }
-.msg.warn { background:#fffaeb; color:var(--warn); border:1px solid #fedf89; }
-.muted { color:var(--muted); font-size:13px; }
-pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; margin:6px 0; overflow-x:auto; white-space:pre-wrap; word-break:break-word; font:13px/1.5 Consolas,Menlo,monospace; }
-.tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; background:var(--bg); border:1px solid var(--line); color:var(--muted); }
-.tag.ext { background:#fffaeb; border-color:#fedf89; color:var(--warn); }
-details summary { cursor:pointer; color:var(--muted); font-size:13px; }
+tbody tr:hover td { background:var(--canvas); }
+td.r, th.r { text-align:right; }
+td.time { color:var(--text-2); font:12px/20px var(--mono); white-space:nowrap; }
+
+/* 键值、引用、代码 */
+.kv { display:grid; grid-template-columns:96px 1fr; gap:10px 16px; font-size:13px; }
+.kv dt { color:var(--text-2); font:12px/20px var(--mono); margin:0; }
+.kv dd { margin:0; min-width:0; word-break:break-word; }
+.box { background:var(--canvas); border:1px solid var(--line); border-radius:8px; padding:12px 14px; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:20px; }
+.quote { border-left:2px solid var(--line-strong); padding:2px 0 2px 14px; color:var(--text-2); white-space:pre-wrap; word-break:break-word; }
+pre { margin:8px 0 0; background:var(--canvas); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:12px/18px var(--mono); white-space:pre-wrap; word-break:break-word; max-height:420px; overflow:auto; }
+details { display:inline-block; vertical-align:top; }
+details[open] { display:block; }
+details summary { cursor:pointer; color:var(--primary); font-size:12px; display:inline-block; margin-right:14px; }
+details[open] summary { color:var(--text-2); }
+
+/* 步骤时间线 */
+.steps { list-style:none; margin:0; padding:6px 20px; }
+.steps li { display:grid; grid-template-columns:28px 1fr; gap:12px; padding:12px 0; border-bottom:1px solid var(--row); }
+.steps li:last-child { border-bottom:0; }
+.steps .n { width:24px; height:24px; border-radius:50%; background:var(--recess); color:var(--text-2); font:11px/24px var(--mono); text-align:center; }
+.steps .head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.steps .tool { font:12px/20px var(--mono); color:var(--text); font-weight:500; }
+.steps .err { color:var(--bad); font-size:13px; margin-top:4px; }
+
+/* 登录 */
+.login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+.login .card { width:360px; padding:28px; }
+.login .brand { padding:0 0 22px; }
+
+@media (max-width:860px) {
+  .side { position:static; width:auto; flex-direction:row; align-items:center; flex-wrap:wrap; border-right:0; border-bottom:1px solid var(--line); }
+  .brand { padding:12px 16px; } .brand span { display:none; }
+  .nav { flex-direction:row; padding:0 8px 8px; flex-wrap:wrap; }
+  .side-foot { margin:0 0 0 auto; border:0; gap:14px; }
+  .main { margin-left:0; padding:20px 16px 48px; }
+  .grid2 { grid-template-columns:1fr; }
+  .rows .t { width:140px; }
+}
 </style>
 </head>
 <body>
 {{if .CSRF}}
-<header>
-  <b>原子助手</b>
-  <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}">任务</a>
-  <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}">保险库</a>
-  <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}">记忆</a>
-  <a href="/files" class="{{if eq .Page "files"}}on{{end}}">文件</a>
-  <a href="/config" class="{{if eq .Page "config"}}on{{end}}">配置</a>
-  <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="plain">退出</button></form>
-</header>
-{{end}}
-<main>
-{{if and .CSRF .Status}}<div class="msg warn">助手本身还没有运行，目前只有这个后台可用。原因：
+<aside class="side">
+  <div class="brand">
+    <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(28 14 14)"/><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(-28 14 14)"/><circle cx="14" cy="14" r="2.2" fill="currentColor" stroke="none"/></svg>
+    <div><b>原子助手</b><span>私人助手 · 管理后台</span></div>
+  </div>
+  <nav class="nav">
+    <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>任务</a>
+    <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg>保险库</a>
+    <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg>记忆</a>
+    <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>文件</a>
+    <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg>配置</a>
+  </nav>
+  <div class="side-foot">
+    <span>{{if .Status}}<i class="dot warn"></i>助手未运行{{else}}<i class="dot"></i>助手运行中{{end}}</span>
+    <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="linkbtn"><svg class="ico" viewBox="0 0 24 24"><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10"/><path d="M15 8l4 4-4 4M19 12H9.5"/></svg>退出</button></form>
+  </div>
+</aside>
+<main class="main"><div class="wrap{{if or (eq .Page "config") (eq .Page "restarting")}}{{end}}">
+  {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手本身还没有运行，目前只有这个后台可用。原因：
 {{.Status}}
 
-把缺的东西补上（密钥存进「保险库」，其余写进「配置」），然后在「配置」页点重启。</div>{{end}}
-{{if .Notice}}<div class="msg ok">{{.Notice}}</div>{{end}}
-{{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}
+缺的密钥存进「保险库」，其余的写进「配置」，然后在「配置」页点重启。</div><a class="go" href="/vault">去保险库 →</a></div>{{end}}{{end}}
+  {{if .Notice}}<div class="banner ok"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><div>{{.Notice}}</div></div>{{end}}
+  {{if .Error}}<div class="banner bad"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>{{.Error}}</div></div>{{end}}
+  {{template "content" .}}
+</div></main>
+{{else}}
 {{template "content" .}}
-</main>
+{{end}}
 </body>
 </html>

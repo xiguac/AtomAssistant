@@ -1,32 +1,38 @@
 {{define "content"}}
+<h1>文件</h1>
+<div class="sub">助手只能读写这里的文件。把要处理的传上来，它生成的也在这里取。</div>
+
 {{with .Data}}
 {{if .Enabled}}
-<section>
-  <h2>工作区{{if .Dir}} / {{.Dir}}{{end}}</h2>
-  <div class="muted">助手只能读写这里的文件。把要处理的文件传上来，它生成的文件也在这里取。</div>
-  <table style="margin-top:8px">
-    {{if .Dir}}<tr><td colspan="3"><a href="/files?dir={{.Parent}}">← 上一级</a></td></tr>{{end}}
-    {{range .Entries}}<tr>
-      <td>{{if .Dir}}<a href="/files?dir={{.Path}}">{{.Path}}/</a>{{else}}<a href="/files/download?path={{.Path}}">{{.Path}}</a>{{end}}</td>
-      <td class="muted" style="width:110px">{{if not .Dir}}{{.Size}} 字节{{end}}</td>
-      <td class="muted" style="width:110px;white-space:nowrap">{{when .Modified}}</td>
-    </tr>{{else}}<tr><td class="muted">这里还没有文件。</td></tr>{{end}}
-  </table>
-</section>
+<div class="card">
+  <div class="band">
+    <span class="mono" style="color:var(--text-2)">工作区{{if .Dir}} / {{.Dir}}{{end}}</span>
+    {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">← 上一级</a>{{end}}
+  </div>
+  {{if .Entries}}<table>
+    <thead><tr><th>名称</th><th class="r" style="width:120px">大小</th><th class="r" style="width:130px">修改时间</th></tr></thead>
+    <tbody>{{range .Entries}}<tr>
+      <td>{{if .Dir}}<a href="/files?dir={{.Path}}" style="display:inline-flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>{{.Path}}</a>
+        {{else}}<a href="/files/download?path={{.Path}}" style="display:inline-flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg>{{.Path}}</a>{{end}}</td>
+      <td class="time r">{{if not .Dir}}{{size .Size}}{{end}}</td>
+      <td class="time r">{{when .Modified}}</td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">这里还没有文件。</div>{{end}}
+</div>
 
-<section>
-  <h2>上传</h2>
-  <form method="post" action="/files" enctype="multipart/form-data">
-    <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <input type="hidden" name="dir" value="{{.Dir}}">
-    <input type="file" name="file">
-    <div class="row" style="margin-top:10px"><button>上传到这里</button></div>
-  </form>
-  <div class="muted" style="margin-top:8px">同名的文件会被替换，旧的那份自动留底，不会丢。单个文件最大 50 MB。</div>
-</section>
+<form method="post" action="/files" enctype="multipart/form-data" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="dir" value="{{.Dir}}">
+  <div class="band"><b>上传</b></div>
+  <div class="pad"><input type="file" name="file"></div>
+  <div class="band foot"><span class="note muted">同名的文件会被替换，旧的那份自动留底，不会丢。单个文件最大 50 MB。</span><button class="btn">上传到这里</button></div>
+</form>
 {{else}}
-<section><h2>文件</h2><div class="muted">在「配置」里加上 files 一节并重启，这里就能用了：<pre>files:
-  dir: /var/lib/atomhelper/files</pre></div></section>
+<div class="card pad">
+  <div class="note">还没有启用文件处理。在「配置」里加上下面这一节并重启，这里就能用了：</div>
+  <pre>files:
+  dir: /var/lib/atomhelper/files</pre>
+</div>
 {{end}}
 {{end}}
 {{end}}

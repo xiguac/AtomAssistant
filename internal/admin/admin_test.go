@@ -277,10 +277,10 @@ func TestAdmin_任务与外部内容的转义(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, body = e.get("/tasks/" + id)
-	if !strings.Contains(body, "等你确认：mail.send") || !strings.Contains(body, "收到，周五见") || !strings.Contains(body, "liwei@example.com") {
+	if !strings.Contains(body, "等你确认：") || !strings.Contains(body, ">mail.send</span>") || !strings.Contains(body, "做了就收不回来") || !strings.Contains(body, "收到，周五见") || !strings.Contains(body, "liwei@example.com") {
 		t.Fatalf("应完整展示等确认的动作:\n%s", body)
 	}
-	if _, home := e.get("/"); !strings.Contains(home, "等你处理（1）") {
+	if _, home := e.get("/"); !strings.Contains(home, `等你处理 <span class="count warn">1</span>`) || !strings.Contains(home, "等你确认：") {
 		t.Fatal("首页应把它列在等你处理里")
 	}
 	if code, loc := e.post("/tasks/"+id+"/approve", url.Values{"csrf": {e.csrf}}); code != http.StatusSeeOther || !strings.Contains(loc, "已批准") {
