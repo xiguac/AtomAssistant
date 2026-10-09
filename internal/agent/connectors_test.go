@@ -175,10 +175,22 @@ func TestConnectors_副作用等级写死且写操作默认要确认(t *testing.
 	if out := check(strict, task, ToolCalendarUpdate, uuid); out != kernel.ApprovalManual {
 		t.Fatalf("正常的日程 id 应进入确认而不是被拒绝: %s", out)
 	}
-	// 但标题和备注照常分级。
-	if out := check(strict, task, ToolCalendarCreate,
-		`{"title":"办证，身份证 330102199001011234","start_at":"`+far+`"}`); out != kernel.ApprovalDeny {
-		t.Fatalf("日程内容里的绝密数据仍应被拒绝: %s", out)
+	// 日历是用户自己的地方："手术复查"这样的日程要写得进去，不因为含病情就被直接拒绝。
+	surgery := `{"title":"手术后复查","notes":"带上病史资料","start_at":"` + far + `"}`
+	if out := check(strict, task, ToolCalendarCreate, surgery); out != kernel.ApprovalManual {
+		t.Fatalf("含病情的日程应进入确认而不是被拒绝: %s", out)
+	}
+	// 放宽的只是"直接拒绝"这一条：用户配了放行规则就照规则走，外部内容驱动的照样要确认。
+	if out := check(lenient, task, ToolCalendarCreate, surgery); out != kernel.ApprovalAuto {
+		t.Fatalf("符合用户放行规则的日程应放行: %s", out)
+	}
+	if out := check(lenient, fromMail, ToolCalendarCreate, surgery); out != kernel.ApprovalManual {
+		t.Fatalf("外部内容驱动的写操作必须确认: %s", out)
+	}
+	// 这个例外只给日历。邮件是发给别人的，照常拦。
+	if out := check(strict, task, ToolMailSend,
+		`{"to":["boss@example.com"],"subject":"请假","body":"我下周手术，请假三天"}`); out != kernel.ApprovalDeny {
+		t.Fatalf("邮件里的绝密数据仍应被拒绝: %s", out)
 	}
 }
 

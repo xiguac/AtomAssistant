@@ -45,6 +45,14 @@ var (
 	ErrUnsupported = errors.New("calendar: 暂不支持")
 )
 
+// eventProps 是查询日程时向服务器要的属性：展开重复日程和展示所需的全部。
+var eventProps = []string{
+	ical.PropUID, ical.PropSummary, ical.PropLocation, ical.PropDescription, ical.PropOrganizer,
+	ical.PropDateTimeStart, ical.PropDateTimeEnd, ical.PropDuration,
+	ical.PropRecurrenceRule, ical.PropRecurrenceDates, ical.PropExceptionDates, ical.PropRecurrenceID,
+	ical.PropStatus,
+}
+
 // MaxEvents 是一次查询最多返回的日程数。结果要进模型的上下文。
 const MaxEvents = 200
 
@@ -255,8 +263,9 @@ func (c *Client) Events(ctx context.Context, calendarName string, from, to time.
 	}
 	query := &caldav.CalendarQuery{
 		CompRequest: caldav.CalendarCompRequest{
-			Name: ical.CompCalendar, AllProps: true,
-			Comps: []caldav.CalendarCompRequest{{Name: ical.CompEvent, AllProps: true}},
+			// 逐个点名要哪些属性，不用"全部属性"：iCloud 对后者返回的是只有外壳、里面空空的日程。
+			Name: ical.CompCalendar, Props: []string{ical.PropVersion, ical.PropProductID},
+			Comps: []caldav.CalendarCompRequest{{Name: ical.CompEvent, Props: eventProps}},
 		},
 		CompFilter: caldav.CompFilter{
 			Name:  ical.CompCalendar,

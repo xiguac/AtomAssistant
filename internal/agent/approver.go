@@ -52,6 +52,14 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 		return kernel.ApprovalManual, "参数无法完成隐私分级，转人工确认", nil
 	}
 
+	// 写进用户自己的日历不算"把数据交给第三方"：那是他自己的地方，本来就是他记这些事的地方。
+	// "周三手术复查"写不进日历的助手没法用。所以日历工具不适用"含绝密数据直接拒绝"，
+	// 降一级按敏感数据对待——其余规则照旧：写操作默认要确认，外部内容驱动的一律要确认。
+	// 这个例外只给日历。邮件是发给别人的，照常拦。
+	if isCalendarTool(d.ToolName) && maxPrivacy.NeverLeavesInstance() {
+		maxPrivacy = core.PrivacySensitive
+	}
+
 	usage, err := a.usage.Usage(ctx, t.ID, now)
 	if err != nil {
 		return kernel.ApprovalManual, "无法读取累计用量，转人工确认", nil
