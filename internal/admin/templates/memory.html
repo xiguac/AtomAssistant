@@ -1,32 +1,39 @@
 {{define "content"}}
 <h1>记忆</h1>
-<div class="sub">助手从做过的事里记下来的东西：你的情况、你的习惯、这类事该怎么办。它提炼出来的要你点头才算数。</div>
+<div class="sub">你亲口说的，助手直接记住。它自己推断的也会记下，但分量放轻——之后被别的事印证了才加重，你也可以在这里直接确认或让它忘掉。</div>
 
 {{with .Data}}
-<h2 style="margin-top:0">等你确认 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
+<h2 style="margin-top:0">要和你核实的 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
 {{range .Pending}}
 <div class="attn" style="align-items:flex-start">
   <div class="body">
     <div style="margin-bottom:6px"><span class="pill plain">{{.Candidate.Kind}}</span>{{if .Candidate.Domain}} <span class="note muted">{{.Candidate.Domain}}</span>{{end}}</div>
     <div style="white-space:pre-wrap;word-break:break-word">{{.Candidate.Value}}</div>
+    {{if .Arb.Reason}}<div class="note" style="margin-top:6px;color:var(--warn)">{{.Arb.Reason}}</div>{{end}}
   </div>
   <div class="actions">
-    <form method="post" action="/memory/confirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sm">确认</button></form>
-    <form method="post" action="/memory/dismiss"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">否决</button></form>
+    <form method="post" action="/memory/confirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sm">是这样</button></form>
+    <form method="post" action="/memory/dismiss"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">不对</button></form>
   </div>
 </div>
 {{else}}
-<div class="card empty">没有等你确认的。</div>
+<div class="card empty">没有需要你核实的。只有和已有记忆冲突的、关系到安全的、或者从邮件网页里读来的，才会出现在这里。</div>
 {{end}}
 
 <h2>已经记住的 <span class="count">{{len .Memories}}</span></h2>
 <div class="card">
   {{if .Memories}}<table>
-    <thead><tr><th style="width:110px">类型</th><th style="width:170px">关于</th><th>内容</th></tr></thead>
+    <thead><tr><th style="width:96px">类型</th><th style="width:150px">关于</th><th>内容</th><th style="width:150px">来源与分量</th><th style="width:150px"></th></tr></thead>
     <tbody>{{range .Memories}}<tr>
       <td><span class="pill plain">{{.Kind}}</span></td>
       <td>{{.Subject}}{{if .Domain}}<div class="note muted">{{.Domain}}</div>{{end}}</td>
       <td><div style="white-space:pre-wrap;word-break:break-word">{{short .Current.Value 400}}</div></td>
+      <td>{{if .Inferred}}<span class="pill warn plain">助手推断</span>{{else if eq (print .Current.Source.Kind) "user"}}<span class="pill ok plain">你说的</span>{{else if eq (print .Current.Source.Kind) "builtin"}}<span class="pill plain">内置</span>{{else}}<span class="pill plain">{{.Current.Source.Kind}}</span>{{end}}
+        <div class="note muted" style="margin-top:4px">分量 {{pct .Confidence}}%</div></td>
+      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
+        {{if .Inferred}}<form method="post" action="/memory/affirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sec sm">是这样</button></form>{{end}}
+        <form method="post" action="/memory/forget"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">忘掉</button></form>
+      </div></td>
     </tr>{{end}}</tbody>
   </table>{{else}}<div class="empty">还没有。用得多了，这里会慢慢长出来。</div>{{end}}
 </div>

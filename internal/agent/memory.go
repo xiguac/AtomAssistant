@@ -132,11 +132,16 @@ func memorySegments(asm memory.Assembly) []llm.Segment {
 	asm, playbooks := splitPlaybooks(asm)
 	if len(playbooks) > 0 {
 		var sb strings.Builder
-		sb.WriteString("适用的标准流程（SOP）。任务属于其中某一类时按它的步骤做，跳过哪一步要说明原因：\n")
+		sb.WriteString("适用的标准流程（SOP）。任务属于其中某一类时按它的步骤做，跳过哪一步要说明原因。\n" +
+			"标着「参考做法」的是助手从以往的任务里自己总结的，用户没有确认过：可以借鉴，不必照做，与用户这次的要求冲突时听用户的。\n")
 		// 整段的信任等级取其中最低的：混进一条低信任的流程，整段都不能当指令。
 		trust := core.TrustSystem
 		for _, it := range playbooks {
-			fmt.Fprintf(&sb, "【%s】\n%s\n", it.Memory.Domain, it.Memory.Current.Value)
+			label := it.Memory.Domain
+			if it.Memory.Inferred() {
+				label += "·参考做法"
+			}
+			fmt.Fprintf(&sb, "【%s】\n%s\n", label, it.Memory.Current.Value)
 			if t := it.Memory.Current.Source.Trust; t < trust {
 				trust = t
 			}

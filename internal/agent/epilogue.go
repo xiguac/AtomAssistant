@@ -183,10 +183,19 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 		return cost, fmt.Errorf("agent: 提炼结果不是合法 JSON: %w (原文: %s)", err, truncate(resp.Content, 200))
 	}
 
+	// 任务读过外部内容没有，决定了"不是用户说的"那部分算推断还是算外来的。
+	tainted := t.Origin < core.TrustUser
+	for _, s := range history {
+		if s.Status == core.StepDone && s.OutputTrust == core.TrustExternal &&
+			s.ToolName != ToolCalendarEvents && s.ToolName != ToolCalendarList {
+			tainted = true
+		}
+	}
+
 	// 逐条写入：一条不合法不该让其余的也记不下来。
 	var errs []error
 	for _, em := range out.Memories {
-		cand, err := e.candidate(t, em, userSaid)
+		cand, err := e.candidate(t, em, userSaid, tainted)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -204,7 +213,7 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 // 只有它给出的引文能在用户原话里**逐字找到**，这条候选才以用户的名义直接生效。
 // 找不到的一律按任务提炼处理，只能挂为候选等用户确认——
 // 否则邮件里一句"用户住在某地"就能经模型转述写进长期记忆。
-func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string) (memory.Candidate, error) {
+func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string, tainted bool) (memory.Candidate, error) {
 	cand := memory.Candidate{
 		Kind:           memory.Kind(em.Kind),
 		Subject:        strings.TrimSpace(em.Subject),
@@ -239,9 +248,15 @@ func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string
 		return cand, fmt.Errorf("agent: 不支持提炼 %q 类型的记忆", em.Kind)
 	}
 
+	// 不是用户亲口说的，就是助手自己的推断：以较轻的分量记下，不拿去打扰用户，
+	// 之后靠别的任务印证来加重。但任务若读过邮件、网页这类外部内容，就分不清这是助手的推断
+	// 还是别人想让它"记住"的话——那种一律按外部内容对待，只挂候选等用户确认。
 	cand.Source = memory.Source{Kind: memory.SourceTask, Ref: t.ID, Trust: core.TrustToolOutput}
+	if tainted {
+		cand.Source.Trust = core.TrustExternal
+	}
 	// 流程不适用引文核验：引文只能证明用户说过某句话，证明不了整套做法是用户认可的。
-	// 流程会被当成"这类事该怎么办"来执行，所以一律等用户确认后才生效。
+	// 所以流程总是算作助手的推断，在上下文里标成"参考做法"而不是必须遵守的标准流程。
 	if cand.Kind != memory.KindPlaybook && quoted(em.Quote, userSaid) {
 		cand.Source = memory.Source{Kind: memory.SourceUser, Ref: t.ID, Trust: core.TrustUser}
 		cand.Evidence = append(cand.Evidence, "用户原话: "+strings.TrimSpace(em.Quote))

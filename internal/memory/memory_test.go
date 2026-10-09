@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -407,7 +408,10 @@ func TestIngest_重复写入提升置信度但有上限(t *testing.T) {
 	first, _ := st.FindByKey(ctx(), cand.Key())
 
 	for i := 0; i < 20; i++ {
-		if _, err := p.Ingest(ctx(), []memory.Candidate{cand}); err != nil {
+		// 每一次都是另一个任务带来的佐证；同一个任务说二十遍不算。
+		again := cand
+		again.Evidence = []string{fmt.Sprintf("task:%d", i)}
+		if _, err := p.Ingest(ctx(), []memory.Candidate{again}); err != nil {
 			t.Fatalf("写入失败: %v", err)
 		}
 	}
@@ -415,8 +419,8 @@ func TestIngest_重复写入提升置信度但有上限(t *testing.T) {
 	if after.Confidence <= first.Confidence {
 		t.Fatal("重复佐证应提升置信度")
 	}
-	// 重复听到一件事不等于它是真的。
-	if after.Confidence > 0.99 {
+	// 重复听到一件事不等于它是真的：推断靠印证涨不过上限。
+	if after.Confidence > memory.InferredCeiling {
 		t.Fatalf("置信度必须有上限，实际 %v", after.Confidence)
 	}
 }

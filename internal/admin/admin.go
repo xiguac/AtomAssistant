@@ -157,6 +157,7 @@ func New(opts Options) (*Server, error) {
 		"join":       strings.Join,
 		"size":       humanSize,
 		"add":        func(a, b int) int { return a + b },
+		"pct":        func(f float64) int { return int(f*100 + 0.5) },
 	}
 	pages, err := templateFS.ReadDir("templates")
 	if err != nil {
@@ -279,6 +280,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /memory", auth(s.memoryPage))
 	mux.HandleFunc("POST /memory/confirm", auth(s.memoryConfirm))
 	mux.HandleFunc("POST /memory/dismiss", auth(s.memoryDismiss))
+	mux.HandleFunc("POST /memory/affirm", auth(s.memoryAffirm))
+	mux.HandleFunc("POST /memory/forget", auth(s.memoryForget))
 	mux.HandleFunc("GET /config", auth(s.configPage))
 	mux.HandleFunc("POST /config", auth(s.configSave))
 	mux.HandleFunc("POST /restart", auth(s.restart))
@@ -698,6 +701,16 @@ func (s *Server) memoryConfirm(w http.ResponseWriter, r *http.Request, _ *view) 
 
 func (s *Server) memoryDismiss(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/memory", "已否决。", memory.NewPipeline(s.opts.Store.Memories(), nil).Dismiss(r.Context(), r.PostFormValue("id")))
+}
+
+func (s *Server) memoryAffirm(w http.ResponseWriter, r *http.Request, _ *view) {
+	back(w, r, "/memory", "已确认。这条从此算你亲口说的。",
+		memory.NewPipeline(s.opts.Store.Memories(), nil).Affirm(r.Context(), r.PostFormValue("id")))
+}
+
+func (s *Server) memoryForget(w http.ResponseWriter, r *http.Request, _ *view) {
+	back(w, r, "/memory", "已忘掉。助手之后不会再用到它。",
+		memory.NewPipeline(s.opts.Store.Memories(), nil).Forget(r.Context(), r.PostFormValue("id")))
 }
 
 // ---- 配置 ----

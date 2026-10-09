@@ -10,12 +10,12 @@ import (
 	"github.com/xiguac/atomhelper/internal/memory/memstore"
 )
 
-// 从任务里提炼、没有用户原话佐证的候选。
+// 从读过外部内容的任务里提炼出来的候选：分不清是助手的推断还是别人想让它记住的话，只能等用户确认。
 func distilled(kind memory.Kind, domain, value string) memory.Candidate {
 	return memory.Candidate{
 		Kind: kind, Subject: "user", Domain: domain, Value: value,
 		Temporality: memory.TemporalDurable,
-		Source:      memory.Source{Kind: memory.SourceTask, Ref: "task#9", Trust: core.TrustToolOutput},
+		Source:      memory.Source{Kind: memory.SourceTask, Ref: "task#9", Trust: core.TrustExternal},
 	}
 }
 
@@ -28,7 +28,7 @@ func TestConfirm_候选经用户确认后以用户名义生效(t *testing.T) {
 		t.Fatalf("写入失败: %v", err)
 	}
 	if out[0].PendingID == "" || out[0].MemoryID != "" {
-		t.Fatalf("任务提炼的流程应先挂为候选，实际 %+v", out[0])
+		t.Fatalf("外部内容里提炼的流程应先挂为候选，实际 %+v", out[0])
 	}
 	if list, _ := st.List(ctx(), memory.Query{}); len(list) != 0 {
 		t.Fatal("确认之前不应有任何记忆生效")

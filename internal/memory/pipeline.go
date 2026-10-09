@@ -162,7 +162,10 @@ func (p *Pipeline) Ingest(ctx context.Context, cands []Candidate) ([]Outcome, er
 // insert 写入一条全新的记忆。
 func (p *Pipeline) insert(ctx context.Context, cand Candidate, now time.Time) (Outcome, error) {
 	// 不可信来源连新建都不允许：截图里出现的"事实"必须经用户确认。
-	if !cand.Source.Trust.CanWriteMemoryDirectly() {
+	// 助手自己的推断是例外：先以较轻的分量记下，不拿它去打扰用户；
+	// 之后被印证了再加重，印证不了就随时间淡掉。安全相关的推断不在此列——
+	// 过敏、禁忌记错一次就是事故，那一类仍然要用户点头。
+	if !cand.Source.Trust.CanWriteMemoryDirectly() && (!cand.Inferred() || cand.SafetyCritical) {
 		pending := Pending{
 			ID:        core.NewID(),
 			Candidate: cand,
@@ -204,10 +207,7 @@ func (p *Pipeline) apply(ctx context.Context, m *Memory, cand Candidate, arb Arb
 
 	switch arb.Resolution {
 	case ResolveReinforce:
-		// 同一事实反复出现就提升置信度，但有上限：
-		// 重复听到一件事不等于它是真的。
-		m.Confidence = math.Min(0.99, m.Confidence+0.05)
-		m.Current.Evidence = append(m.Current.Evidence, cand.Evidence...)
+		reinforce(m, cand)
 		m.UpdatedAt = now
 		if err := p.store.Put(ctx, m); err != nil {
 			return Outcome{}, err
@@ -257,6 +257,67 @@ func (p *Pipeline) apply(ctx context.Context, m *Memory, cand Candidate, arb Arb
 		o.PendingID = pending.ID
 	}
 	return o, nil
+}
+
+// reinforce 用一条与既有记忆一致的候选给它加分量。这就是"交叉印证"的落点。
+func reinforce(m *Memory, cand Candidate) {
+	// 只有带来新证据的才算数：同一个任务把同一件事说两遍，不是两次印证。
+	fresh := false
+	have := make(map[string]bool, len(m.Current.Evidence))
+	for _, e := range m.Current.Evidence {
+		have[e] = true
+	}
+	for _, e := range cand.Evidence {
+		if !have[e] {
+			fresh = true
+			m.Current.Evidence = append(m.Current.Evidence, e)
+		}
+	}
+	switch {
+	case authority(cand.Source.Kind) > authority(m.Current.Source.Kind):
+		// 更权威的来源说了同样的话（最常见的是用户亲口说中了助手的推断）：
+		// 这条记忆从此算在更权威的来源名下。
+		m.Current.Source = cand.Source
+		m.Confidence = math.Max(m.Confidence, initialConfidence(cand.Source))
+	case !fresh:
+		return
+	case m.Inferred():
+		if m.Confidence < InferredCeiling {
+			m.Confidence = math.Min(InferredCeiling, m.Confidence+corroborationStep)
+		}
+	default:
+		// 同一事实反复出现就提升置信度，但有上限：重复听到一件事不等于它是真的。
+		m.Confidence = math.Min(0.99, m.Confidence+0.05)
+	}
+	m.Current.Confidence = m.Confidence
+}
+
+// Affirm 是用户对一条已经记下的记忆说"对，就是这样"。
+// 助手推断出来的记忆由此转到用户名下，分量与用户亲口说的相同。
+func (p *Pipeline) Affirm(ctx context.Context, memoryID string) error {
+	m, err := p.store.Get(ctx, memoryID)
+	if err != nil {
+		return err
+	}
+	now := p.now()
+	m.Current.Source = Source{Kind: SourceUser, Ref: m.Current.Source.Ref, Trust: core.TrustUser}
+	m.Confidence = math.Max(m.Confidence, initialConfidence(m.Current.Source))
+	m.Current.Confidence = m.Confidence
+	m.Status = StatusActive
+	m.UpdatedAt = now
+	return p.store.Put(ctx, m)
+}
+
+// Forget 是用户对一条已经记下的记忆说"不对，忘掉"。
+// 记忆退出检索但不物理删除：之后能回溯助手当时为什么那样判断。
+func (p *Pipeline) Forget(ctx context.Context, memoryID string) error {
+	m, err := p.store.Get(ctx, memoryID)
+	if err != nil {
+		return err
+	}
+	m.Status = StatusArchived
+	m.UpdatedAt = p.now()
+	return p.store.Put(ctx, m)
 }
 
 // ErrPendingNotFound 表示没有这条待裁决的候选。

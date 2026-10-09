@@ -359,6 +359,9 @@ func RenderFull(m *Memory) string {
 	if m.Status == StatusDisputed {
 		sb.WriteString("\n注意：这条记忆存在未裁决的分歧，使用前建议向用户确认。")
 	}
+	if m.Inferred() {
+		sb.WriteString("\n注意：这是助手自己推断的，用户没有确认过。可以拿来参考；要据此做不好撤回的事之前，先向用户核实。")
+	}
 	if m.ValidUntil != nil {
 		fmt.Fprintf(&sb, "\n有效期至 %s。", m.ValidUntil.Local().Format("2006-01-02"))
 	}

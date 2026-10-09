@@ -87,6 +87,14 @@ type Candidate struct {
 	Evidence       []string
 }
 
+// Inferred 报告一条候选是不是助手自己从任务里推断出来的。
+//
+// 来源是任务提炼、信任等级不低于工具输出的才算。读过邮件、网页的任务里提炼出来的东西
+// 会被标成外部内容等级，不算推断——那可能是别人想让助手"记住"的话。
+func (c *Candidate) Inferred() bool {
+	return c.Source.Kind == SourceTask && c.Source.Trust >= core.TrustToolOutput
+}
+
 // Key 与 Memory.Key 保持一致，用于定位同一条记忆。
 func (c *Candidate) Key() string {
 	parts := []string{string(c.Kind), c.Subject, c.Domain, c.Attribute}
@@ -101,6 +109,28 @@ func (c *Candidate) Key() string {
 // 判定顺序是刻意的：先看来源资格，再看是否一致，再看时效更替，
 // 最后才进入真实矛盾的证据比较。安全属性在任何情况下都要对质。
 func Arbitrate(existing *Memory, cand Candidate, evidence []Evidence, now time.Time) Arbitration {
+	// 0. 助手自己的推断。它不是用户说的，但也不是外面来的东西——
+	//    与旧记忆一致就是一次印证；不一致时，只许它改动同样出自推断的旧值，
+	//    碰到用户说过的、权威数据同步来的，一律留给用户核实。
+	if cand.Inferred() {
+		same := normalize(existing.Current.Value) == normalize(cand.Value) || contains(existing.Current.Value, cand.Value)
+		switch {
+		case same:
+			return Arbitration{Kind: ConflictNone, Resolution: ResolveReinforce, Evidence: evidence,
+				Reason: "助手的推断与既有记忆一致，算作一次印证"}
+		case existing.SafetyCritical || cand.SafetyCritical:
+			return Arbitration{Kind: ConflictContradiction, Resolution: ResolveHoldAsCandidate, Evidence: evidence,
+				Reason: "涉及安全相关属性，助手的推断必须由用户确认"}
+		case existing.Inferred():
+			return Arbitration{Kind: ConflictRefinement, Resolution: ResolveUpdate, Evidence: evidence,
+				Reason: "新的推断取代旧的推断，旧值转入历史"}
+		default:
+			return Arbitration{Kind: ConflictContradiction, Resolution: ResolveHoldAsCandidate, Evidence: evidence,
+				Reason:    "助手的推断与既有记忆不一致，需要向用户核实",
+				Challenge: buildChallenge(existing, cand, evidence)}
+		}
+	}
+
 	// 1. 不可信来源永远只能当候选。截图里写"张总不忌海鲜"不能改动记忆。
 	if !cand.Source.Trust.CanWriteMemoryDirectly() {
 		return Arbitration{
@@ -262,7 +292,7 @@ func describeSource(r Revision) string {
 	case SourceUser:
 		return date + "你告诉我的"
 	case SourceTask:
-		return date + "从任务执行中记录的"
+		return date + "助手自己推断的，未经你确认"
 	case SourceConnector:
 		return date + "从已授权数据同步的"
 	case SourceObserved:

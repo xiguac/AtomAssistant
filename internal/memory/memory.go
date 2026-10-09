@@ -326,6 +326,19 @@ func New(kind Kind, subject, domain string, value string, src Source, now time.T
 	}
 }
 
+const (
+	// InferredConfidence 是助手自行推断的记忆的起始分量。
+	InferredConfidence = 0.4
+	// InferredCeiling 是推断类记忆靠交叉印证能涨到的上限。
+	// 再怎么反复推断出同一件事，也不该比用户亲口说的更可信——要越过这条线，得用户点头。
+	InferredCeiling = 0.8
+	// corroborationStep 是推断被另一次独立的任务印证一次，分量上调多少。
+	corroborationStep = 0.15
+)
+
+// Inferred 报告一条记忆当前的值是不是助手自己推断出来、还没被用户确认过的。
+func (m *Memory) Inferred() bool { return m.Current.Source.Kind == SourceTask }
+
 // initialConfidence 按来源给出初始置信度。
 //
 // 用户亲口说的最可信；从行为观察推断的最不可信——
@@ -337,9 +350,11 @@ func initialConfidence(src Source) float64 {
 	case SourceConnector:
 		return 0.85
 	case SourceTask:
-		return 0.7
+		// 助手自己推断出来的：先记下，但分量放轻。之后被别的任务印证、
+		// 或者被用户亲口说中，分量才往上走。
+		return InferredConfidence
 	case SourceObserved:
-		return 0.4
+		return 0.3
 	default:
 		return 0.5
 	}
