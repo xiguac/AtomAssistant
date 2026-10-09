@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
+	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/llm"
@@ -39,6 +40,27 @@ type File struct {
 type ConnectorsConfig struct {
 	Calendar *CalendarConfig `yaml:"calendar"`
 	Mail     *MailConfig     `yaml:"mail"`
+	Holidays *HolidaysConfig `yaml:"holidays"`
+}
+
+// HolidaysConfig 是节假日数据的来源：一个公开的日历订阅（.ics）。
+type HolidaysConfig struct {
+	// URL 是订阅地址，必须是 https。
+	// Apple 的中国大陆节假日订阅：https://calendars.icloud.com/holidays/cn_zh.ics
+	URL string `yaml:"url"`
+}
+
+// Holidays 按配置构造节假日订阅。没有配置时返回 nil。
+func (f *File) Holidays() (*holiday.Feed, error) {
+	c := f.Connectors.Holidays
+	if c == nil {
+		return nil, nil
+	}
+	feed := &holiday.Feed{URL: c.URL}
+	if err := feed.Check(); err != nil {
+		return nil, fmt.Errorf("config: connectors.holidays.url: %w", err)
+	}
+	return feed, nil
 }
 
 // 连接器在保险库授权名单里的名字。密码条目要把对应的名字列进可用工具，连接器才取得到。

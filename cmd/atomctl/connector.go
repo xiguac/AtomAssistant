@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/config"
+	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/vault"
@@ -101,6 +102,29 @@ func connectorCmd(st *pg.Store, cfg *config.Config, args []string) error {
 		} else {
 			// 发信服务器只有真发一封才验证得了，这里不替用户发。
 			fmt.Printf("  发信服务器 %s（未验证：要验证只能真发一封信）\n", box.SMTPAddr)
+		}
+	}
+	feed, err := file.Holidays()
+	if err != nil {
+		return err
+	}
+	if feed != nil {
+		checked++
+		fmt.Printf("节假日 %s\n", feed.URL)
+		now := time.Now()
+		days, err := feed.Between(ctx, now, now.AddDate(0, 0, 90))
+		if err != nil {
+			fmt.Printf("  失败: %v\n", err)
+		} else {
+			fmt.Println("  取到了，未来 90 天里的放假与调休：")
+			for _, d := range days {
+				switch d.Kind {
+				case holiday.KindOff:
+					fmt.Printf("    %s ~ %s %s 放假\n", d.Start, d.End, d.Name)
+				case holiday.KindWorkday:
+					fmt.Printf("    %s %s 调休上班\n", d.Start, d.Name)
+				}
+			}
 		}
 	}
 	if checked == 0 {

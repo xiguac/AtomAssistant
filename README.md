@@ -32,6 +32,7 @@
 | `internal/vault` | 隔离保险库：敏感信息只进不出，模型与日志只见句柄 | — |
 | `internal/pay` | 支付宝 Agent 支付：收银台付款、按次收费的资源（HTTP 402） | — |
 | `internal/connector/calendar` | 日历连接器：CalDAV 直连，查日程、建、改、删 | P4 |
+| `internal/connector/holiday` | 节假日与调休安排：读取公开的日历订阅 | P4 |
 | `internal/connector/mail` | 邮件连接器：IMAP 读取与整理、SMTP 发信 | P4 |
 | `internal/style` | 学习用户本人的说话方式：攒样本、提炼概述 | — |
 | `internal/skill` `internal/skillscan` | Skill 安装器、运行时工具集收窄、安装前扫描闸门 | P9（本地安装部分） |
@@ -139,6 +140,7 @@ atomctl connector check
 | `calendar.list` `calendar.events` | 列日历、查某段时间的日程（重复日程逐次展开） | 直接执行 |
 | `calendar.create` `calendar.update` | 新建、修改日程；重复日程可以只改或取消某一次 | 直接执行（见下） |
 | `calendar.delete` | 删除日程 | 要你确认 |
+| `calendar.holidays` | 查法定节假日与调休安排（放假、补班） | 直接执行 |
 | `mail.folders` `mail.search` `mail.read` | 列文件夹、搜索、读正文（长信分段） | 直接执行 |
 | `mail.mark` `mail.move` | 标已读/星标、移动（归档、移进废纸篓） | 要你确认 |
 | `mail.send` | 发信、回复 | 要你确认 |
@@ -157,7 +159,12 @@ atomctl connector check
 你在 `approval.rules` 里放行了就直接执行。
 
 调课、调休这类临时变动：重复日程可以只挪某一次、只取消某一次，系列里的其他各次不动。
-哪几天调休要你告诉助手，或者接一个能查节假日安排的工具——助手自己不知道今年怎么调。
+
+哪几天放假、哪个周末补班，助手从节假日订阅里查，不靠印象。在配置里写上订阅地址即可
+（Apple 的中国大陆节假日订阅是 `https://calendars.icloud.com/holidays/cn_zh.ics`），
+它不需要账号密码，也不依赖日历连接器。数据一天取一次；取不到新的就继续用手里的，
+一次都没取到过则如实报错，不会当成"这段时间没有节假日"。
+订阅里的节日名称只保留前 20 个字，查它不算"读过外部内容"，不影响后面的日程直接写入。
 
 几条写死的约束：
 

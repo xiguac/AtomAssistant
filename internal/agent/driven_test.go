@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/policy"
@@ -157,5 +158,56 @@ func TestConnectors_改某一次与取消某一次的参数(t *testing.T) {
 		`{"id":"/c/b.ics","occurrence":"2026-10-12T10:00:00+08:00","cancel":true}`))
 	if err != nil || !cal.patch.Cancel || !strings.Contains(string(res.Output), `"cancelled_occurrence"`) {
 		t.Fatalf("应取消指明的那一次: %v %+v %s", err, cal.patch, res.Output)
+	}
+}
+
+type fakeHolidays struct{ from, to time.Time }
+
+func (f *fakeHolidays) Between(_ context.Context, from, to time.Time) ([]holiday.Entry, error) {
+	f.from, f.to = from, to
+	return []holiday.Entry{{Start: "2026-10-10", End: "2026-10-10", Name: "国庆节（班）", Kind: holiday.KindWorkday}}, nil
+}
+
+func TestHolidays_查调休不算读外部内容(t *testing.T) {
+	bare := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	if strings.Contains(bare.toolList(), ToolHolidays) {
+		t.Fatal("没接入节假日数据时不应出现这个工具")
+	}
+	p := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithHolidays(true)
+	if d, err := p.toolDecision(ToolHolidays, nil, ""); err != nil || d.SideEffect != core.SideEffectReadOnly {
+		t.Fatalf("节假日查询应是只读的: %+v %v", d, err)
+	}
+
+	feed := &fakeHolidays{}
+	a := NewActuator(&fakeTools{}, &fakeModel{}).WithHolidays(feed)
+	task := core.NewTask("t", "g", core.TrustUser)
+	res, err := a.Execute(context.Background(), task, connStep(task, 1, ToolHolidays, `{"from":"2026-10-09","to":"2026-10-12"}`))
+	if err != nil {
+		t.Fatalf("查询失败: %v", err)
+	}
+	if feed.from.Format("01-02") != "10-09" || feed.to.Format("01-02") != "10-12" ||
+		!strings.Contains(string(res.Output), `"kind":"workday"`) {
+		t.Fatalf("查询范围或结果不对: %s ~ %s %s", feed.from, feed.to, res.Output)
+	}
+	// 不写时间：从今天起 30 天。
+	if _, err := a.Execute(context.Background(), task, connStep(task, 2, ToolHolidays, `{}`)); err != nil ||
+		feed.to.Sub(feed.from) < 29*24*time.Hour {
+		t.Fatalf("默认应查 30 天: %v %s", err, feed.to.Sub(feed.from))
+	}
+	// 关键在这里：查过调休之后按它改日程，仍然算用户交代的事，直接做。
+	if res.Trust == core.TrustExternal {
+		t.Fatal("节假日数据不应按外部内容对待")
+	}
+	pol := &policy.Policy{}
+	CalendarDefaults(pol)
+	step := doneStep(ToolHolidays, res.Trust)
+	approver := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).WithHistory(&fakeHistory{steps: []*core.Step{step}})
+	cal := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithCalendar(true)
+	d, err := cal.toolDecision(ToolCalendarCreate, json.RawMessage(`{"title":"补班站会","start_at":"2026-10-10T09:30:00+08:00"}`), "")
+	if err != nil {
+		t.Fatalf("决策失败: %v", err)
+	}
+	if out, reason, _ := approver.CheckAction(context.Background(), task, d); out != kernel.ApprovalAuto {
+		t.Fatalf("查过调休之后记日程应直接执行: %s（%s）", out, reason)
 	}
 }

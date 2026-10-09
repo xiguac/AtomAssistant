@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
+	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
@@ -141,6 +142,60 @@ var mailSendTool = builtin(ToolMailSend,
 		`"body":{"type":"string","description":"正文，纯文本"},"reply_to":{"type":"string"}},"required":["body"]}`,
 	// 发出去的信收不回来。
 	core.SideEffectIrreversible)
+
+// HolidayService 提供节假日与调休安排，由 *holiday.Feed 提供。
+type HolidayService interface {
+	Between(ctx context.Context, from, to time.Time) ([]holiday.Entry, error)
+}
+
+// ToolHolidays 查询法定节假日与调休安排。
+const ToolHolidays = "calendar.holidays"
+
+var holidayTool = builtin(ToolHolidays,
+	`查某段时间里的法定节假日和调休安排。结果里 kind 为 off 的是放假，workday 的是调休上班`+
+		`（本该休息的周末要补班），festival 的是节日或节气、照常上班。没列出来的日子按平时算：周一到周五上班，周末休息。`+
+		`判断某天上不上班、排日程、规划出行之前先查这个，不要凭印象说哪天放假——调休每年都不一样。`+
+		`不写时间则查从今天起的 30 天。`,
+	`{"type":"object","properties":{"from":{"type":"string","description":"开始日期，如 2026-10-01"},`+
+		`"to":{"type":"string","description":"结束日期（含）"}}}`,
+	core.SideEffectReadOnly)
+
+// runHolidays 执行节假日查询。
+func (a *Actuator) runHolidays(ctx context.Context, s *core.Step) (json.RawMessage, error) {
+	if a.holidays == nil {
+		return nil, fmt.Errorf("agent: 未接入节假日数据")
+	}
+	var in struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal(s.Input, &in); err != nil {
+		return nil, fmt.Errorf("agent: 解析节假日查询参数失败: %w", err)
+	}
+	from := time.Now()
+	if in.From != "" {
+		at, _, err := parseWhen(in.From)
+		if err != nil {
+			return nil, err
+		}
+		from = at
+	}
+	to := from.AddDate(0, 0, 30)
+	if in.To != "" {
+		at, _, err := parseWhen(in.To)
+		if err != nil {
+			return nil, err
+		}
+		to = at
+	}
+	days, err := a.holidays.Between(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{
+		"from": from.Format("2006-01-02"), "to": to.Format("2006-01-02"), "days": days,
+	})
+}
 
 // connectorTools 返回已接入的连接器对应的内置工具。
 func connectorTools(hasCalendar, hasMail, canSend bool) []mcpgw.ToolInfo {

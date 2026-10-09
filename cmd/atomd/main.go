@@ -272,6 +272,15 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		actuator = actuator.WithCalendar(cal)
 		log.Info("已接入日历", "服务器", cal.Endpoint, "账号", cal.Username)
 	}
+	feed, err := file.Holidays()
+	if err != nil {
+		return nil, err
+	}
+	if feed != nil {
+		planner = planner.WithHolidays(true)
+		actuator = actuator.WithHolidays(feed)
+		log.Info("已接入节假日数据", "订阅", feed.URL)
+	}
 	box, err := file.Mail(safe)
 	if err != nil {
 		return nil, err

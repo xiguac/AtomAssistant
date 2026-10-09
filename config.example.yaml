@@ -78,6 +78,9 @@ reply:
 #     # from: you@icloud.com            # 发信地址，不写按 username
 #     # name: 张三                      # 发信时显示的名字
 #     # imap_security / smtp_security: tls / starttls / none，不写按端口推断；none 只允许本机地址
+#   # 节假日与调休安排：一个公开的日历订阅，不需要账号。助手靠它知道哪天放假、哪个周末补班
+#   holidays:
+#     url: https://calendars.icloud.com/holidays/cn_zh.ics
 
 # ---------------------------------------------------------------
 # 付款。不写这一节，助手没有任何付款工具。

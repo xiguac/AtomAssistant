@@ -43,6 +43,7 @@ type Actuator struct {
 	resources PaidResources
 	calendar  CalendarService
 	mail      MailService
+	holidays  HolidayService
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
 }
@@ -50,6 +51,12 @@ type Actuator struct {
 // WithCalendar 接入日历连接器。
 func (a *Actuator) WithCalendar(c CalendarService) *Actuator {
 	a.calendar = c
+	return a
+}
+
+// WithHolidays 接入节假日数据。
+func (a *Actuator) WithHolidays(h HolidayService) *Actuator {
+	a.holidays = h
 	return a
 }
 
@@ -146,6 +153,15 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		}
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if s.ToolName == ToolHolidays {
+		out, err := a.runHolidays(ctx, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 节假日安排来自用户指定的订阅，是日期和种类这样的结构化事实，名称在取回时已经截短。
+		// 按权威数据对待：查一下哪天调休，不该让后面记日程的动作变成"由外部内容引出"。
+		return kernel.Result{Output: out, Trust: core.TrustConnector}, nil
 	}
 	if isConnectorTool(s.ToolName) {
 		var out json.RawMessage

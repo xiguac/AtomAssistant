@@ -161,6 +161,8 @@ type Planner struct {
 	paidResources bool
 	// 已接入的内建连接器。canSend 为真表示邮件连接器配了发信服务器。
 	hasCalendar, hasMail, canSend bool
+	// hasHolidays 为真表示接入了节假日数据。
+	hasHolidays bool
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -249,6 +251,12 @@ func (p *Planner) WithCalendar(enabled bool) *Planner {
 	return p
 }
 
+// WithHolidays 向模型开放节假日查询。
+func (p *Planner) WithHolidays(enabled bool) *Planner {
+	p.hasHolidays = enabled
+	return p
+}
+
 // WithMail 向模型开放邮件工具。canSend 为假时只能读和整理，不能发信。
 func (p *Planner) WithMail(enabled, canSend bool) *Planner {
 	p.hasMail, p.canSend = enabled, canSend
@@ -263,6 +271,10 @@ func (p *Planner) WithMail(enabled, canSend bool) *Planner {
 // 日历和邮件同理：它们读的是用户最私人的数据，流程没声明就碰不到。
 func (p *Planner) builtins() []mcpgw.ToolInfo {
 	tools := builtinTools(p.memory != nil)
+	// 节假日是公开信息，不涉及用户的任何数据，绑定了 Skill 的任务也能查。
+	if p.hasHolidays {
+		tools = append(tools, holidayTool)
+	}
 	gated := append(payTools(p.pay), resourceTools(p.pay && p.paidResources)...)
 	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)
 	for _, t := range gated {
