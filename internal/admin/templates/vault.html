@@ -32,10 +32,13 @@
       <div class="help">按原样保存，保存后不再显示</div></div>
     <div class="full"><label>授权工具</label>
       <details class="dropdown">
-        <summary><span class="none">请选择</span><span class="some">已选择</span></summary>
-        <div class="menu">{{range .Data.Tools}}<label class="check"><input type="checkbox" name="tools" value="{{.Value}}"><span>{{.Label}}</span><span class="mono muted">{{.Value}}</span></label>{{end}}</div>
+        <summary><span class="none">请选择或输入</span><span class="some">已选择</span></summary>
+        <div class="menu">
+          <input type="text" name="tools" list="tool-prefixes" placeholder="输入自定义标识，例如 provider.模型服务名称、channel.渠道名称；多个以逗号分隔">
+          <datalist id="tool-prefixes"><option value="provider.">模型服务</option><option value="channel.">消息渠道</option>{{range .Data.Tools}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</datalist>
+          {{range .Data.Tools}}<label class="check"><input type="checkbox" name="tools" value="{{.Value}}"><span>{{.Label}}</span><span class="mono muted">{{.Value}}</span></label>{{end}}</div>
       </details>
-      <div class="help">可多选。仅选中的对象可使用该条目，其余对象引用时调用将被拒绝。选项来自当前配置：新增模型服务、渠道或工具后会出现在此处</div></div>
+      <div class="help">可多选，也可直接输入尚未配置的模型服务或渠道的标识。仅选中或输入的对象可使用该条目，其余对象引用时调用将被拒绝</div></div>
   </div>
   <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>

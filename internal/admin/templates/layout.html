@@ -108,6 +108,9 @@ details.dropdown .some { display:none; color:var(--text); }
 details.dropdown:has(input:checked) .none { display:none; }
 details.dropdown:has(input:checked) .some { display:inline; }
 details.dropdown .menu { position:absolute; z-index:5; left:0; right:0; top:40px; max-height:260px; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:8px; padding:4px; }
+details.dropdown .menu input[type=text] { margin-bottom:4px; }
+details.dropdown:has(input[type=text]:not(:placeholder-shown)) .none { display:none; }
+details.dropdown:has(input[type=text]:not(:placeholder-shown)) .some { display:inline; }
 details.dropdown .menu label.check { display:flex; gap:10px; padding:7px 8px; border-radius:6px; }
 details.dropdown .menu label.check:hover { background:var(--canvas); }
 details.dropdown .menu label.check:has(input:checked) { background:var(--wash); }

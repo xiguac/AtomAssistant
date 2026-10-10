@@ -725,16 +725,17 @@ func TestAdmin_保险库的授权工具从列表勾选(t *testing.T) {
 			t.Fatalf("授权列表里应有 %s", want)
 		}
 	}
-	if strings.Contains(body, `type="text" name="tools"`) {
-		t.Fatal("授权工具不应再是手写的输入框")
+	// 下拉框里带一个输入框：还没配置的模型服务或渠道，可以直接写标识。
+	if !strings.Contains(body, `<details class="dropdown">`) || !strings.Contains(body, `type="text" name="tools" list="tool-prefixes"`) {
+		t.Fatal("授权工具应是带输入框的下拉框")
 	}
 	// 勾了两项：两项都记入授权名单。
 	if code, loc := e.post("/vault", url.Values{"csrf": {e.csrf}, "label": {"icloud"}, "value": {"p"},
-		"tools": {"connector.calendar", "connector.mail"}}); code != http.StatusSeeOther || !strings.Contains(loc, "已保存") {
+		"tools": {"provider.kimi，channel.feishu", "connector.calendar", "connector.mail"}}); code != http.StatusSeeOther || !strings.Contains(loc, "已保存") {
 		t.Fatalf("保存失败: %d %s", code, loc)
 	}
 	metas, err := e.vault.List(context.Background())
-	if err != nil || len(metas) != 1 || strings.Join(metas[0].AllowedTools, ",") != "connector.calendar,connector.mail" {
+	if err != nil || len(metas) != 1 || strings.Join(metas[0].AllowedTools, ",") != "channel.feishu,connector.calendar,connector.mail,provider.kimi" {
 		t.Fatalf("授权名单不对: %+v %v", metas, err)
 	}
 }
