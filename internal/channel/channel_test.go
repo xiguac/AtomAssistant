@@ -416,3 +416,48 @@ func TestRoute_聊天里评价协作模型交的活(t *testing.T) {
 		t.Fatalf("不是整句的口令不应被当成评价: %v %v", fb.rated, tasks.log)
 	}
 }
+
+func TestSendFile_只发回任务所来自的会话(t *testing.T) {
+	h, qq, _ := hub(t)
+	ctx := context.Background()
+	data := []byte("PK-docx")
+
+	// 先有一条来信：回应它时要带上它的编号，序号接着往下排。
+	h.Handle(ctx, "qq", Message{Chat: "c2c:OWNER", Sender: "OWNER", Text: "做个表", ID: "msg-9", At: time.Now()})
+	before := len(qq.sent)
+	if err := h.SendFile(ctx, []string{"别的标签", Tag("qq", "c2c:OWNER")}, "表.xlsx", data); err != nil {
+		t.Fatalf("发送失败: %v", err)
+	}
+	if len(qq.sent) != before+1 {
+		t.Fatalf("应发出一条消息，实际多了 %d 条", len(qq.sent)-before)
+	}
+	got := qq.sent[len(qq.sent)-1]
+	if got.Chat != "c2c:OWNER" || got.File == nil || got.File.Name != "表.xlsx" || string(got.File.Data) != "PK-docx" || got.ReplyTo != "msg-9" {
+		t.Fatalf("发出的消息不对: %+v", got)
+	}
+	// 序号不能和先前的回应撞上。
+	for _, m := range qq.sent[:len(qq.sent)-1] {
+		if m.ReplyTo == "msg-9" && m.Seq >= got.Seq {
+			t.Fatalf("序号应接着往下排: 之前 %d，这次 %d", m.Seq, got.Seq)
+		}
+	}
+
+	// 不是从聊天里来的任务：没有地方可发。
+	if err := h.SendFile(ctx, []string{"skill:x"}, "表.xlsx", data); !errors.Is(err, ErrNoChat) {
+		t.Fatalf("没有会话标签时应报告无处可发: %v", err)
+	}
+	// 标签指向一个没接入的渠道、空文件、过大的文件：都不发。
+	sent := len(qq.sent)
+	if err := h.SendFile(ctx, []string{Tag("wechat", "u1")}, "表.xlsx", data); err == nil {
+		t.Fatal("没接入的渠道应报错")
+	}
+	if err := h.SendFile(ctx, []string{Tag("qq", "c2c:OWNER")}, "空.xlsx", nil); err == nil {
+		t.Fatal("空文件应被拒绝")
+	}
+	if err := h.SendFile(ctx, []string{Tag("qq", "c2c:OWNER")}, "大.bin", make([]byte, MaxFileBytes+1)); err == nil {
+		t.Fatal("过大的文件应被拒绝")
+	}
+	if len(qq.sent) != sent {
+		t.Fatal("被拒绝的文件不该发出去")
+	}
+}

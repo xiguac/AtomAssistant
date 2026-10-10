@@ -113,6 +113,10 @@ func newFake(t *testing.T) *fakeQQ {
 			_, _ = w.Write([]byte(`{"code":40034024,"message":"msg_id expired"}`))
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/files") {
+			_, _ = w.Write([]byte(`{"file_uuid":"u-1","file_info":"FILE-INFO-1","ttl":3600}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"id":"sent-1"}`))
 	})
 	f.srv = httptest.NewServer(mux)
@@ -309,5 +313,37 @@ func TestAccessToken_密钥不对时报错且不外泄(t *testing.T) {
 	locked.Secret = func(context.Context) (string, error) { return "", errors.New("保险库锁着") }
 	if err := locked.Send(context.Background(), channel.Outgoing{Chat: "c2c:OPENID_A", Text: "x"}); err == nil || !strings.Contains(err.Error(), "保险库锁着") {
 		t.Fatalf("取不到密钥应如实报出: %v", err)
+	}
+}
+
+func TestSend_文件先上传再作为富媒体消息发出(t *testing.T) {
+	f := newFake(t)
+	b := f.bot()
+	ctx := context.Background()
+	file := &channel.File{Name: "行程.docx", Data: []byte("PK-docx-bytes")}
+
+	if err := b.Send(ctx, channel.Outgoing{Chat: "c2c:OPENID_A", ReplyTo: "msg-1", Seq: 3, File: file}); err != nil {
+		t.Fatalf("发送失败: %v", err)
+	}
+	if len(f.posts) != 2 || f.postPaths[0] != "POST /v2/users/OPENID_A/files QQBot tok-1" ||
+		f.postPaths[1] != "POST /v2/users/OPENID_A/messages QQBot tok-1" {
+		t.Fatalf("应先上传再发消息: %v", f.postPaths)
+	}
+	up := f.posts[0]
+	// 内容是 base64 传上去的；只上传，不让平台代发。
+	if up["file_type"] != float64(4) || up["file_data"] != "UEstZG9jeC1ieXRlcw==" || up["file_name"] != "行程.docx" || up["srv_send_msg"] != false {
+		t.Fatalf("上传请求不对: %v", up)
+	}
+	msg := f.posts[1]
+	media, _ := msg["media"].(map[string]any)
+	if msg["msg_type"] != float64(7) || media["file_info"] != "FILE-INFO-1" || msg["msg_id"] != "msg-1" || msg["msg_seq"] != float64(3) {
+		t.Fatalf("消息请求不对: %v", msg)
+	}
+
+	// 空文件不发请求。
+	before := len(f.posts)
+	err := b.Send(ctx, channel.Outgoing{Chat: "c2c:OPENID_A", File: &channel.File{Name: "空.docx"}})
+	if !errors.Is(err, ErrInvalid) || len(f.posts) != before {
+		t.Fatalf("空文件应被拒绝且不发请求: %v", err)
 	}
 }

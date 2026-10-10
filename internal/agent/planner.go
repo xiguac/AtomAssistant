@@ -177,6 +177,8 @@ type Planner struct {
 	hasFiles bool
 	// hasTeam 为真表示配置了协作模型，可以派活。
 	hasTeam bool
+	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
+	canSendFiles bool
 	// hasWeb 为真表示接入了联网搜索。
 	hasWeb bool
 	// library 非空表示助手可以自己查找、安装能力，并能读已安装的 Skill。
@@ -275,6 +277,12 @@ func (p *Planner) WithFiles(enabled bool) *Planner {
 	return p
 }
 
+// WithChatFiles 向模型开放"把文件发到聊天窗口"。要同时启用了文件处理才有意义。
+func (p *Planner) WithChatFiles(enabled bool) *Planner {
+	p.canSendFiles = enabled
+	return p
+}
+
 // WithHolidays 向模型开放节假日查询。
 func (p *Planner) WithHolidays(enabled bool) *Planner {
 	p.hasHolidays = enabled
@@ -303,6 +311,9 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)
 	if p.hasFiles {
 		gated = append(gated, fileToolset...)
+		if p.canSendFiles {
+			gated = append(gated, fileSendTool)
+		}
 	}
 	// 派活会把材料交给另一家模型服务，别人写的流程没声明就不能用。
 	if p.hasTeam {

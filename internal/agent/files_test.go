@@ -181,3 +181,73 @@ func TestPlanner_工具再多也看得到最近几步的结果(t *testing.T) {
 		t.Fatal("任务目标必须在上下文里")
 	}
 }
+
+// fakeChat 是 ChatFiles 的测试替身。
+type fakeChat struct {
+	tags []string
+	name string
+	data []byte
+	err  error
+}
+
+func (f *fakeChat) SendFile(_ context.Context, tags []string, name string, data []byte) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.tags, f.name, f.data = tags, name, data
+	return nil
+}
+
+func TestFileSend_把工作区里的文件发到用户的聊天窗口(t *testing.T) {
+	ws, err := files.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	task := core.NewTask("t", "把行程发给我", core.TrustUser)
+	task.Tags = []string{"chat:qq/c2c:OWNER"}
+	chat := &fakeChat{}
+	a := NewActuator(&fakeTools{}, &fakeModel{}).WithFiles(ws).WithChatFiles(chat)
+	if _, err := a.Execute(ctx, task, connStep(task, 1, ToolDocWrite, `{"path":"行程/北京.docx","markdown":"# 北京"}`)); err != nil {
+		t.Fatalf("写文档失败: %v", err)
+	}
+
+	res, err := a.Execute(ctx, task, connStep(task, 2, ToolFileSend, `{"path":"行程/北京.docx"}`))
+	if err != nil {
+		t.Fatalf("发送失败: %v", err)
+	}
+	// 发到哪里由任务的来源决定；文件名不带目录。
+	if chat.name != "北京.docx" || len(chat.data) == 0 || len(chat.tags) != 1 || chat.tags[0] != "chat:qq/c2c:OWNER" {
+		t.Fatalf("交给渠道的内容不对: %s %d %v", chat.name, len(chat.data), chat.tags)
+	}
+	if !strings.Contains(string(res.Output), "北京.docx") {
+		t.Fatalf("回执不对: %s", res.Output)
+	}
+
+	// 工作区之外的文件发不出去。
+	for _, p := range []string{"../../etc/passwd", "没有这个文件.docx"} {
+		if _, err := a.Execute(ctx, task, connStep(task, 3, ToolFileSend, `{"path":"`+p+`"}`)); err == nil {
+			t.Errorf("%s 不该发得出去", p)
+		}
+	}
+	// 渠道报错（比如任务不是从聊天里来的）：这一步失败，原因带回给模型。
+	chat.err = errors.New("这个任务不是从聊天里发起的")
+	if _, err := a.Execute(ctx, task, connStep(task, 4, ToolFileSend, `{"path":"行程/北京.docx"}`)); err == nil {
+		t.Fatal("渠道报错应让这一步失败")
+	}
+
+	// 工具只在接了消息渠道时出现，而且不需要确认。
+	m := &fakeModel{replies: []string{`{"action":"tool","tool":"file.send","params":{"path":"行程/北京.docx"}}`}}
+	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithFiles(true).WithChatFiles(true)
+	d, err := p.Decide(ctx, task, nil)
+	if err != nil || d.ToolName != ToolFileSend || d.SideEffect != core.SideEffectReadOnly {
+		t.Fatalf("发文件应是可直接执行的工具: %+v, %v", d, err)
+	}
+	m = &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
+	if _, err := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithFiles(true).Decide(ctx, task, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(m.lastReq.Messages[0].Content, ToolFileSend) {
+		t.Fatal("没接消息渠道时不该出现发文件的工具")
+	}
+}

@@ -81,6 +81,45 @@ var fileToolset = []mcpgw.ToolInfo{
 		core.SideEffectReversible),
 }
 
+// ChatFiles 把文件发到任务所来自的聊天会话里，由消息渠道提供。
+type ChatFiles interface {
+	SendFile(ctx context.Context, tags []string, name string, data []byte) error
+}
+
+// ToolFileSend 把工作区里的一个文件发给用户。
+const ToolFileSend = "file.send"
+
+// fileSendTool 只在接了消息渠道时才有。
+//
+// 它被标成只读：不改动任何东西，文件也只会发回发起这个任务的那个会话——
+// 发到哪里由任务的来源决定，模型指定不了。这和把结论发给用户是同一回事，不需要再确认。
+var fileSendTool = builtin(ToolFileSend,
+	`把工作区里的一个文件发到用户和你对话的聊天窗口里。用户说"把文件发给我""发我一份"时用它；`+
+		`你生成了用户要的文件（文档、表格、演示文稿）之后，也用它把文件直接发过去，不要只说"已保存到工作区"。`+
+		`只能发给正在和你对话的用户本人，不能指定别的收件人。`,
+	`{"type":"object","properties":{"path":{"type":"string","description":"`+pathHint+`"}},"required":["path"]}`,
+	core.SideEffectReadOnly)
+
+// runFileSend 把工作区里的一个文件发到任务所来自的会话。
+func (a *Actuator) runFileSend(ctx context.Context, t *core.Task, s *core.Step) (json.RawMessage, error) {
+	if a.files == nil || a.chat == nil {
+		return nil, fmt.Errorf("agent: 没有接入消息渠道，发不了文件")
+	}
+	var in fileInput
+	if err := json.Unmarshal(s.Input, &in); err != nil {
+		return nil, fmt.Errorf("agent: 解析参数失败: %w", err)
+	}
+	data, err := a.files.Bytes(in.Path)
+	if err != nil {
+		return nil, err
+	}
+	name := attachmentName(in.Path)
+	if err := a.chat.SendFile(ctx, t.Tags, name, data); err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{"sent": name, "bytes": len(data)})
+}
+
 // isFileTool 报告一个工具名是否属于文件工具。
 func isFileTool(name string) bool {
 	for _, t := range fileToolset {

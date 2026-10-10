@@ -138,6 +138,9 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.team {
 			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
 		}
+		if parts.outbox != nil {
+			parts.outbox.hub.Store(hub)
+		}
 		go func() {
 			if err := hub.Run(ctx); err != nil {
 				log.Error("消息渠道异常退出", "err", err)
@@ -245,6 +248,8 @@ type parts struct {
 	approver kernel.Approver
 	epilogue kernel.Epilogue
 	channels []channel.Binding
+	// outbox 非空时助手可以往聊天窗口里发文件，渠道中枢建好后要填进去。
+	outbox *chatOutbox
 	// team 为真表示配置了协作模型。
 	team  bool
 	close func()
@@ -468,9 +473,19 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		}
 	}
 
+	// 接了消息渠道又启用了文件处理：助手可以把文件直接发到聊天窗口里。
+	// 渠道中枢要等这些部件装好之后才建，所以先留一个位置，建好了再填进去。
+	var outbox *chatOutbox
+	if len(channels) > 0 && workspace != nil {
+		outbox = &chatOutbox{}
+		planner = planner.WithChatFiles(true)
+		actuator = actuator.WithChatFiles(outbox)
+	}
+
 	return &parts{
 		team:     len(file.Workers()) > 0,
 		channels: channels,
+		outbox:   outbox,
 		planner:  planner,
 		actuator: actuator,
 		approver: approver,
@@ -478,6 +493,19 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
+}
+
+// chatOutbox 把助手要发的文件交给渠道中枢。
+type chatOutbox struct {
+	hub atomic.Pointer[channel.Hub]
+}
+
+func (c *chatOutbox) SendFile(ctx context.Context, tags []string, name string, data []byte) error {
+	hub := c.hub.Load()
+	if hub == nil {
+		return fmt.Errorf("消息渠道还没有就绪")
+	}
+	return hub.SendFile(ctx, tags, name, data)
 }
 
 // unreviewedSpec 是助手自己装上的远程 server 的连接参数。

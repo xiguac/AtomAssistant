@@ -49,6 +49,8 @@ type Actuator struct {
 	// team 与 workers 非空时可以把活派给协作模型。
 	team    Dispatcher
 	workers WorkerModel
+	// chat 非空时可以把工作区里的文件发到用户的聊天窗口里。
+	chat ChatFiles
 	// searcher 非空时可以联网搜索。
 	searcher Searcher
 	// capabilities 非空时助手可以自己查找、安装能力；library 用来读已安装的 Skill。
@@ -61,6 +63,12 @@ type Actuator struct {
 // WithCalendar 接入日历连接器。
 func (a *Actuator) WithCalendar(c CalendarService) *Actuator {
 	a.calendar = c
+	return a
+}
+
+// WithChatFiles 接入消息渠道的发文件能力。
+func (a *Actuator) WithChatFiles(c ChatFiles) *Actuator {
+	a.chat = c
 	return a
 }
 
@@ -174,6 +182,21 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 协作模型交回来的是模型生成的文本，和主 AI 自己的输出一个等级：
 		// 它可能在复述材料里的话，不具备指令资格。
 		return a.runDispatch(ctx, t, s)
+	}
+	if s.ToolName == ToolFileSend {
+		out, err := a.runFileSend(ctx, t, s)
+		if a.audit != nil {
+			detail := "成功: " + string(out)
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustSystem, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 回执是我们自己生成的：文件名和大小。
+		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
 	}
 	if isFileTool(s.ToolName) {
 		out, err := a.runFile(ctx, s)

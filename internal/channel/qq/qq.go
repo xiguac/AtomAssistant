@@ -14,6 +14,7 @@ package qq
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -226,11 +227,21 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 	if !ok || !validID(openid) {
 		return fmt.Errorf("%w: 会话标识 %q 不是 QQ 单聊", ErrInvalid, m.Chat)
 	}
-	if strings.TrimSpace(m.Text) == "" {
-		return fmt.Errorf("%w: 消息是空的", ErrInvalid)
-	}
 	path := "/v2/users/" + url.PathEscape(openid) + "/messages"
-	body := map[string]any{"content": m.Text, "msg_type": 0}
+	var body map[string]any
+	if m.File != nil {
+		info, err := b.upload(ctx, openid, m.File)
+		if err != nil {
+			return err
+		}
+		// 富媒体消息：文件本身已经传上去了，这里只引用它。
+		body = map[string]any{"content": m.Text, "msg_type": msgTypeMedia, "media": map[string]any{"file_info": info}}
+	} else {
+		if strings.TrimSpace(m.Text) == "" {
+			return fmt.Errorf("%w: 消息是空的", ErrInvalid)
+		}
+		body = map[string]any{"content": m.Text, "msg_type": 0}
+	}
 	if m.ReplyTo == "" {
 		return b.call(ctx, http.MethodPost, path, body, nil)
 	}
@@ -248,6 +259,38 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 		return fmt.Errorf("%w；改为主动消息后仍失败: %v", first, second)
 	}
 	return nil
+}
+
+const (
+	// msgTypeMedia 是富媒体消息。
+	msgTypeMedia = 7
+	// fileTypeFile 是上传接口里"文件"这一类（1 图片、2 视频、3 语音、4 文件）。
+	fileTypeFile = 4
+)
+
+// upload 把一个文件传到 QQ，返回发消息时用来引用它的 file_info。
+//
+// srv_send_msg 为假：只上传，不让平台代发——发不发、怎么发由后面那条消息决定。
+func (b *Bot) upload(ctx context.Context, openid string, f *channel.File) (string, error) {
+	if len(f.Data) == 0 {
+		return "", fmt.Errorf("%w: 文件是空的", ErrInvalid)
+	}
+	var out struct {
+		FileInfo string `json:"file_info"`
+	}
+	err := b.call(ctx, http.MethodPost, "/v2/users/"+url.PathEscape(openid)+"/files", map[string]any{
+		"file_type":    fileTypeFile,
+		"file_data":    base64.StdEncoding.EncodeToString(f.Data),
+		"file_name":    f.Name,
+		"srv_send_msg": false,
+	}, &out)
+	if err != nil {
+		return "", err
+	}
+	if out.FileInfo == "" {
+		return "", fmt.Errorf("qq: 上传文件后没有拿到 file_info")
+	}
+	return out.FileInfo, nil
 }
 
 // validID 校验一个要拼进接口路径的标识。

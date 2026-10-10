@@ -55,6 +55,51 @@ type Outgoing struct {
 	ReplyTo string
 	// Seq 是对同一条来信的第几次回应，从 1 开始。有的渠道靠它去重。
 	Seq int
+	// File 非空时这条消息发的是一个文件，Text 可以为空。
+	File *File
+}
+
+// File 是要发到会话里的一个文件。
+type File struct {
+	Name string
+	Data []byte
+}
+
+// MaxFileBytes 是发到会话里的单个文件的大小上限。
+const MaxFileBytes = 20 << 20
+
+// ErrNoChat 表示这个任务不是从聊天会话里来的，没有地方可发。
+var ErrNoChat = errors.New("channel: 这个任务不是从聊天里发起的")
+
+// SendFile 把一个文件发到任务所来自的那个会话里。
+//
+// 发到哪里由任务的标签决定，调用方指定不了：文件只会回到发起这个任务的主人手上。
+func (h *Hub) SendFile(ctx context.Context, tags []string, name string, data []byte) error {
+	channel, chat, ok := parseTag(tags)
+	if !ok {
+		return ErrNoChat
+	}
+	b, ok := h.bindings[channel]
+	if !ok {
+		return fmt.Errorf("channel: 没有名为 %q 的渠道", channel)
+	}
+	if len(data) == 0 || len(data) > MaxFileBytes {
+		return fmt.Errorf("channel: 文件是空的，或超过 %d MB，发不了", MaxFileBytes>>20)
+	}
+	st, err := h.state.GetChat(ctx, channel, chat)
+	if err != nil {
+		return err
+	}
+	if st == nil {
+		st = &ChatState{Channel: channel, Chat: chat}
+	}
+	st.Seq++
+	out := Outgoing{Chat: chat, ReplyTo: st.LastMsgID, Seq: st.Seq, File: &File{Name: name, Data: data}}
+	if err := b.Adapter.Send(ctx, out); err != nil {
+		return err
+	}
+	// 序号用过了就不能再用。
+	return h.state.PutChat(ctx, st)
 }
 
 // Adapter 是一家聊天软件的接入。
