@@ -62,19 +62,31 @@ connectors:
 		t.Fatalf("没配置邮件时应返回 nil: %v %v", box, err)
 	}
 
-	// 明文密码写进配置文件：启动时就报错。
-	plain, err := LoadFile(writeConfig(t, `
+	// 明文密码写进配置文件：加载时就报错（后台保存配置只过加载这一道校验）。
+	if _, err := LoadFile(writeConfig(t, `
 connectors:
   calendar:
     url: https://caldav.icloud.com
     username: me@icloud.com
     password: abcd-efgh-ijkl-mnop
-`))
-	if err != nil {
-		t.Fatalf("加载失败: %v", err)
-	}
-	if _, err := plain.Calendar(lender); err == nil || !strings.Contains(err.Error(), "password") {
+`)); err == nil || !strings.Contains(err.Error(), "password") {
 		t.Fatalf("明文密码应被拒绝: %v", err)
+	}
+
+	// 后台只改连接器一节，其余内容原样保留；全部停用后不留空的小节。
+	raw := []byte("# 说明\nreply:\n  style: concise\n")
+	out, err := WriteConnectors(raw, ConnectorsConfig{Calendar: &CalendarConfig{
+		URL: "https://caldav.icloud.com", Username: "me@icloud.com", Password: "vault://connector.calendar"}})
+	if err != nil || !strings.HasPrefix(string(out), string(raw)) || strings.Contains(string(out), "mail") ||
+		strings.Contains(string(out), "default_calendar") {
+		t.Fatalf("写回连接器一节不对: %v\n%s", err, out)
+	}
+	back, err := ReadConnectors(out)
+	if err != nil || back.Calendar == nil || back.Calendar.Username != "me@icloud.com" || back.Mail != nil {
+		t.Fatalf("读回连接器一节不对: %+v %v", back, err)
+	}
+	if gone, err := WriteConnectors(out, ConnectorsConfig{}); err != nil || string(gone) != string(raw) {
+		t.Fatalf("全部停用后应回到原样: %v\n%q", err, gone)
 	}
 }
 

@@ -1,0 +1,78 @@
+{{define "content"}}
+<h1>连接器</h1>
+<div class="sub">配置日历（CalDAV）与邮件（IMAP / SMTP）的账号，以及节假日订阅。密码保存至保险库，保存后不可查看。修改后需重启服务方可生效。</div>
+
+{{with .Data}}
+<h2 style="margin-top:0">日历 {{if .Calendar}}{{if .CalendarKey}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">密码未配置</span>{{end}}{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+<form method="post" action="/connectors/calendar" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad grid2">
+    <div><label for="cal-url">服务器地址</label><input id="cal-url" type="text" name="url" value="{{if .Calendar}}{{.Calendar.URL}}{{else}}https://caldav.icloud.com{{end}}">
+      <div class="help">CalDAV 服务器地址。iCloud 为 https://caldav.icloud.com</div></div>
+    <div><label for="cal-user">账号</label><input id="cal-user" type="text" name="username" value="{{if .Calendar}}{{.Calendar.Username}}{{end}}" placeholder="you@icloud.com"></div>
+    <div><label for="cal-pass">密码</label><input id="cal-pass" type="password" name="password" autocomplete="new-password">
+      <div class="help">iCloud 须使用 App 专用密码，而非 Apple ID 登录密码。已配置时留空表示沿用原密码</div></div>
+    <div><label for="cal-default">默认日历</label><input id="cal-default" type="text" name="default_calendar" value="{{if .Calendar}}{{.Calendar.DefaultCalendar}}{{end}}">
+      <div class="help">新建日程默认写入的日历名称。账号下仅有一个日历时可不填</div></div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">连接测试使用已保存的配置。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Calendar}}<button class="btn danger" formaction="/connectors/disable" name="which" value="calendar">停用</button>
+      <button class="btn sec" formaction="/connectors/test" name="which" value="calendar">连接测试</button>{{end}}
+    </div>
+  </div>
+</form>
+
+<h2>邮件 {{if .Mail}}{{if .MailKey}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">密码未配置</span>{{end}}{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+<form method="post" action="/connectors/mail" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad grid2">
+    <div><label for="mail-imap">收信服务器（IMAP）</label><input id="mail-imap" type="text" name="imap" value="{{if .Mail}}{{.Mail.IMAP}}{{else}}imap.mail.me.com:993{{end}}">
+      <div class="help">格式为 主机:端口。iCloud 为 imap.mail.me.com:993</div></div>
+    <div><label for="mail-smtp">发信服务器（SMTP）</label><input id="mail-smtp" type="text" name="smtp" value="{{if .Mail}}{{.Mail.SMTP}}{{else}}smtp.mail.me.com:587{{end}}">
+      <div class="help">iCloud 为 smtp.mail.me.com:587。留空则仅可读取与整理邮件，不可发信</div></div>
+    <div><label for="mail-user">账号</label><input id="mail-user" type="text" name="username" value="{{if .Mail}}{{.Mail.Username}}{{end}}" placeholder="you@icloud.com"></div>
+    <div><label for="mail-pass">密码</label><input id="mail-pass" type="password" name="password" autocomplete="new-password">
+      <div class="help">iCloud 须使用 App 专用密码。已配置时留空表示沿用原密码</div></div>
+    <div><label for="mail-from">发信地址</label><input id="mail-from" type="text" name="from" value="{{if .Mail}}{{.Mail.From}}{{end}}">
+      <div class="help">留空则使用账号</div></div>
+    <div><label for="mail-name">发信人名称</label><input id="mail-name" type="text" name="display_name" value="{{if .Mail}}{{.Mail.Name}}{{end}}"></div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">邮件内容属于外部内容，由邮件引出的操作均需经你确认。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Mail}}<button class="btn danger" formaction="/connectors/disable" name="which" value="mail">停用</button>
+      <button class="btn sec" formaction="/connectors/test" name="which" value="mail">连接测试</button>{{end}}
+    </div>
+  </div>
+</form>
+
+<h2>节假日订阅 {{if .Holidays}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+<form method="post" action="/connectors/holidays" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad">
+    <label for="hol-url">订阅地址</label><input id="hol-url" type="text" name="url" value="{{if .Holidays}}{{.Holidays.URL}}{{else}}https://calendars.icloud.com/holidays/cn_zh.ics{{end}}">
+    <div class="help">公开的日历订阅（.ics），无需账号，用于查询法定节假日与调休安排</div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">订阅地址必须使用 https。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Holidays}}<button class="btn danger" formaction="/connectors/disable" name="which" value="holidays">停用</button>{{end}}
+    </div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="band"><b>重启服务</b></div>
+  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
+    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="btn sec">重启服务</button></form>
+  </div>
+</div>
+{{end}}
+{{end}}

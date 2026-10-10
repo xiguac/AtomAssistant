@@ -261,6 +261,26 @@ func WriteChannels(raw []byte, channels []ChannelConfig) ([]byte, error) {
 	return writeSections(raw, []string{"channels"}, values)
 }
 
+// ReadConnectors 从配置文件的原文里读出连接器一节。
+func ReadConnectors(raw []byte) (ConnectorsConfig, error) {
+	var f struct {
+		Connectors ConnectorsConfig `yaml:"connectors"`
+	}
+	if err := yaml.Unmarshal(raw, &f); err != nil {
+		return f.Connectors, fmt.Errorf("config: 解析配置失败: %w", err)
+	}
+	return f.Connectors, nil
+}
+
+// WriteConnectors 把连接器一节写回配置文件的原文，其余的部分原样保留。
+func WriteConnectors(raw []byte, c ConnectorsConfig) ([]byte, error) {
+	values := map[string]any{}
+	if c.Calendar != nil || c.Mail != nil || c.Holidays != nil {
+		values["connectors"] = c
+	}
+	return writeSections(raw, []string{"connectors"}, values)
+}
+
 // writeSections 把最外层的若干小节写回配置文件的原文。values 里没有的小节会被删掉。
 //
 // 只替换这几节各自占的那几行，其余的部分一个字都不动——注释、空行、排版都是用户自己的。

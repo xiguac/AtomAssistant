@@ -162,9 +162,9 @@ func (f *File) BuildChannels(secrets SecretLender, log *slog.Logger) ([]channel.
 
 // ConnectorsConfig 是内建连接器的配置。不写的那一项就不接入。
 type ConnectorsConfig struct {
-	Calendar *CalendarConfig `yaml:"calendar"`
-	Mail     *MailConfig     `yaml:"mail"`
-	Holidays *HolidaysConfig `yaml:"holidays"`
+	Calendar *CalendarConfig `yaml:"calendar,omitempty"`
+	Mail     *MailConfig     `yaml:"mail,omitempty"`
+	Holidays *HolidaysConfig `yaml:"holidays,omitempty"`
 }
 
 // HolidaysConfig 是节假日数据的来源：一个公开的日历订阅（.ics）。
@@ -187,6 +187,32 @@ func (f *File) Holidays() (*holiday.Feed, error) {
 	return feed, nil
 }
 
+// validateConnectors 校验连接器一节。在加载时就查，理由同 validateChannels。
+func (f *File) validateConnectors() error {
+	if c := f.Connectors.Calendar; c != nil {
+		if c.URL == "" || c.Username == "" {
+			return fmt.Errorf("config: connectors.calendar 必须配齐 url / username / password")
+		}
+		if !strings.HasPrefix(c.Password, "vault://") {
+			return fmt.Errorf("config: connectors.calendar.password 只能写保险库句柄（vault://名字），不能直接写密码")
+		}
+	}
+	if c := f.Connectors.Mail; c != nil {
+		if c.IMAP == "" || c.Username == "" {
+			return fmt.Errorf("config: connectors.mail 必须配齐 imap / username / password")
+		}
+		if !strings.HasPrefix(c.Password, "vault://") {
+			return fmt.Errorf("config: connectors.mail.password 只能写保险库句柄（vault://名字），不能直接写密码")
+		}
+	}
+	if c := f.Connectors.Holidays; c != nil {
+		if err := (&holiday.Feed{URL: c.URL}).Check(); err != nil {
+			return fmt.Errorf("config: connectors.holidays.url: %w", err)
+		}
+	}
+	return nil
+}
+
 // 连接器在保险库授权名单里的名字。密码条目要把对应的名字列进可用工具，连接器才取得到。
 const (
 	VaultUserCalendar = "connector.calendar"
@@ -202,7 +228,7 @@ type CalendarConfig struct {
 	// iCloud 要用"App 专用密码"，不是 Apple ID 的登录密码。
 	Password string `yaml:"password"`
 	// DefaultCalendar 是新建日程默认写入的日历名。账户里只有一个日历时可以不写。
-	DefaultCalendar string `yaml:"default_calendar"`
+	DefaultCalendar string `yaml:"default_calendar,omitempty"`
 }
 
 // MailConfig 是邮件连接器（IMAP/SMTP）的配置。
@@ -210,16 +236,16 @@ type MailConfig struct {
 	// IMAP 是收信服务器，写成 主机:端口，iCloud 是 imap.mail.me.com:993。
 	IMAP string `yaml:"imap"`
 	// SMTP 是发信服务器，iCloud 是 smtp.mail.me.com:587。不写则助手只能读和整理，不能发信。
-	SMTP     string `yaml:"smtp"`
+	SMTP     string `yaml:"smtp,omitempty"`
 	Username string `yaml:"username"`
 	// Password 必须是保险库句柄（vault://名字），不接受明文。
 	Password string `yaml:"password"`
 	// From 是发信地址，不写按 username。Name 是发信时显示的名字。
-	From string `yaml:"from"`
-	Name string `yaml:"name"`
+	From string `yaml:"from,omitempty"`
+	Name string `yaml:"name,omitempty"`
 	// 加密方式 tls / starttls / none，不写按端口推断。none 只允许用于本机地址。
-	IMAPSecurity string `yaml:"imap_security"`
-	SMTPSecurity string `yaml:"smtp_security"`
+	IMAPSecurity string `yaml:"imap_security,omitempty"`
+	SMTPSecurity string `yaml:"smtp_security,omitempty"`
 }
 
 // SecretLender 按句柄借出保险库里的值，由 *vault.Vault 提供。
@@ -428,6 +454,9 @@ func (f *File) validate() error {
 		return err
 	}
 	if err := f.validateChannels(); err != nil {
+		return err
+	}
+	if err := f.validateConnectors(); err != nil {
 		return err
 	}
 	for _, t := range f.Tools {

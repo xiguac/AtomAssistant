@@ -620,3 +620,90 @@ func TestAdmin_渠道页接入机器人并指定主人(t *testing.T) {
 		t.Fatalf("未登录应被引到登录页: %d", resp.StatusCode)
 	}
 }
+
+func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	before, _ := os.ReadFile(e.cfg)
+
+	if loc := post("/connectors/calendar", url.Values{"url": {"https://caldav.example.com"}, "username": {"me@example.com"}}); !strings.Contains(loc, "必须填写密码") {
+		t.Fatalf("首次配置没有密码应被拒绝: %s", loc)
+	}
+	if loc := post("/connectors/calendar", url.Values{"url": {"http://caldav.example.com"}, "username": {"me"}, "password": {"p"}}); !strings.Contains(loc, "https://") {
+		t.Fatalf("明文地址应被拒绝: %s", loc)
+	}
+	if loc := post("/connectors/calendar", url.Values{"url": {"https://caldav.example.com"}, "username": {"me@example.com"},
+		"password": {"cal pass word"}, "default_calendar": {"个人"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存日历失败: %s", loc)
+	}
+	if loc := post("/connectors/mail", url.Values{"imap": {"imap.example.com:993"}, "smtp": {"smtp.example.com:587"},
+		"username": {"me@example.com"}, "password": {"mail-secret-9"}, "display_name": {"张三"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存邮件失败: %s", loc)
+	}
+	if loc := post("/connectors/holidays", url.Values{"url": {"http://example.com/h.ics"}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("不是 https 的订阅应被拒绝: %s", loc)
+	}
+	if loc := post("/connectors/holidays", url.Values{"url": {"https://example.com/h.ics"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存节假日订阅失败: %s", loc)
+	}
+
+	raw, _ := os.ReadFile(e.cfg)
+	text := string(raw)
+	if strings.Contains(text, "cal pass word") || strings.Contains(text, "mail-secret-9") || !strings.HasPrefix(text, string(before)) {
+		t.Fatalf("密码不能出现在配置里，其余内容不动:\n%s", text)
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil {
+		t.Fatalf("保存出来的配置应能加载: %v\n%s", err, text)
+	}
+	ctx := context.Background()
+	// 密码各存一条、各自授权，带着空格也原样存取。
+	cal, err := file.Calendar(e.vault)
+	if err != nil || cal.Default != "个人" {
+		t.Fatalf("日历连接器不对: %+v %v", cal, err)
+	}
+	if got, err := cal.Secret(ctx); err != nil || got != "cal pass word" {
+		t.Fatalf("日历密码应能从保险库取出且原样: %v", err)
+	}
+	box, err := file.Mail(e.vault)
+	if err != nil || box.Name != "张三" || box.SMTPAddr != "smtp.example.com:587" {
+		t.Fatalf("邮件连接器不对: %+v %v", box, err)
+	}
+	if got, err := box.Secret(ctx); err != nil || got != "mail-secret-9" {
+		t.Fatalf("邮件密码应能从保险库取出: %v", err)
+	}
+	_, body := e.get("/connectors")
+	if strings.Contains(body, "cal pass word") || strings.Contains(body, "mail-secret-9") ||
+		!strings.Contains(body, `value="me@example.com"`) || strings.Count(body, "已配置") < 3 {
+		t.Fatal("连接器页应显示账号与状态，不显示密码")
+	}
+
+	// 修改时留空密码：沿用原密码。
+	if loc := post("/connectors/calendar", url.Values{"url": {"https://caldav2.example.com"}, "username": {"me@example.com"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("修改日历失败: %s", loc)
+	}
+	file, _ = config.LoadFile(e.cfg)
+	cal, _ = file.Calendar(e.vault)
+	if got, err := cal.Secret(ctx); err != nil || got != "cal pass word" || cal.Endpoint != "https://caldav2.example.com" || cal.Default != "" {
+		t.Fatalf("留空密码应沿用原密码: %v %+v", err, cal)
+	}
+
+	// 逐个停用，全部停用后配置回到原样。
+	for _, which := range []string{"calendar", "mail", "holidays"} {
+		if loc := post("/connectors/disable", url.Values{"which": {which}}); !strings.Contains(loc, "已停用") {
+			t.Fatalf("停用 %s 失败: %s", which, loc)
+		}
+	}
+	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
+		t.Fatalf("全部停用后配置应回到原样:\n%q", now)
+	}
+	if loc := post("/connectors/test", url.Values{"which": {"calendar"}}); !strings.Contains(loc, "尚未配置日历") {
+		t.Fatalf("未配置时连接测试应说明: %s", loc)
+	}
+}
