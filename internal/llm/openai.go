@@ -69,10 +69,18 @@ type chatRequest struct {
 	MaxTokens      int       `json:"max_tokens,omitempty"`
 	Temperature    float64   `json:"temperature,omitempty"`
 	ResponseFormat *respFmt  `json:"response_format,omitempty"`
+	// 以下两项是阿里云百炼的联网搜索开关，只在请求联网搜索时带上。
+	EnableSearch  bool           `json:"enable_search,omitempty"`
+	SearchOptions *searchOptions `json:"search_options,omitempty"`
 }
 
 type respFmt struct {
 	Type string `json:"type"`
+}
+
+type searchOptions struct {
+	// ForcedSearch 让模型一定去搜，而不是自己判断要不要搜。
+	ForcedSearch bool `json:"forced_search"`
 }
 
 type chatResponse struct {
@@ -106,6 +114,10 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 	}
 	if req.JSONMode {
 		body.ResponseFormat = &respFmt{Type: "json_object"}
+	}
+	if req.WebSearch {
+		body.EnableSearch = true
+		body.SearchOptions = &searchOptions{ForcedSearch: true}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

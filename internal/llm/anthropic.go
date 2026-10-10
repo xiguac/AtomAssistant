@@ -70,13 +70,19 @@ type anthropicRequest struct {
 	System      string    `json:"system,omitempty"`
 	Messages    []Message `json:"messages"`
 	Temperature float64   `json:"temperature,omitempty"`
+	Tools       []any     `json:"tools,omitempty"`
 }
+
+// webSearchTool 是服务端执行的联网搜索工具：搜索由模型服务自己完成，我们只拿结果。
+var webSearchTool = map[string]any{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
 
 type anthropicResponse struct {
 	Model   string `json:"model"`
 	Content []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
+		// Content 只在 web_search_tool_result 块里有：一组搜到的网页，或一个错误对象。
+		Content json.RawMessage `json:"content"`
 	} `json:"content"`
 	Usage struct {
 		InputTokens  int64 `json:"input_tokens"`
@@ -112,6 +118,9 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 	body.System = strings.Join(system, "\n\n")
 	if len(body.Messages) == 0 {
 		return Response{}, fmt.Errorf("llm: 除了系统提示之外没有任何消息")
+	}
+	if req.WebSearch {
+		body.Tools = []any{webSearchTool}
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -154,9 +163,28 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 	}
 	// 只取文字块。思考过程（thinking）是另一种块，不是答案的一部分。
 	var text strings.Builder
+	var sources []Source
+	searched := false
+	seen := map[string]bool{}
 	for _, c := range parsed.Content {
-		if c.Type == "text" {
+		switch c.Type {
+		case "text":
 			text.WriteString(c.Text)
+		case "server_tool_use":
+			searched = true
+		case "web_search_tool_result":
+			searched = true
+			// 搜索出错时这里是一个对象而不是数组，解不出来就当没有来源。
+			var results []Source
+			if err := json.Unmarshal(c.Content, &results); err != nil {
+				continue
+			}
+			for _, s := range results {
+				if s.URL != "" && !seen[s.URL] {
+					seen[s.URL] = true
+					sources = append(sources, s)
+				}
+			}
 		}
 	}
 	if len(parsed.Content) == 0 {
@@ -170,5 +198,8 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 		Content: text.String(),
 		Model:   model,
 		Usage:   Usage{PromptTokens: parsed.Usage.InputTokens, CompletionTokens: parsed.Usage.OutputTokens},
+		Sources: sources,
+		// 这个协议下搜没搜是看得见的：一次搜索都没有，回答就只是模型的记忆。
+		NoSearch: req.WebSearch && !searched,
 	}, nil
 }

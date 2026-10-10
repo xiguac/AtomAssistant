@@ -35,6 +35,15 @@ type Request struct {
 	Temperature float64
 	// JSONMode 要求模型输出合法 JSON。
 	JSONMode bool
+	// WebSearch 要求模型用它自带的联网搜索来回答。只有 Router.Search 会设置它：
+	// 不是每家模型都有这个能力，发给没有的那些只会得到一段凭记忆写的回答。
+	WebSearch bool
+}
+
+// Source 是模型联网搜索时引用的一个网页。
+type Source struct {
+	Title string `json:"title,omitempty"`
+	URL   string `json:"url"`
 }
 
 // Usage 是一次调用的用量。
@@ -50,6 +59,10 @@ type Response struct {
 	Model   string
 	// CostMicros 是这次调用的开销，单位为百万分之一元。路由没配单价时为 0。
 	CostMicros int64
+	// Sources 是联网搜索时引用的网页。有的服务不返回这一项。
+	Sources []Source
+	// NoSearch 为真表示请求了联网搜索、而服务明确表明这次没有搜——回答来自模型自己的记忆。
+	NoSearch bool
 }
 
 // Provider 是一家模型服务的适配器。
@@ -82,6 +95,9 @@ const (
 	PurposeSummarize Purpose = "summarize"
 	// PurposeVision 截图理解，需要多模态模型。
 	PurposeVision Purpose = "vision"
+	// PurposeSearch 联网搜索，要用自带搜索能力的模型。它不走兜底路由：
+	// 兜底的模型不一定能联网，拿它顶上只会得到一段看起来像查过的回答。
+	PurposeSearch Purpose = "search"
 )
 
 // Route 把一个用途绑定到具体的 provider 与模型。
@@ -167,6 +183,22 @@ func (r *Router) Complete(ctx context.Context, purpose Purpose, req Request) (Re
 		route = *r.fallback
 	}
 	return r.run(ctx, "用途 "+string(purpose), route, req)
+}
+
+// CanSearch 报告是否配置了联网搜索用的模型。
+func (r *Router) CanSearch() bool {
+	_, ok := r.routes[PurposeSearch]
+	return ok
+}
+
+// Search 让联网搜索用的模型带着搜索能力回答一次。
+func (r *Router) Search(ctx context.Context, req Request) (Response, error) {
+	route, ok := r.routes[PurposeSearch]
+	if !ok {
+		return Response{}, fmt.Errorf("%w: 没有配置能联网搜索的模型", ErrNoProvider)
+	}
+	req.WebSearch = true
+	return r.run(ctx, "联网搜索", route, req)
 }
 
 // run 按一条路由执行补全并算出开销。

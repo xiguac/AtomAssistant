@@ -104,29 +104,40 @@ func (f *File) validateModels() error {
 	return nil
 }
 
+// apiKey 取出一家模型服务的密钥：来自环境变量或保险库。
+func (f *File) apiKey(ctx context.Context, pc ProviderConfig, secrets SecretLender) (string, error) {
+	if pc.APIKey == "" {
+		key := os.Getenv(pc.APIKeyEnv)
+		if key == "" {
+			return "", fmt.Errorf("config: provider %s 的密钥环境变量 %s 未设置", pc.Name, pc.APIKeyEnv)
+		}
+		return key, nil
+	}
+	if secrets == nil {
+		return "", fmt.Errorf("config: provider %s 的密钥在保险库里，但保险库不可用", pc.Name)
+	}
+	take, err := secrets.Lend(pc.APIKey, pc.VaultUser())
+	if err != nil {
+		return "", fmt.Errorf("config: provider %s 的 api_key: %w", pc.Name, err)
+	}
+	// 模型密钥每次请求都要用，所以启动时取一次、留在进程里，和从环境变量读是一样的。
+	key, err := take(ctx)
+	if err != nil {
+		return "", fmt.Errorf("config: 从保险库取 provider %s 的密钥失败（存了吗？授权名单里有 %s 吗？）: %w",
+			pc.Name, pc.VaultUser(), err)
+	}
+	return key, nil
+}
+
 // Provider 按配置接通一家模型服务。密钥从环境变量或保险库读取。
 func (f *File) Provider(ctx context.Context, name string, secrets SecretLender) (llm.Provider, error) {
 	for _, pc := range f.Providers {
 		if pc.Name != name {
 			continue
 		}
-		var key string
-		if pc.APIKey != "" {
-			if secrets == nil {
-				return nil, fmt.Errorf("config: provider %s 的密钥在保险库里，但保险库不可用", pc.Name)
-			}
-			take, err := secrets.Lend(pc.APIKey, pc.VaultUser())
-			if err != nil {
-				return nil, fmt.Errorf("config: provider %s 的 api_key: %w", pc.Name, err)
-			}
-			// 模型密钥每次请求都要用，所以启动时取一次、留在进程里，和从环境变量读是一样的。
-			if key, err = take(ctx); err != nil {
-				return nil, fmt.Errorf("config: 从保险库取 provider %s 的密钥失败（存了吗？授权名单里有 %s 吗？）: %w",
-					pc.Name, pc.VaultUser(), err)
-			}
-		} else if key = os.Getenv(pc.APIKeyEnv); key == "" {
-			return nil, fmt.Errorf("config: provider %s 的密钥环境变量 %s 未设置",
-				pc.Name, pc.APIKeyEnv)
+		key, err := f.apiKey(ctx, pc, secrets)
+		if err != nil {
+			return nil, err
 		}
 		cfg := llm.OpenAIConfig{Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Timeout: pc.Timeout}
 		if pc.Protocol == ProtocolAnthropic {

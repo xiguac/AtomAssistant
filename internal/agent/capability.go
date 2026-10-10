@@ -40,7 +40,8 @@ const (
 )
 
 // capabilityRule 在启用了能力安装时追加进系统提示。
-const capabilityRule = `缺少能力时自己去找，不要直接说办不到：
+const capabilityRule = `缺少"动手办事"的能力时自己去找，不要直接说办不到：
+- 这只用于缺少能办事的工具（比如操作某个服务）。只是缺信息、要查点什么，用联网搜索，不要为此去找 Skill 或 MCP。
 - 手头的工具和已安装的 Skill 都办不了这件事时，用 ` + ToolCapabilitySearch + ` 到公开的 Skill 库和 MCP 登记处找。
   搜索词用英文关键词，简短具体（如 weather、meeting notes）；一次没找到可以换个说法再找一两次。
 - 找到合适的就用 ` + ToolCapabilityInstall + ` 装上。安装前系统会做安全扫描，没通过的装不上——

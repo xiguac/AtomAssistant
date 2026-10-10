@@ -177,6 +177,8 @@ type Planner struct {
 	hasFiles bool
 	// hasTeam 为真表示配置了协作模型，可以派活。
 	hasTeam bool
+	// hasWeb 为真表示接入了联网搜索。
+	hasWeb bool
 	// library 非空表示助手可以自己查找、安装能力，并能读已安装的 Skill。
 	library SkillLibrary
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
@@ -305,6 +307,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 派活会把材料交给另一家模型服务，别人写的流程没声明就不能用。
 	if p.hasTeam {
 		gated = append(gated, dispatchTool())
+	}
+	// 联网搜索会把问题交给模型服务去网上查，别人写的流程没声明就不能用。
+	if p.hasWeb {
+		gated = append(gated, webSearchTool)
 	}
 	// 别人写的流程不能自己再去装东西、读别的流程。
 	if p.library != nil {
@@ -443,6 +449,9 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 	}
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
 	system := plannerSystemPrompt
+	if p.hasWeb && p.permits(ToolWebSearch) {
+		system += "\n\n" + webRule
+	}
 	if p.library != nil && p.scope == nil {
 		system += "\n\n" + capabilityRule
 	}
@@ -756,6 +765,10 @@ func describeStep(s *core.Step) string {
 func outputChars(s *core.Step) int {
 	if s.ToolName == ToolDispatch {
 		return dispatchOutputChars
+	}
+	// 搜索结果就是这一步的全部价值，截得太短等于白查。
+	if s.ToolName == ToolWebSearch {
+		return 8000
 	}
 	// 一段 Skill 正文被截断的话，模型拿到的就是半篇说明。
 	if s.ToolName == ToolSkillRead {

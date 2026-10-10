@@ -382,6 +382,15 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()).WithCapabilities(st.Skills())
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills())
 
+	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。
+	if router.CanSearch() {
+		planner = planner.WithWebSearch(true)
+		actuator = actuator.WithWebSearch(router)
+		log.Info("已启用联网搜索")
+	} else {
+		log.Warn("配置的模型服务里没有认得的自带联网搜索的，助手不能上网查东西")
+	}
+
 	// 付款能力默认关闭。开了之后每一笔仍然要过审批，并且要用户本人在支付宝里授权。
 	if file.Payment.Alipay.Enabled {
 		planner = planner.WithPay(true)

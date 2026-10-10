@@ -547,6 +547,9 @@ func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Rout
 			return nil, err
 		}
 	}
+	if err := f.addSearch(ctx, r, secrets); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 

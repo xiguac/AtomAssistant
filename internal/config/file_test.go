@@ -180,7 +180,8 @@ func TestBuildRouter_密钥缺失时报错且不写进配置(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构造路由失败: %v", err)
 	}
-	if len(r.Routes()) != 1 {
+	// 配置里写的一条，加上自动接上的联网搜索（DeepSeek 自带）。
+	if len(r.Routes()) != 2 || !r.CanSearch() {
 		t.Fatalf("路由数量不对: %d", len(r.Routes()))
 	}
 }

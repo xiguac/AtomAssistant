@@ -49,6 +49,8 @@ type Actuator struct {
 	// team 与 workers 非空时可以把活派给协作模型。
 	team    Dispatcher
 	workers WorkerModel
+	// searcher 非空时可以联网搜索。
+	searcher Searcher
 	// capabilities 非空时助手可以自己查找、安装能力；library 用来读已安装的 Skill。
 	capabilities CapabilityService
 	library      SkillLibrary
@@ -188,6 +190,18 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 工作区里的文件是用户自己放进来的，读它不算"助手从外面取回了内容"；
 		// 但文件里的文字不是用户此刻的指示，仍然低于 user，进上下文时在围栏里。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if s.ToolName == ToolWebSearch {
+		res, err := a.runWebSearch(ctx, s)
+		if a.audit != nil {
+			detail := "成功"
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			// 审计只记查过，不记问了什么、查到什么。
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustExternal, detail)
+		}
+		return res, err
 	}
 	if isCapabilityTool(s.ToolName) {
 		out, err := a.runCapability(ctx, s)
