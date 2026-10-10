@@ -46,12 +46,26 @@ type Skill struct {
 
 	// 以下字段不来自清单，由安装过程填写。
 
+	// Format 是它的形态：FormatManifest（本项目的声明式清单）或 FormatMarkdown（公开 Skill 库通行的 SKILL.md）。
+	// 空值按 FormatManifest。
+	Format string `yaml:"-"`
+	// Source 记录它是从哪里取来的，助手自己安装的会填，仅作追溯。
+	Source string `yaml:"-"`
+
 	// Raw 是清单原文，安装时向用户完整展示的就是它。
 	Raw string `yaml:"-"`
 	// ScanReport 是安装前扫描器的输出。
 	ScanReport  string    `yaml:"-"`
 	InstalledAt time.Time `yaml:"-"`
 }
+
+const (
+	// FormatManifest 是本项目的声明式清单：有步骤、有工具名单，可以绑定到任务上收窄工具集。
+	FormatManifest = "manifest"
+	// FormatMarkdown 是公开 Skill 库通行的 SKILL.md：一篇说明文字，没有工具名单。
+	// 它只能被当作参考材料读，不带来任何工具，其中夹带的脚本也不会被执行。
+	FormatMarkdown = "markdown"
+)
 
 // ErrInvalid 表示清单不合法。
 var ErrInvalid = errors.New("skill: 清单不合法")
@@ -83,6 +97,12 @@ func (s *Skill) Validate() error {
 	}
 	if strings.TrimSpace(s.Name) == "" || strings.TrimSpace(s.Goal) == "" {
 		return fmt.Errorf("%w: name 与 goal 不能为空", ErrInvalid)
+	}
+	if s.Format == FormatMarkdown {
+		if strings.TrimSpace(s.Raw) == "" {
+			return fmt.Errorf("%w: SKILL.md 是空的", ErrInvalid)
+		}
+		return nil
 	}
 	if len(s.Steps) == 0 {
 		return fmt.Errorf("%w: 至少要有一个步骤", ErrInvalid)
@@ -145,6 +165,9 @@ func (s *Skill) Availability(authorized func(tool string) bool) (usable, missing
 
 // Render 把 Skill 渲染成给模型看的流程文本。
 func (s *Skill) Render() string {
+	if s.Format == FormatMarkdown {
+		return fmt.Sprintf("流程：%s（%s）\n%s\n", s.Name, s.ID, s.Raw)
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "流程：%s（%s）\n目标：%s\n步骤：\n", s.Name, s.ID, s.Goal)
 	for i, step := range s.Steps {

@@ -58,8 +58,21 @@ var passthroughEnv = []string{
 // 只有返回的 error 为 nil 才允许继续安装。判定不安全返回 ErrUnsafe，
 // 扫描没跑成返回 ErrScanFailed；两种情况下 Report 都尽量带上扫描器的输出。
 func (s Scanner) Check(ctx context.Context, path string) (Report, error) {
+	return s.run(ctx, path)
+}
+
+// CheckRegistry 扫描 path 处的一份 MCP 登记处条目（登记处接口返回的 JSON 原文）。
+//
+// 查的是登记信息本身：来源仓库、远程地址、版本这些有没有可疑之处。
+// 它看不到远程 server 的代码，所以通过了也只说明"登记信息没问题"。结论的含义与 Check 相同。
+func (s Scanner) CheckRegistry(ctx context.Context, path string) (Report, error) {
+	// 这个模式下扫描器只支持 JSON 输出。
+	return s.run(ctx, path, "--mcp-registry", "--format", "json")
+}
+
+func (s Scanner) run(ctx context.Context, path string, mode ...string) (Report, error) {
 	if strings.TrimSpace(path) == "" {
-		return Report{}, fmt.Errorf("%w: 没有给出 Skill 的路径", ErrScanFailed)
+		return Report{}, fmt.Errorf("%w: 没有给出要扫描的路径", ErrScanFailed)
 	}
 	command := s.Command
 	if command == "" {
@@ -72,7 +85,8 @@ func (s Scanner) Check(ctx context.Context, path string) (Report, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args := append([]string{"scan", path}, s.ExtraArgs...)
+	args := append([]string{"scan", path}, mode...)
+	args = append(args, s.ExtraArgs...)
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Env = make([]string, 0, len(passthroughEnv))
 	for _, k := range passthroughEnv {

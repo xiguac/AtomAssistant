@@ -48,6 +48,9 @@ type Actuator struct {
 	// team 与 workers 非空时可以把活派给协作模型。
 	team    Dispatcher
 	workers WorkerModel
+	// capabilities 非空时助手可以自己查找、安装能力；library 用来读已安装的 Skill。
+	capabilities CapabilityService
+	library      SkillLibrary
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
 }
@@ -184,6 +187,25 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 工作区里的文件是用户自己放进来的，读它不算"助手从外面取回了内容"；
 		// 但文件里的文字不是用户此刻的指示，仍然低于 user，进上下文时在围栏里。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if isCapabilityTool(s.ToolName) {
+		out, err := a.runCapability(ctx, s)
+		if a.audit != nil && s.ToolName == ToolCapabilityInstall {
+			detail := "成功: " + string(out)
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustExternal, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 搜索结果和 Skill 正文都是别人写的。安装的回执是我们自己生成的，只含标识。
+		trust := core.TrustExternal
+		if s.ToolName == ToolCapabilityInstall {
+			trust = core.TrustToolOutput
+		}
+		return kernel.Result{Output: out, Trust: trust}, nil
 	}
 	if s.ToolName == ToolHolidays {
 		out, err := a.runHolidays(ctx, s)

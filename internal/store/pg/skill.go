@@ -21,7 +21,7 @@ func (s *Store) Skills() *SkillStore { return &SkillStore{pool: s.pool} }
 
 var _ skill.Store = (*SkillStore)(nil)
 
-const skillColumns = `id, name, version, goal, author, required_tools, steps, raw, scan_report, installed_at`
+const skillColumns = `id, name, version, goal, author, required_tools, steps, raw, scan_report, installed_at, format, source`
 
 // PutSkill 写入一个 Skill，同 ID 则整条替换。
 func (s *SkillStore) PutSkill(ctx context.Context, sk *skill.Skill) error {
@@ -29,15 +29,24 @@ func (s *SkillStore) PutSkill(ctx context.Context, sk *skill.Skill) error {
 	if tools == nil {
 		tools = []string{}
 	}
+	steps := sk.Steps
+	if steps == nil {
+		steps = []string{}
+	}
+	format := sk.Format
+	if format == "" {
+		format = skill.FormatManifest
+	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO skills (`+skillColumns+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (id) DO UPDATE
 		   SET name = EXCLUDED.name, version = EXCLUDED.version, goal = EXCLUDED.goal,
 		       author = EXCLUDED.author, required_tools = EXCLUDED.required_tools,
 		       steps = EXCLUDED.steps, raw = EXCLUDED.raw, scan_report = EXCLUDED.scan_report,
-		       installed_at = EXCLUDED.installed_at`,
-		sk.ID, sk.Name, sk.Version, sk.Goal, sk.Author, tools, sk.Steps, sk.Raw, sk.ScanReport, sk.InstalledAt)
+		       installed_at = EXCLUDED.installed_at, format = EXCLUDED.format, source = EXCLUDED.source`,
+		sk.ID, sk.Name, sk.Version, sk.Goal, sk.Author, tools, steps, sk.Raw, sk.ScanReport, sk.InstalledAt,
+		format, sk.Source)
 	if err != nil {
 		return fmt.Errorf("pg: 写入 Skill 失败: %w", err)
 	}
@@ -87,7 +96,7 @@ func (s *SkillStore) RemoveSkill(ctx context.Context, id string) error {
 func scanSkill(sc scanner) (*skill.Skill, error) {
 	var sk skill.Skill
 	if err := sc.Scan(&sk.ID, &sk.Name, &sk.Version, &sk.Goal, &sk.Author,
-		&sk.RequiredTools, &sk.Steps, &sk.Raw, &sk.ScanReport, &sk.InstalledAt); err != nil {
+		&sk.RequiredTools, &sk.Steps, &sk.Raw, &sk.ScanReport, &sk.InstalledAt, &sk.Format, &sk.Source); err != nil {
 		return nil, err
 	}
 	return &sk, nil

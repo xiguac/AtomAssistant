@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/xiguac/atomhelper/internal/core"
 )
@@ -41,6 +42,8 @@ type ToolGrant struct {
 
 // Registry 保存已授权工具的能力边界。
 type Registry struct {
+	// 助手运行期间可以装上新的 MCP server，登记与查询会同时发生。
+	mu     sync.RWMutex
 	grants map[string]ToolGrant
 }
 
@@ -67,13 +70,17 @@ func (r *Registry) Register(g ToolGrant) error {
 			return fmt.Errorf("policy: 工具 %s 的出站域名不合法: %w", g.Name, err)
 		}
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.grants[g.Name] = g
 	return nil
 }
 
 // Grant 返回工具的能力边界。
 func (r *Registry) Grant(name string) (ToolGrant, error) {
+	r.mu.RLock()
 	g, ok := r.grants[name]
+	r.mu.RUnlock()
 	if !ok {
 		return ToolGrant{}, fmt.Errorf("%w: %s", ErrToolUnknown, name)
 	}

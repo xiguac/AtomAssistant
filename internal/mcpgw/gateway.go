@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +60,10 @@ type ServerSpec struct {
 
 	// URL 用于 TransportHTTP。
 	URL string
+
+	// Unreviewed 为真表示这个 server 不是用户亲手批准的，而是助手自己找来装上的。
+	// 它的工具没有用户定的授权边界，连接时按固定的保守边界登记，见 unreviewedGrant。
+	Unreviewed bool
 }
 
 // ToolInfo 是目录里的一个工具，供 Planner 选择使用。
@@ -222,12 +228,58 @@ func (g *Gateway) ConnectTransport(ctx context.Context, spec ServerSpec, transpo
 			// 让工具自己声明"我是只读的"等于没有管控。
 			SideEffect: core.SideEffectIrreversible,
 		}
+		if _, err := g.registry.Grant(full); err != nil && spec.Unreviewed {
+			if err := g.registry.Register(unreviewedGrant(full, spec.URL, t)); err != nil {
+				// 登记不上就保持未授权：目录里看得见，调用时会被拒绝。
+				g.auditCall(ctx, CallRequest{Tool: full}, core.TrustSystem, fmt.Sprintf("登记授权失败: %v", err))
+			}
+		}
 		if grant, err := g.registry.Grant(full); err == nil {
 			info.SideEffect = grant.SideEffect
 		}
 		g.catalog[full] = info
 	}
 	return nil
+}
+
+// unreviewedGrant 是助手自己装上的远程 server 的工具所得到的授权边界。
+//
+// 这类 server 没有任何凭据，也拿不到保险库条目，它够不着用户的任何账号；
+// 所以边界定在"能交给它什么、怎么对待它说的话"上：
+//   - 只接收普通级别的参数，敏感数据传不过去；
+//   - 返回内容一律按外部内容对待，由它引出的改动仍要用户确认；
+//   - 出站只到它自己的域名。
+//
+// 副作用等级：server 自称只读的按只读对待，可以直接调用；其余的按不可逆对待，每次都要确认。
+// 这里采信了它的自报，是因为上面三条已经限制了它即使谎报也做不了什么。
+func unreviewedGrant(name, rawURL string, t *mcp.Tool) policy.ToolGrant {
+	g := policy.ToolGrant{
+		Name:         name,
+		MaxPrivacy:   core.PrivacyNormal,
+		TrustCeiling: core.TrustExternal,
+		SideEffect:   core.SideEffectIrreversible,
+	}
+	if t.Annotations != nil && t.Annotations.ReadOnlyHint {
+		g.SideEffect = core.SideEffectReadOnly
+	}
+	if u, err := url.Parse(rawURL); err == nil && u.Hostname() != "" {
+		g.EgressDomains = []string{u.Hostname()}
+	}
+	return g
+}
+
+// ToolsOf 返回某个 server 登记在目录里的工具全名。
+func (g *Gateway) ToolsOf(server string) []string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	var out []string
+	for name, info := range g.catalog {
+		if info.Server == server {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Close 关闭全部连接。

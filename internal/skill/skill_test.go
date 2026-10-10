@@ -181,3 +181,38 @@ func TestLoad_扫描不通过或没跑成一律不装(t *testing.T) {
 		t.Fatalf("清单不合法应拒绝: %v", err)
 	}
 }
+
+func TestParseMarkdown_公开Skill库的说明文件(t *testing.T) {
+	raw := "---\r\nname: meeting-notes\r\ndescription: 把会议录音整理成纪要\r\nlicense: MIT\r\n---\r\n\r\n# 会议纪要\r\n\r\n先列出与会者。\r\n"
+	s, err := ParseMarkdown([]byte(raw), "acme.skills.meeting-notes")
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if s.Name != "meeting-notes" || s.Goal != "把会议录音整理成纪要" || s.Format != FormatMarkdown || s.Raw != raw {
+		t.Fatalf("字段不对: %+v", s)
+	}
+	// 它没有工具名单：绑定到任务上时什么工具都调不动。
+	if s.Allows("mail.send") {
+		t.Fatal("SKILL.md 不带来任何工具")
+	}
+	if !strings.Contains(s.Render(), "先列出与会者") {
+		t.Fatalf("渲染结果应含正文:\n%s", s.Render())
+	}
+
+	// 开头的元数据写坏了或者没有：正文照用，名字用 id。
+	for _, text := range []string{"# 只有正文\n", "---\nname: [坏的\n---\n正文\n"} {
+		s, err := ParseMarkdown([]byte(text), "a.b.c")
+		if err != nil || s.Name != "a.b.c" {
+			t.Errorf("元数据不可用时应退回到 id: %+v, %v", s, err)
+		}
+	}
+	if _, err := ParseMarkdown([]byte("  \n"), "a.b.c"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("空文件应被拒绝: %v", err)
+	}
+	if _, err := ParseMarkdown([]byte("正文"), "含大写ID"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("不合法的 id 应被拒绝: %v", err)
+	}
+	if _, err := ParseMarkdown(make([]byte, MaxManifestBytes+1), "a.b.c"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("过大的文件应被拒绝: %v", err)
+	}
+}

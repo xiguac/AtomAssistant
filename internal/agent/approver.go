@@ -95,6 +95,11 @@ func (a *Approver) drivenBy(ctx context.Context, t *core.Task, d kernel.Decision
 		if s.ToolName == ToolCalendarEvents || s.ToolName == ToolCalendarList {
 			continue
 		}
+		// 安装必然跟在搜索后面，搜索结果又必然是外部内容；把它算进去，助手就永远不能自己装东西。
+		// 这个例外只给安装这一个动作：装之前有扫描，装上的东西也只有固定的保守边界。
+		if d.ToolName == ToolCapabilityInstall && s.ToolName == ToolCapabilitySearch {
+			continue
+		}
 		source := s.ToolName
 		if source == "" {
 			source = "外部事件"

@@ -26,7 +26,7 @@ const (
 	SectionEvents Section = "events"
 	// SectionVault 保险库。导出的是密文，密钥不在其中——迁移时要把 ATOM_VAULT_KEY 一起带过去。
 	SectionVault Section = "vault"
-	// SectionSkills 已安装的 Skill，连同安装时的清单原文与扫描报告。
+	// SectionSkills 已安装的 Skill 与助手安装的 MCP server，连同安装时的原文与扫描报告。
 	SectionSkills Section = "skills"
 )
 
@@ -37,7 +37,7 @@ var sectionTables = map[Section][]string{
 	SectionTasks:  {"tasks", "task_steps", "audit_log", "schedules", "channel_chats", "channel_notices", "team_work"},
 	SectionEvents: {"events", "event_subscriptions"},
 	SectionVault:  {"vault_items"},
-	SectionSkills: {"skills"},
+	SectionSkills: {"skills", "mcp_installs"},
 }
 
 // sectionOrder 是导入全部板块时的顺序：事件引用任务，必须排在任务之后。

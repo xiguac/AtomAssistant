@@ -26,10 +26,12 @@ import (
 	"github.com/xiguac/atomhelper/internal/demo"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/schedule"
+	"github.com/xiguac/atomhelper/internal/skillscan"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/style"
 	"github.com/xiguac/atomhelper/internal/team"
@@ -289,7 +291,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if err != nil {
 		return nil, err
 	}
+	configured := make(map[string]bool, len(servers))
 	for _, spec := range servers {
+		configured[spec.Name] = true
 		if err := gw.Connect(ctx, spec); err != nil {
 			// 一个 MCP server 连不上不应该拖垮整个进程：其余工具照常可用，
 			// 但必须让用户知道哪些能力现在不可用。
@@ -297,6 +301,22 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 			continue
 		}
 		log.Info("已连接 MCP server", "server", spec.Name)
+	}
+	// 助手以前自己装上的 server。配置文件里有同名的就让位：用户亲手批准的优先。
+	installed, err := st.MCPInstalls().ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, srv := range installed {
+		if configured[srv.Name] {
+			log.Warn("助手安装的 MCP server 与配置文件里的重名，已跳过", "server", srv.Name)
+			continue
+		}
+		if err := gw.Connect(ctx, unreviewedSpec(srv)); err != nil {
+			log.Error("MCP server 连接失败，相关工具不可用", "server", srv.Name, "err", err)
+			continue
+		}
+		log.Info("已连接助手安装的 MCP server", "server", srv.Name, "地址", srv.URL)
 	}
 	log.Info("工具目录就绪", "工具数", len(gw.Catalog()))
 
@@ -317,6 +337,23 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if workspace != nil {
 		agent.FileDefaults(approval)
 	}
+	// 缺少能力时助手自己找、扫描通过就装。扫描器不可用时装不上，但照样能找。
+	agent.CapabilityDefaults(approval)
+	installer := &market.Installer{
+		Client:  &market.Client{},
+		Scanner: skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
+		Skills:  st.Skills(),
+		Servers: st.MCPInstalls(),
+		Connect: func(ctx context.Context, srv *market.Server) ([]string, error) {
+			if configured[srv.Name] {
+				return nil, fmt.Errorf("配置文件里已经有名为 %s 的 MCP server", srv.Name)
+			}
+			if err := gw.Connect(ctx, unreviewedSpec(srv)); err != nil {
+				return nil, err
+			}
+			return gw.ToolsOf(srv.Name), nil
+		},
+	}
 	approver := agent.NewApprover(approval, policy.NewClassifier(), agent.NewMemoryUsageTracker()).
 		WithHistory(st)
 
@@ -331,8 +368,8 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	planner := agent.NewPlanner(router, gw, agent.PlannerOptions{
 		ReplyStyle:  file.Reply.Style,
 		ReplyCustom: file.Reply.Custom,
-	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills())
-	actuator := agent.NewActuator(gw, router).WithMemory(mem)
+	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()).WithCapabilities(st.Skills())
+	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills())
 
 	// 付款能力默认关闭。开了之后每一笔仍然要过审批，并且要用户本人在支付宝里授权。
 	if file.Payment.Alipay.Enabled {
@@ -421,6 +458,11 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
+}
+
+// unreviewedSpec 是助手自己装上的远程 server 的连接参数。
+func unreviewedSpec(srv *market.Server) mcpgw.ServerSpec {
+	return mcpgw.ServerSpec{Name: srv.Name, Transport: mcpgw.TransportHTTP, URL: srv.URL, Unreviewed: true}
 }
 
 func newLogger(level string) *slog.Logger {

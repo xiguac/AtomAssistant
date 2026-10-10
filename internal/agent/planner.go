@@ -177,6 +177,8 @@ type Planner struct {
 	hasFiles bool
 	// hasTeam 为真表示配置了协作模型，可以派活。
 	hasTeam bool
+	// library 非空表示助手可以自己查找、安装能力，并能读已安装的 Skill。
+	library SkillLibrary
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -303,6 +305,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 派活会把材料交给另一家模型服务，别人写的流程没声明就不能用。
 	if p.hasTeam {
 		gated = append(gated, dispatchTool())
+	}
+	// 别人写的流程不能自己再去装东西、读别的流程。
+	if p.library != nil {
+		gated = append(gated, capabilityToolset...)
 	}
 	for _, t := range gated {
 		if p.permits(t.Name) {
@@ -436,8 +442,11 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 		}
 	}
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	system := plannerSystemPrompt +
-		"\n\n" + style +
+	system := plannerSystemPrompt
+	if p.library != nil && p.scope == nil {
+		system += "\n\n" + capabilityRule
+	}
+	system += "\n\n" + style +
 		"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
 		"\n\n可用工具：\n" + p.toolList()
 	msgs, err := llm.Build(segs, llm.BuildOptions{
@@ -604,6 +613,11 @@ func (p *Planner) contextSegments(ctx context.Context, t *core.Task, history []*
 		}
 		segs = append(segs[:1], append([]llm.Segment{seg}, segs[1:]...)...)
 	}
+	if seg, ok, err := p.librarySegment(ctx); err != nil {
+		return nil, err
+	} else if ok {
+		segs = append(segs[:1], append([]llm.Segment{seg}, segs[1:]...)...)
+	}
 	if seg, ok, err := p.vaultSegment(ctx); err != nil {
 		return nil, err
 	} else if ok {
@@ -742,6 +756,10 @@ func describeStep(s *core.Step) string {
 func outputChars(s *core.Step) int {
 	if s.ToolName == ToolDispatch {
 		return dispatchOutputChars
+	}
+	// 一段 Skill 正文被截断的话，模型拿到的就是半篇说明。
+	if s.ToolName == ToolSkillRead {
+		return 4 * skillReadChars
 	}
 	return 2000
 }

@@ -328,3 +328,59 @@ func TestBuildTransport_配置缺失时报错(t *testing.T) {
 		}
 	}
 }
+
+func TestConnect_助手安装的server按固定的保守边界登记(t *testing.T) {
+	ctx := context.Background()
+	reg := policy.NewRegistry()
+	gw, err := New(Options{Guard: policy.NewGuard(policy.NewClassifier(), reg), Registry: reg})
+	if err != nil {
+		t.Fatalf("构造网关失败: %v", err)
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "pub", Version: "v1"}, nil)
+	mcp.AddTool(srv, &mcp.Tool{Name: "forecast", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+		func(_ context.Context, _ *mcp.CallToolRequest, args cityArgs) (*mcp.CallToolResult, weatherOut, error) {
+			return nil, weatherOut{City: args.City, Temp: 21}, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "post"},
+		func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{}, nil, nil
+		})
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatalf("启动测试 server 失败: %v", err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	spec := ServerSpec{Name: "mcp-pub", URL: "https://pub.example.app/mcp", Unreviewed: true}
+	if err := gw.ConnectTransport(ctx, spec, clientT); err != nil {
+		t.Fatalf("连接失败: %v", err)
+	}
+	t.Cleanup(func() { _ = gw.Close() })
+
+	if got := gw.ToolsOf("mcp-pub"); len(got) != 2 || got[0] != "mcp-pub.forecast" {
+		t.Fatalf("工具列表不对: %v", got)
+	}
+	grant, err := reg.Grant("mcp-pub.forecast")
+	if err != nil {
+		t.Fatalf("自称只读的工具应已登记: %v", err)
+	}
+	if grant.SideEffect != core.SideEffectReadOnly || grant.MaxPrivacy != core.PrivacyNormal ||
+		grant.TrustCeiling != core.TrustExternal || len(grant.EgressDomains) != 1 || grant.EgressDomains[0] != "pub.example.app" {
+		t.Fatalf("授权边界不对: %+v", grant)
+	}
+	// 没说自己只读的，每次调用都要用户确认。
+	if g, err := reg.Grant("mcp-pub.post"); err != nil || g.SideEffect != core.SideEffectIrreversible {
+		t.Fatalf("没自称只读的工具应按不可逆对待: %+v, %v", g, err)
+	}
+
+	// 它说的话一律是外部内容，哪怕是结构化的。
+	res, err := gw.Call(ctx, CallRequest{Tool: "mcp-pub.forecast", Params: json.RawMessage(`{"city":"杭州"}`)})
+	if err != nil || res.Trust != core.TrustExternal {
+		t.Fatalf("返回内容应按外部内容对待: %s, %v", res.Trust, err)
+	}
+	// 敏感数据传不过去。
+	_, err = gw.Call(ctx, CallRequest{Tool: "mcp-pub.forecast", Params: json.RawMessage(`{"city":"杭州","phone":"13800138000"}`)})
+	if !errors.Is(err, policy.ErrPrivacyExceeded) {
+		t.Fatalf("敏感参数应被出口管控拦下: %v", err)
+	}
+}

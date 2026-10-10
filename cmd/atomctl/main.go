@@ -47,6 +47,8 @@ const usage = `用法:
   atomctl skill install <路径> [--yes]
                                  安装一个 Skill。先扫描，再展示全文和它要用的工具，确认后才装
   atomctl skill list | show <ID> | rm <ID>
+                                 助手自己找来装上的 Skill 也在其中
+  atomctl mcp list | rm <名称>   查看、移除助手自己找来装上的 MCP server
   atomctl run <SkillID> <标题> [目标]
                                  创建一个按该 Skill 执行的任务，可用工具只限它声明过的
 
@@ -172,6 +174,8 @@ func run(args []string) error {
 		return styleCmd(ctx, st, cfg, args[1:])
 	case "skill":
 		return skillCmd(ctx, st, cfg, args[1:])
+	case "mcp":
+		return mcpCmd(ctx, st, args[1:])
 	case "run":
 		if len(args) < 3 {
 			return fmt.Errorf("run 需要 Skill ID 和任务标题")
