@@ -4,6 +4,7 @@
 # 用法（在仓库根目录、Git Bash 里）：
 #   deploy/deploy.sh setup     第一次：装数据库、建目录和服务，然后部署
 #   deploy/deploy.sh           之后每次更新：编译、上传、切换、检查，起不来就自动退回上一版
+#   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://127.0.0.1:8780
 #   deploy/deploy.sh status    看服务状态和最近的日志
@@ -104,6 +105,16 @@ case "${1:-release}" in
     echo "程序和数据库都装好了。还差一步，设置后台的登录口令并启动："
     echo "  deploy/deploy.sh passwd"
     ;;
+  scanner)
+    echo "==> 上传扫描器的安装脚本"
+    remote "rm -rf /tmp/atomhelper-scanner && mkdir -p /tmp/atomhelper-scanner"
+    # 源码在本机下好再传上去：服务器直接连 GitHub 不一定连得上。
+    SRC="$(mktemp -d)"
+    trap 'rm -rf "$SRC"' EXIT
+    curl -fsSL -m 300 -o "$SRC/skillspector.tar.gz" https://codeload.github.com/NVIDIA/skillspector/tar.gz/HEAD
+    "${SCP[@]}" deploy/scanner.sh "$SRC/skillspector.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-scanner/"
+    remote "sudo bash /tmp/atomhelper-scanner/scanner.sh && rm -rf /tmp/atomhelper-scanner"
+    ;;
   release) release ;;
   rollback) rollback ;;
   passwd)
@@ -138,7 +149,7 @@ case "${1:-release}" in
     remote "systemctl status atomhelper --no-pager -n 0; echo; readlink /opt/atomhelper/current; echo; sudo journalctl -u atomhelper -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / release / passwd / tunnel / status / rollback）" >&2
+    echo "未知的子命令 $1（可用：setup / scanner / release / passwd / tunnel / status / rollback）" >&2
     exit 2
     ;;
 esac

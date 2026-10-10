@@ -62,6 +62,15 @@ func (c *Client) http() *http.Client {
 	return &http.Client{Timeout: 90 * time.Second}
 }
 
+// archive 是下载仓库压缩包用的客户端。时限放得很宽：
+// 从国内的服务器到 GitHub 常常只有几十 KB 每秒，几 MB 的仓库要下好几分钟。
+func (c *Client) archive() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return &http.Client{Timeout: 10 * time.Minute}
+}
+
 func pick(v, def string) string {
 	if v != "" {
 		return v
@@ -157,7 +166,7 @@ func (c *Client) FetchSkill(ctx context.Context, id, dest string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("market: 构造请求失败: %w", err)
 	}
-	resp, err := c.http().Do(req)
+	resp, err := c.archive().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("market: 下载 %s/%s 失败: %w", owner, repo, err)
 	}
