@@ -3,15 +3,15 @@
   <div class="card">
     <div class="brand">
       <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(28 14 14)"/><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(-28 14 14)"/><circle cx="14" cy="14" r="2.2" fill="currentColor" stroke="none"/></svg>
-      <div><b>原子助手</b><span>私人助手 · 管理后台</span></div>
+      <div><b>原子助手</b><span>管理后台</span></div>
     </div>
     {{if .Error}}<div class="banner bad" style="margin-bottom:16px"><div>{{.Error}}</div></div>{{end}}
     <form method="post" action="/login">
-      <label for="pw">口令</label>
+      <label for="pw">登录密码</label>
       <input id="pw" type="password" name="password" autofocus autocomplete="current-password">
       <button class="btn" style="width:100%;margin-top:16px">登录</button>
     </form>
-    <div class="help" style="margin-top:16px">连续输错 5 次会暂停登录几分钟。</div>
+    <div class="help" style="margin-top:16px">连续输入错误 5 次后，登录将被暂时锁定。</div>
   </div>
 </div>
 {{end}}

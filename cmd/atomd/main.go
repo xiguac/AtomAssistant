@@ -32,6 +32,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/style"
+	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
 	"github.com/xiguac/atomhelper/internal/webhook"
 )
@@ -131,6 +132,9 @@ func run(migrateOnly, checkOnly bool) error {
 			&channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()}, st.Channels(), log)
 		if err != nil {
 			return err
+		}
+		if parts.team {
+			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
 		}
 		go func() {
 			if err := hub.Run(ctx); err != nil {
@@ -239,7 +243,9 @@ type parts struct {
 	approver kernel.Approver
 	epilogue kernel.Epilogue
 	channels []channel.Binding
-	close    func()
+	// team 为真表示配置了协作模型。
+	team  bool
+	close func()
 }
 
 // build 按配置装出各个部件。
@@ -349,6 +355,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue = epilogue.WithVoice(voice)
 	}
 
+	// 协作模型：主 AI 可以把成块的脑力活派出去，派给谁看用户以往的评价。
+	if workers := file.Workers(); len(workers) > 0 {
+		planner = planner.WithTeam(true)
+		actuator = actuator.WithTeam(team.NewBoard(st.Team(), workers), router)
+		epilogue = epilogue.WithTeam(st.Team())
+		log.Info("已启用多模型协作", "协作模型数", len(workers))
+	}
+
 	// 内建连接器：密码每次连接时从保险库现取，配置里只有句柄。
 	actuator = actuator.WithAudit(agent.NewStoreAudit(st))
 	cal, err := file.Calendar(safe)
@@ -398,6 +412,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}
 
 	return &parts{
+		team:     len(file.Workers()) > 0,
 		channels: channels,
 		planner:  planner,
 		actuator: actuator,

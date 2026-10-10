@@ -32,11 +32,13 @@ type File struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Routes    []RouteConfig    `yaml:"routes"`
 	Fallback  *RouteConfig     `yaml:"fallback"`
-	MCP       []MCPConfig      `yaml:"mcp_servers"`
-	Tools     []ToolConfig     `yaml:"tools"`
-	Approval  ApprovalConfig   `yaml:"approval"`
-	Reply     ReplyConfig      `yaml:"reply"`
-	Payment   PaymentConfig    `yaml:"payment"`
+	// Agents 是协作模型：主 AI 可以把一块活派给它们。不写就是单模型模式。
+	Agents   []AgentConfig  `yaml:"agents"`
+	MCP      []MCPConfig    `yaml:"mcp_servers"`
+	Tools    []ToolConfig   `yaml:"tools"`
+	Approval ApprovalConfig `yaml:"approval"`
+	Reply    ReplyConfig    `yaml:"reply"`
+	Payment  PaymentConfig  `yaml:"payment"`
 	// Connectors 是直连开放协议的内建连接器：日历（CalDAV）、邮件（IMAP/SMTP）。
 	Connectors ConnectorsConfig `yaml:"connectors"`
 	// Channels 是用户可以和助手对话的消息渠道（QQ 机器人等）。
@@ -240,12 +242,12 @@ type ProviderConfig struct {
 	//
 	// 刻意不允许在配置文件里直接写密钥：配置文件常被复制、备份、
 	// 贴进聊天窗口求助，密钥不该跟着一起走。
-	APIKeyEnv string `yaml:"api_key_env"`
+	APIKeyEnv string `yaml:"api_key_env,omitempty"`
 	// APIKey 是密钥在保险库里的句柄（vault://名字），与 api_key_env 二选一。
 	// 用它的话密钥可以在管理后台里填，不必登上服务器改环境变量。
 	// 保险库里那一条的授权名单要有 provider.<服务名>。
-	APIKey  string        `yaml:"api_key"`
-	Timeout time.Duration `yaml:"timeout"`
+	APIKey  string        `yaml:"api_key,omitempty"`
+	Timeout time.Duration `yaml:"timeout,omitempty"`
 }
 
 // VaultUser 返回这家模型服务在保险库授权名单里的名字。
@@ -253,13 +255,13 @@ func (p ProviderConfig) VaultUser() string { return "provider." + p.Name }
 
 // RouteConfig 把一个用途绑定到具体模型。
 type RouteConfig struct {
-	Purpose   string `yaml:"purpose"`
+	Purpose   string `yaml:"purpose,omitempty"`
 	Provider  string `yaml:"provider"`
 	Model     string `yaml:"model"`
-	MaxTokens int    `yaml:"max_tokens"`
+	MaxTokens int    `yaml:"max_tokens,omitempty"`
 	// 每百万 token 的单价（元）。不填则这条路由不计费。
-	InputYuanPerMTok  float64 `yaml:"input_yuan_per_mtok"`
-	OutputYuanPerMTok float64 `yaml:"output_yuan_per_mtok"`
+	InputYuanPerMTok  float64 `yaml:"input_yuan_per_mtok,omitempty"`
+	OutputYuanPerMTok float64 `yaml:"output_yuan_per_mtok,omitempty"`
 }
 
 // ReplyConfig 控制助手回复的风格。
@@ -385,6 +387,9 @@ func (f *File) validate() error {
 			return fmt.Errorf("config: provider %s 的 api_key 只能写保险库句柄（vault://名字），不能直接写密钥", p.Name)
 		}
 	}
+	if err := f.validateModels(); err != nil {
+		return err
+	}
 	for _, t := range f.Tools {
 		if _, err := parsePrivacy(t.MaxPrivacy); err != nil {
 			return fmt.Errorf("config: 工具 %s: %w", t.Name, err)
@@ -431,27 +436,7 @@ func fallbackOf(f *File) []RouteConfig {
 func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Router, error) {
 	r := llm.NewRouter()
 	for _, pc := range f.Providers {
-		var key string
-		if pc.APIKey != "" {
-			if secrets == nil {
-				return nil, fmt.Errorf("config: provider %s 的密钥在保险库里，但保险库不可用", pc.Name)
-			}
-			take, err := secrets.Lend(pc.APIKey, pc.VaultUser())
-			if err != nil {
-				return nil, fmt.Errorf("config: provider %s 的 api_key: %w", pc.Name, err)
-			}
-			// 模型密钥每次请求都要用，所以启动时取一次、留在进程里，和从环境变量读是一样的。
-			if key, err = take(ctx); err != nil {
-				return nil, fmt.Errorf("config: 从保险库取 provider %s 的密钥失败（存了吗？授权名单里有 %s 吗？）: %w",
-					pc.Name, pc.VaultUser(), err)
-			}
-		} else if key = os.Getenv(pc.APIKeyEnv); key == "" {
-			return nil, fmt.Errorf("config: provider %s 的密钥环境变量 %s 未设置",
-				pc.Name, pc.APIKeyEnv)
-		}
-		p, err := llm.NewOpenAICompatible(llm.OpenAIConfig{
-			Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Timeout: pc.Timeout,
-		})
+		p, err := f.Provider(ctx, pc.Name, secrets)
 		if err != nil {
 			return nil, err
 		}
@@ -478,6 +463,17 @@ func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Rout
 			MaxTokens:         f.Fallback.MaxTokens,
 			InputYuanPerMTok:  f.Fallback.InputYuanPerMTok,
 			OutputYuanPerMTok: f.Fallback.OutputYuanPerMTok,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	for _, a := range f.Agents {
+		if err := r.AddWorker(a.Name, llm.Route{
+			Provider:          a.Provider,
+			Model:             a.Model,
+			MaxTokens:         a.MaxTokens,
+			InputYuanPerMTok:  a.InputYuanPerMTok,
+			OutputYuanPerMTok: a.OutputYuanPerMTok,
 		}); err != nil {
 			return nil, err
 		}

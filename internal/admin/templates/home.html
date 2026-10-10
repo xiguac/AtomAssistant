@@ -1,20 +1,20 @@
 {{define "content"}}
 <h1>任务</h1>
-<div class="sub">交代一件事，或者处理等你确认的动作</div>
+<div class="sub">创建任务，处理待确认的操作与待回复的问题。</div>
 
 <form method="post" action="/tasks" class="card">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <div class="pad" style="padding-bottom:8px">
-    <textarea class="bare" name="goal" placeholder="比如：下周五下午三点跟供应商开会，3 号会议室，记一下"></textarea>
+    <textarea class="bare" name="goal" placeholder="例如：下周五下午三点与供应商开会，地点 3 号会议室，请添加日程"></textarea>
   </div>
   <div class="band foot">
-    <span class="note muted">一句话说清要办什么。它拿不准的会来问你。</span>
-    <button class="btn">交给助手</button>
+    <span class="note muted">请简要描述任务目标。信息不足时，助手会向你提问。</span>
+    <button class="btn">创建任务</button>
   </div>
 </form>
 
 {{with .Data}}
-<h2>等你处理 <span class="count {{if .Waiting}}warn{{end}}">{{len .Waiting}}</span></h2>
+<h2>待处理 <span class="count {{if .Waiting}}warn{{end}}">{{len .Waiting}}</span></h2>
 {{range .Waiting}}
 <a class="attn" href="/tasks/{{.ID}}">
   <div class="body"><b>{{short .Title 40}}</b><span>{{waitKind .}}：{{short (waitText .) 120}}</span></div>
@@ -22,7 +22,7 @@
   <span class="btn sec sm">查看</span>
 </a>
 {{else}}
-<div class="card empty">没有需要你确认或回答的。</div>
+<div class="card empty">暂无待处理事项。</div>
 {{end}}
 
 <h2>进行中 <span class="count {{if .Active}}info{{end}}">{{len .Active}}</span></h2>
@@ -32,17 +32,17 @@
     <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
     <span class="d">{{short .Reason 100}}</span>
     <span class="w">{{when .UpdatedAt}}</span>
-  </a>{{else}}<div class="empty" style="justify-content:center">没有正在进行的任务。</div>{{end}}
+  </a>{{else}}<div class="empty" style="justify-content:center">暂无进行中的任务。</div>{{end}}
 </div>
 
-<h2>最近结束的</h2>
+<h2>已结束</h2>
 <div class="card rows">
   {{range .Recent}}<a href="/tasks/{{.ID}}">
     <span class="t">{{short .Title 30}}</span>
     <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
     <span class="d">{{short .Reason 100}}</span>
     <span class="w">{{when .UpdatedAt}}</span>
-  </a>{{else}}<div class="empty" style="justify-content:center">还没有。</div>{{end}}
+  </a>{{else}}<div class="empty" style="justify-content:center">暂无已结束的任务。</div>{{end}}
 </div>
 {{end}}
 {{end}}

@@ -95,10 +95,17 @@ h2 { font-size:16px; line-height:24px; font-weight:600; letter-spacing:-.005em; 
 /* 表单 */
 label { display:block; font-size:13px; line-height:16px; font-weight:500; color:var(--text-2); margin-bottom:6px; }
 .help { font-size:12px; line-height:16px; color:var(--muted); margin-top:6px; }
-input[type=text], input[type=password], textarea { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:13px/20px var(--sans); padding:7px 10px; outline:0; }
-input[type=text], input[type=password] { height:36px; }
+input[type=text], input[type=password], textarea, select { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:13px/20px var(--sans); padding:7px 10px; outline:0; }
+input[type=text], input[type=password], select { height:36px; }
+.checks { display:flex; flex-wrap:wrap; gap:8px 18px; }
+label.check { display:inline-flex; align-items:center; gap:6px; margin:0; font-weight:400; color:var(--text); cursor:pointer; }
+.score { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:3px 0; }
+.score .who { width:96px; flex:none; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.score .bar { width:120px; height:6px; border-radius:3px; background:var(--recess); overflow:hidden; flex:none; }
+.score .bar i { display:block; height:100%; background:var(--line-strong); }
+.score.next .bar i { background:var(--primary); }
 input::placeholder, textarea::placeholder { color:var(--muted); }
-input:focus, textarea:focus { border-color:var(--primary-hover); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
+input:focus, textarea:focus, select:focus { border-color:var(--primary-hover); box-shadow:0 0 0 3px rgba(37,99,235,.12); }
 textarea { min-height:96px; resize:vertical; display:block; }
 textarea.bare { border:0; box-shadow:none; padding:0; min-height:84px; font-size:14px; }
 textarea.code { font:12px/18px var(--mono); min-height:480px; border:0; border-radius:0; background:var(--canvas); padding:14px 20px; white-space:pre; overflow-wrap:normal; overflow-x:auto; box-shadow:none; tab-size:2; }
@@ -177,26 +184,27 @@ details[open] summary { color:var(--text-2); }
 <aside class="side">
   <div class="brand">
     <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(28 14 14)"/><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(-28 14 14)"/><circle cx="14" cy="14" r="2.2" fill="currentColor" stroke="none"/></svg>
-    <div><b>原子助手</b><span>私人助手 · 管理后台</span></div>
+    <div><b>原子助手</b><span>管理后台</span></div>
   </div>
   <nav class="nav">
     <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>任务</a>
     <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg>保险库</a>
     <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg>记忆</a>
+    <a href="/models" class="{{if eq .Page "models"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/></svg>模型</a>
     <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>文件</a>
     <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg>配置</a>
   </nav>
   <div class="side-foot">
-    <span>{{if .Status}}<i class="dot warn"></i>助手未运行{{else}}<i class="dot"></i>助手运行中{{end}}</span>
+    <span>{{if .Status}}<i class="dot warn"></i>服务未运行{{else}}<i class="dot"></i>服务运行中{{end}}</span>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="linkbtn"><svg class="ico" viewBox="0 0 24 24"><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10"/><path d="M15 8l4 4-4 4M19 12H9.5"/></svg>退出</button></form>
   </div>
 </aside>
 <main class="main"><div class="wrap{{if or (eq .Page "config") (eq .Page "restarting")}}{{end}}">
-  {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手本身还没有运行，目前只有这个后台可用。原因：
+  {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：
 {{.Status}}
 
-缺的密钥存进「保险库」，其余的写进「配置」，然后在「配置」页点重启。</div><a class="go" href="/vault">去保险库 →</a></div>{{end}}{{end}}
+请在「模型」页填写模型的接口地址与密钥，其他密钥保存至「保险库」，其余配置在「配置」页修改，然后重启服务。</div><a class="go" href="/models">前往模型页</a></div>{{end}}{{end}}
   {{if .Notice}}<div class="banner ok"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><div>{{.Notice}}</div></div>{{end}}
   {{if .Error}}<div class="banner bad"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>{{.Error}}</div></div>{{end}}
   {{template "content" .}}

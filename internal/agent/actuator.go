@@ -45,6 +45,9 @@ type Actuator struct {
 	mail      MailService
 	holidays  HolidayService
 	files     FileService
+	// team 与 workers 非空时可以把活派给协作模型。
+	team    Dispatcher
+	workers WorkerModel
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
 }
@@ -160,6 +163,11 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		}
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if s.ToolName == ToolDispatch {
+		// 协作模型交回来的是模型生成的文本，和主 AI 自己的输出一个等级：
+		// 它可能在复述材料里的话，不具备指令资格。
+		return a.runDispatch(ctx, t, s)
 	}
 	if isFileTool(s.ToolName) {
 		out, err := a.runFile(ctx, s)

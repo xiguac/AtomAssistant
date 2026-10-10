@@ -1,13 +1,13 @@
 {{define "content"}}
 <h1>文件</h1>
-<div class="sub">助手只能读写这里的文件。把要处理的传上来，它生成的也在这里取。</div>
+<div class="sub">助手仅可读写工作区内的文件。待处理的文件请上传至此，生成的文件亦保存于此。</div>
 
 {{with .Data}}
 {{if .Enabled}}
 <div class="card">
   <div class="band">
     <span class="mono" style="color:var(--text-2)">工作区{{if .Dir}} / {{.Dir}}{{end}}</span>
-    {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">← 上一级</a>{{end}}
+    {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">返回上级目录</a>{{end}}
   </div>
   {{if .Entries}}<table>
     <thead><tr><th>名称</th><th class="r" style="width:120px">大小</th><th class="r" style="width:130px">修改时间</th></tr></thead>
@@ -17,7 +17,7 @@
       <td class="time r">{{if not .Dir}}{{size .Size}}{{end}}</td>
       <td class="time r">{{when .Modified}}</td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">这里还没有文件。</div>{{end}}
+  </table>{{else}}<div class="empty">当前目录暂无文件。</div>{{end}}
 </div>
 
 <form method="post" action="/files" enctype="multipart/form-data" class="card">
@@ -25,11 +25,11 @@
   <input type="hidden" name="dir" value="{{.Dir}}">
   <div class="band"><b>上传</b></div>
   <div class="pad"><input type="file" name="file"></div>
-  <div class="band foot"><span class="note muted">同名的文件会被替换，旧的那份自动留底，不会丢。单个文件最大 50 MB。</span><button class="btn">上传到这里</button></div>
+  <div class="band foot"><span class="note muted">同名文件将被替换，原文件自动保留为历史版本。单个文件上限为 50 MB。</span><button class="btn">上传</button></div>
 </form>
 {{else}}
 <div class="card pad">
-  <div class="note">还没有启用文件处理。在「配置」里加上下面这一节并重启，这里就能用了：</div>
+  <div class="note">文件处理功能尚未启用。请在「配置」页添加以下配置并重启服务：</div>
   <pre>files:
   dir: /var/lib/atomhelper/files</pre>
 </div>

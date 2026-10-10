@@ -1,49 +1,49 @@
 {{define "content"}}
 <h1>保险库</h1>
-<div class="sub">密码、密钥、证件号放在这里。存进去之后谁也读不出来，只有你点名的工具能在调用的一瞬间用到它。</div>
+<div class="sub">用于存放密码、密钥、证件号等敏感信息。条目保存后不可读取，仅授权的工具可在调用时使用。</div>
 
-<div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>这里没有“查看”按钮——包括你自己也看不到已存的内容。要改，就存一条同名的把它换掉。</div></div>
+<div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>保险库不提供查看功能，已保存的值对任何人均不可见。如需修改，请以相同名称重新保存。</div></div>
 
 <div class="card">
-  <div class="band"><b>已存的条目</b><span class="count">{{len .Data}}</span></div>
+  <div class="band"><b>条目列表</b><span class="count">{{len .Data}}</span></div>
   {{if .Data}}<table>
-    <thead><tr><th>名字</th><th>用途</th><th>哪些工具能用</th><th>存入时间</th><th></th></tr></thead>
+    <thead><tr><th>名称</th><th>用途</th><th>授权工具</th><th>创建时间</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Data}}<tr>
       <td><span class="mono" style="color:var(--text)">vault://{{.Label}}</span></td>
       <td>{{.Note}}</td>
-      <td>{{range .AllowedTools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">谁都不能用</span>{{end}}</td>
+      <td>{{range .AllowedTools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">未授权</span>{{end}}</td>
       <td class="time">{{when .CreatedAt}}</td>
       <td class="r"><form method="post" action="/vault/delete">
         <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
         <button class="btn danger sm">删除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">还是空的。先存一条模型的 API Key，助手才跑得起来。</div>{{end}}
+  </table>{{else}}<div class="empty">暂无条目。模型的 API Key 可在「模型」页直接填写。</div>{{end}}
 </div>
 
 <form method="post" action="/vault" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <div class="band"><b>存入一条</b></div>
+  <div class="band"><b>新增条目</b></div>
   <div class="pad grid2">
-    <div><label for="v-label">名字</label><input id="v-label" type="text" name="label" placeholder="deepseek">
-      <div class="help">配置里用 vault://名字 引用它。字母、数字、中文和 _ - .</div></div>
-    <div><label for="v-note">用途</label><input id="v-note" type="text" name="note" placeholder="DeepSeek 的 API Key">
-      <div class="help">给你自己和助手看的说明，不要把秘密写在这里</div></div>
-    <div class="full"><label for="v-value">内容</label><input id="v-value" type="password" name="value" autocomplete="new-password">
-      <div class="help">原样存入，存进去之后不再显示</div></div>
-    <div class="full"><label for="v-tools">哪些工具能用它</label><input id="v-tools" type="text" name="tools" placeholder="provider.deepseek">
-      <div class="help">逗号分隔。没列出来的工具引用它，调用会被直接拒绝</div></div>
+    <div><label for="v-label">名称</label><input id="v-label" type="text" name="label" placeholder="icloud">
+      <div class="help">配置中以 vault://名称 引用。支持字母、数字、中文及 _ - .</div></div>
+    <div><label for="v-note">用途</label><input id="v-note" type="text" name="note" placeholder="iCloud 的 App 专用密码">
+      <div class="help">用途说明，对助手可见，请勿填写敏感内容</div></div>
+    <div class="full"><label for="v-value">值</label><input id="v-value" type="password" name="value" autocomplete="new-password">
+      <div class="help">按原样保存，保存后不再显示</div></div>
+    <div class="full"><label for="v-tools">授权工具</label><input id="v-tools" type="text" name="tools" placeholder="connector.calendar, connector.mail">
+      <div class="help">以逗号分隔。未列出的工具引用该条目时，调用将被拒绝</div></div>
   </div>
-  <div class="band foot"><span class="note muted">同名的条目会被整条替换。</span><button class="btn">存入</button></div>
+  <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>
 
 <div class="card">
-  <div class="band"><b>工具的名字怎么写</b></div>
+  <div class="band"><b>授权工具的命名规则</b></div>
   <div class="pad"><dl class="kv" style="grid-template-columns:200px 1fr">
-    <dt>provider.服务名</dt><dd>模型服务，如 provider.deepseek</dd>
-    <dt>connector.calendar</dt><dd>日历</dd>
-    <dt>connector.mail</dt><dd>邮件。iCloud 的 App 专用密码可以同时给日历和邮件用</dd>
-    <dt>channel.渠道名</dt><dd>消息渠道，如 channel.qq</dd>
-    <dt>maps.book_ride</dt><dd>MCP 工具写它的全名</dd>
+    <dt>provider.服务名称</dt><dd>模型服务，例如 provider.deepseek</dd>
+    <dt>connector.calendar</dt><dd>日历连接器</dd>
+    <dt>connector.mail</dt><dd>邮件连接器。iCloud 的 App 专用密码可同时授权给日历与邮件</dd>
+    <dt>channel.渠道名称</dt><dd>消息渠道，例如 channel.qq</dd>
+    <dt>maps.book_ride</dt><dd>MCP 工具填写完整名称</dd>
   </dl></div>
 </div>
 {{end}}

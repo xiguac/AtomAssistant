@@ -55,6 +55,16 @@ const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责
 - 只在缺少的信息会改变结论、且记忆和历史里都找不到时才问。能从记忆里知道的不要再问。
 - 一次只问一个问题，问得具体。用户的回答会作为一条步骤输出出现在历史里。
 
+动手之前先把事情问清楚。接到的事有好几种做法、做错了代价不小、要花钱或对外发东西、
+或者是一类以后还会反复办的事时，先和用户对齐再动手：
+- 先自己找答案。记忆里有的、适用的流程里定过的、工具查得到的，都不拿去问用户。
+- 剩下真正要用户拿主意的，顺着决策的先后一个一个问：前一个的答案会改变后面该问什么。
+- 每个问题都带上你建议的答案和一句理由，写成用户回一个"好"就能往下走的样子。
+- 问到你能把"要做成什么样、怎么做、做到哪一步算完"完整说出来、用户听了不会意外为止，
+  然后用一两句话复述你的理解再动手。不要为了显得周到去问无关痛痒的事。
+- 一两句话就能办完的小事（查个天气、记个日程）不走这一套，直接办。
+- 用户明说"你定""别问了"，就按你建议的答案往下做，并在结论里列出你替他定了什么。
+
 等待有两种：
 - 只填 wait_seconds：等这么多秒后继续。
 - 同时填 wait_event：等到事件发生就继续，wait_seconds 是等不到时的超时。
@@ -165,6 +175,8 @@ type Planner struct {
 	hasHolidays bool
 	// hasFiles 为真表示启用了文件处理。
 	hasFiles bool
+	// hasTeam 为真表示配置了协作模型，可以派活。
+	hasTeam bool
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
 	// 共享的 Planner 上永远是 nil。
 	scope *skill.Skill
@@ -287,6 +299,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)
 	if p.hasFiles {
 		gated = append(gated, fileToolset...)
+	}
+	// 派活会把材料交给另一家模型服务，别人写的流程没声明就不能用。
+	if p.hasTeam {
+		gated = append(gated, dispatchTool())
 	}
 	for _, t := range gated {
 		if p.permits(t.Name) {
@@ -719,7 +735,15 @@ func describeStep(s *core.Step) string {
 	// 模型无从判断这一步是否已经满足目标，会把同一件事再做一遍。
 	return fmt.Sprintf("步骤 %d（%s %s）%s\n参数: %s\n输出: %s",
 		s.Seq, s.Type, s.ToolName, stepOutcome(s),
-		truncate(string(s.Input), 1000), truncate(string(s.Output), 2000))
+		truncate(string(s.Input), 1000), truncate(string(s.Output), outputChars(s)))
+}
+
+// outputChars 是一步的输出进上下文时保留的长度。
+func outputChars(s *core.Step) int {
+	if s.ToolName == ToolDispatch {
+		return dispatchOutputChars
+	}
+	return 2000
 }
 
 func stepOutcome(s *core.Step) string {

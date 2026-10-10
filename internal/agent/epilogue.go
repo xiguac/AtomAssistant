@@ -45,6 +45,8 @@ const epilogueSystemPrompt = `你负责在一次任务结束后，提炼值得�
 - playbook：这类任务以后还会出现时，把做法写成通用流程。domain 写任务类型，
   value 写成编号步骤：要先确认什么、要查哪些因素、按什么顺序、怎样得出结论、哪些地方踩过坑。
   流程里只写方法，不写这一次的具体数据（票价、日期、订单号都不要）。
+  "要先确认什么"要分清两种：这次问过、用户给了以后都适用的答案的，把答案写进流程，下次不必再问；
+  每次情况都不同、必须重新问的，写明要问什么。
 
 不记什么：
 - 只对这一次任务有意义的东西（今晚订哪家餐厅、这次的订单号）。
@@ -68,6 +70,7 @@ type Epilogue struct {
 	model    Completer
 	writer   MemoryWriter
 	voice    VoiceLearner
+	team     WorkRater
 	maxChars int
 	now      func() time.Time
 }
@@ -124,7 +127,11 @@ func (e *Epilogue) TaskFinished(ctx context.Context, t *core.Task, history []*co
 	cost.TokensIn += voiceCost.TokensIn
 	cost.TokensOut += voiceCost.TokensOut
 	cost.Micros += voiceCost.Micros
-	return cost, errors.Join(voiceErr, err)
+	teamCost, teamErr := e.judgeWork(ctx, t, history)
+	cost.TokensIn += teamCost.TokensIn
+	cost.TokensOut += teamCost.TokensOut
+	cost.Micros += teamCost.Micros
+	return cost, errors.Join(voiceErr, err, teamErr)
 }
 
 // extract 从一次完成的任务里提炼记忆候选并送进写入管线。

@@ -47,6 +47,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
 
@@ -158,6 +159,8 @@ func New(opts Options) (*Server, error) {
 		"size":       humanSize,
 		"add":        func(a, b int) int { return a + b },
 		"pct":        func(f float64) int { return int(f*100 + 0.5) },
+		// 配置里的类别是字符串，记录里的是 team.Category，两种都接。
+		"catName": func(c any) string { return team.CategoryName(team.Category(fmt.Sprint(c))) },
 	}
 	pages, err := templateFS.ReadDir("templates")
 	if err != nil {
@@ -189,7 +192,7 @@ func stateName(st core.TaskState) string {
 	case core.StateDone:
 		return "已完成"
 	case core.StateFailed:
-		return "没办成"
+		return "失败"
 	case core.StateCancelled:
 		return "已取消"
 	}
@@ -217,9 +220,9 @@ func waitKind(t *core.Task) string {
 	case t.State == core.StateSuspended:
 		return "已挂起"
 	case t.Wake != nil && t.Wake.Kind == core.WakeApproval:
-		return "等你确认"
+		return "待确认"
 	}
-	return "等你回答"
+	return "待回复"
 }
 
 // waitText 用一句话说明任务在等什么，去掉内部的套话。
@@ -285,6 +288,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /config", auth(s.configPage))
 	mux.HandleFunc("POST /config", auth(s.configSave))
 	mux.HandleFunc("POST /restart", auth(s.restart))
+	mux.HandleFunc("GET /models", auth(s.modelsPage))
+	mux.HandleFunc("POST /models/provider", auth(s.providerSave))
+	mux.HandleFunc("POST /models/provider/delete", auth(s.providerDelete))
+	mux.HandleFunc("POST /models/main", auth(s.mainSave))
+	mux.HandleFunc("POST /models/agent", auth(s.agentSave))
+	mux.HandleFunc("POST /models/agent/delete", auth(s.agentDelete))
+	mux.HandleFunc("POST /models/test", auth(s.modelTest))
+	mux.HandleFunc("POST /tasks/{id}/rate", auth(s.rateWork))
 	mux.HandleFunc("GET /files", auth(s.filesPage))
 	mux.HandleFunc("POST /files", auth(s.filesUpload))
 	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
@@ -345,7 +356,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if s.failures >= maxFailures && time.Since(s.lockedAt) < lockFor {
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, "login", &view{Error: "口令连续输错太多次，请过几分钟再试。"})
+		s.render(w, "login", &view{Error: "密码连续输入错误次数过多，请稍后重试。"})
 		return
 	}
 	s.mu.Unlock()
@@ -359,7 +370,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		s.opts.Log.Warn("后台登录失败", "来自", r.RemoteAddr)
 		w.WriteHeader(http.StatusUnauthorized)
-		s.render(w, "login", &view{Error: "口令不对。"})
+		s.render(w, "login", &view{Error: "密码错误。"})
 		return
 	}
 	id, err1 := token()
@@ -489,7 +500,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, v *view) {
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request, _ *view) {
 	goal := strings.TrimSpace(r.PostFormValue("goal"))
 	if goal == "" {
-		back(w, r, "/", "", errors.New("没有写要办什么事"))
+		back(w, r, "/", "", errors.New("请填写任务内容"))
 		return
 	}
 	title := goal
@@ -533,6 +544,8 @@ type taskData struct {
 	Asking    bool
 	// Question 是任务正在问用户的问题。
 	Question string
+	// Works 是这个任务里派给协作模型的活，等用户评价。
+	Works []workView
 }
 
 // fields 把动作的参数拆成一项一项，方便核对。
@@ -583,7 +596,7 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 	id := r.PathValue("id")
 	t, err := s.opts.Store.GetTask(r.Context(), id)
 	if err != nil {
-		http.Error(w, "没有这个任务", http.StatusNotFound)
+		http.Error(w, "任务不存在", http.StatusNotFound)
 		return
 	}
 	steps, err := s.opts.Store.ListSteps(r.Context(), id)
@@ -611,28 +624,31 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 	if needsUser(t) && d.Pending == nil && t.State == core.StateWaiting {
 		d.Question = strings.TrimPrefix(t.Reason, "等待你的回复：")
 	}
+	if d.Works, err = s.worksOf(r.Context(), id, steps); err != nil {
+		v.Error = err.Error()
+	}
 	v.Data = d
 	s.render(w, "task", v)
 }
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request, _ *view) {
 	id := r.PathValue("id")
-	back(w, r, "/tasks/"+id, "已批准，任务继续执行。", s.opts.Tasks.Approve(r.Context(), id))
+	back(w, r, "/tasks/"+id, "已批准，任务将继续执行。", s.opts.Tasks.Approve(r.Context(), id))
 }
 
 func (s *Server) reject(w http.ResponseWriter, r *http.Request, _ *view) {
 	id := r.PathValue("id")
-	back(w, r, "/tasks/"+id, "已打回，助手会按你说的重新来。", s.opts.Tasks.Reject(r.Context(), id, strings.TrimSpace(r.PostFormValue("reason"))))
+	back(w, r, "/tasks/"+id, "已驳回，助手将按修改意见重新处理。", s.opts.Tasks.Reject(r.Context(), id, strings.TrimSpace(r.PostFormValue("reason"))))
 }
 
 func (s *Server) reply(w http.ResponseWriter, r *http.Request, _ *view) {
 	id := r.PathValue("id")
 	text := strings.TrimSpace(r.PostFormValue("text"))
 	if text == "" {
-		back(w, r, "/tasks/"+id, "", errors.New("没有写内容"))
+		back(w, r, "/tasks/"+id, "", errors.New("请填写回复内容"))
 		return
 	}
-	back(w, r, "/tasks/"+id, "已送达。", s.opts.Tasks.Reply(r.Context(), id, text, "admin"))
+	back(w, r, "/tasks/"+id, "已发送。", s.opts.Tasks.Reply(r.Context(), id, text, "admin"))
 }
 
 // ---- 保险库 ----
@@ -661,7 +677,7 @@ func (s *Server) vaultPut(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("保险库条目已写入", "名字", label, "可用于", strings.Join(tools, ","))
 	}
-	back(w, r, "/vault", "已存入「"+label+"」。存进去之后就看不到内容了，只能替换或删除。", err)
+	back(w, r, "/vault", "条目「"+label+"」已保存。保存后不可查看，仅可替换或删除。", err)
 }
 
 func (s *Server) vaultDelete(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -670,7 +686,7 @@ func (s *Server) vaultDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("保险库条目已删除", "名字", label)
 	}
-	back(w, r, "/vault", "已删除「"+label+"」。", err)
+	back(w, r, "/vault", "条目「"+label+"」已删除。", err)
 }
 
 // ---- 记忆 ----
@@ -696,7 +712,7 @@ func (s *Server) memoryPage(w http.ResponseWriter, r *http.Request, v *view) {
 
 func (s *Server) memoryConfirm(w http.ResponseWriter, r *http.Request, _ *view) {
 	_, err := memory.NewPipeline(s.opts.Store.Memories(), nil).Confirm(r.Context(), r.PostFormValue("id"))
-	back(w, r, "/memory", "已确认，之后会按它来。", err)
+	back(w, r, "/memory", "已确认，该记忆已生效。", err)
 }
 
 func (s *Server) memoryDismiss(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -704,12 +720,12 @@ func (s *Server) memoryDismiss(w http.ResponseWriter, r *http.Request, _ *view) 
 }
 
 func (s *Server) memoryAffirm(w http.ResponseWriter, r *http.Request, _ *view) {
-	back(w, r, "/memory", "已确认。这条从此算你亲口说的。",
+	back(w, r, "/memory", "已确认，该记忆的来源已更新为用户陈述。",
 		memory.NewPipeline(s.opts.Store.Memories(), nil).Affirm(r.Context(), r.PostFormValue("id")))
 }
 
 func (s *Server) memoryForget(w http.ResponseWriter, r *http.Request, _ *view) {
-	back(w, r, "/memory", "已忘掉。助手之后不会再用到它。",
+	back(w, r, "/memory", "已删除，该记忆不再被使用。",
 		memory.NewPipeline(s.opts.Store.Memories(), nil).Forget(r.Context(), r.PostFormValue("id")))
 }
 
@@ -724,59 +740,60 @@ func (s *Server) configPage(w http.ResponseWriter, _ *http.Request, v *view) {
 	s.render(w, "config", v)
 }
 
-// configSave 校验并保存配置。校验不过的一个字都不会写进去。
-func (s *Server) configSave(w http.ResponseWriter, r *http.Request, _ *view) {
-	text := strings.ReplaceAll(r.PostFormValue("text"), "\r\n", "\n")
-	if len(text) > maxConfigBytes {
-		back(w, r, "/config", "", errors.New("配置太长了"))
-		return
-	}
+// writeConfig 校验并写入配置文件：先写到旁边的临时文件里校验，通过了才替换，旧的那份留一个备份。
+func (s *Server) writeConfig(text string) error {
 	if s.opts.ConfigPath == "" {
-		back(w, r, "/config", "", errors.New("没有设置 ATOM_CONFIG，不知道配置文件该存在哪"))
-		return
+		return errors.New("没有设置 ATOM_CONFIG，不知道配置文件该存在哪")
 	}
 	dir := filepath.Dir(s.opts.ConfigPath)
 	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
 	if err != nil {
-		back(w, r, "/config", "", fmt.Errorf("写不了配置目录: %w", err))
-		return
+		return fmt.Errorf("写不了配置目录: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 	if _, err := io.WriteString(tmp, text); err != nil {
 		_ = tmp.Close()
-		back(w, r, "/config", "", err)
-		return
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		back(w, r, "/config", "", err)
-		return
+		return err
 	}
 	if _, err := config.LoadFile(tmp.Name()); err != nil {
-		back(w, r, "/config", "", fmt.Errorf("配置有误，没有保存: %w", err))
-		return
+		return fmt.Errorf("配置校验未通过，未保存: %w", err)
 	}
 	// 旧的那份留一个备份，改错了能找回来。
 	if old, err := os.ReadFile(s.opts.ConfigPath); err == nil {
 		if err := os.WriteFile(s.opts.ConfigPath+".bak", old, 0o600); err != nil {
-			back(w, r, "/config", "", fmt.Errorf("备份旧配置失败: %w", err))
-			return
+			return fmt.Errorf("备份旧配置失败: %w", err)
 		}
 	}
 	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), s.opts.ConfigPath); err != nil {
+		return fmt.Errorf("保存配置失败: %w", err)
+	}
+	return nil
+}
+
+// configSave 校验并保存配置。校验不过的一个字都不会写进去。
+func (s *Server) configSave(w http.ResponseWriter, r *http.Request, _ *view) {
+	text := strings.ReplaceAll(r.PostFormValue("text"), "\r\n", "\n")
+	if len(text) > maxConfigBytes {
+		back(w, r, "/config", "", errors.New("配置内容超出长度限制"))
+		return
+	}
+	if err := s.writeConfig(text); err != nil {
 		back(w, r, "/config", "", err)
 		return
 	}
-	if err := os.Rename(tmp.Name(), s.opts.ConfigPath); err != nil {
-		back(w, r, "/config", "", fmt.Errorf("保存配置失败: %w", err))
-		return
-	}
 	s.opts.Log.Info("配置已在后台修改", "来自", r.RemoteAddr)
-	back(w, r, "/config", "已保存。重启之后生效。", nil)
+	back(w, r, "/config", "配置已保存，重启服务后生效。", nil)
 }
 
 func (s *Server) restart(w http.ResponseWriter, r *http.Request, v *view) {
 	if s.opts.Restart == nil {
-		back(w, r, "/config", "", errors.New("这个进程不是由进程管理器启动的，请手动重启"))
+		back(w, r, "/config", "", errors.New("当前进程未由进程管理器托管，请手动重启"))
 		return
 	}
 	s.opts.Log.Info("后台请求重启", "来自", r.RemoteAddr)
@@ -800,14 +817,14 @@ func (s *Server) workspace() (*files.Workspace, error) {
 		return nil, err
 	}
 	if file == nil {
-		return nil, errors.New("还没有配置文件")
+		return nil, errors.New("配置文件不存在")
 	}
 	ws, err := file.Workspace()
 	if err != nil {
 		return nil, err
 	}
 	if ws == nil {
-		return nil, errors.New("配置里没有 files 一节，还没有启用文件处理")
+		return nil, errors.New("配置中缺少 files 一节，文件处理功能尚未启用")
 	}
 	return ws, nil
 }
@@ -849,7 +866,7 @@ func (s *Server) filesUpload(w http.ResponseWriter, r *http.Request, _ *view) {
 	}
 	src, header, err := r.FormFile("file")
 	if err != nil {
-		http.Redirect(w, r, to+"&e="+template.URLQueryEscaper("没有选文件，或者文件太大"), http.StatusSeeOther)
+		http.Redirect(w, r, to+"&e="+template.URLQueryEscaper("未选择文件，或文件超出大小限制"), http.StatusSeeOther)
 		return
 	}
 	defer src.Close()
@@ -873,7 +890,7 @@ func (s *Server) filesUpload(w http.ResponseWriter, r *http.Request, _ *view) {
 		http.Redirect(w, r, to+"&e="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
 	}
-	http.Redirect(w, r, to+"&ok="+template.URLQueryEscaper("已放进工作区: "+saved.Path), http.StatusSeeOther)
+	http.Redirect(w, r, to+"&ok="+template.URLQueryEscaper("文件已保存至工作区: "+saved.Path), http.StatusSeeOther)
 }
 
 func (s *Server) filesDownload(w http.ResponseWriter, r *http.Request, _ *view) {

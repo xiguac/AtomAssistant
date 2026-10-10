@@ -1,20 +1,20 @@
 {{define "content"}}
 <h1>配置</h1>
-<div class="sub">保存前会先校验，有错的一个字都不会写进去。密码和密钥不要写在这里——存进保险库，这里写 vault://名字。</div>
+<div class="sub">保存前将校验配置，校验未通过时不会写入。请勿在此填写密码或密钥，应保存至保险库并以 vault://名称 引用。模型相关配置可在「模型」页填写。</div>
 
 <form method="post" action="/config" class="card" style="overflow:hidden">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <div class="band"><span class="mono" style="color:var(--text-2)">{{index .Data "Path"}}</span><span class="pill plain">YAML</span></div>
   <textarea class="code" name="text" spellcheck="false" wrap="off">{{index .Data "Text"}}</textarea>
-  <div class="band foot"><span class="note muted">旧的那份会留一个 .bak 备份。保存之后要重启才生效。</span><button class="btn">校验并保存</button></div>
+  <div class="band foot"><span class="note muted">原配置将备份为 .bak 文件。保存后需重启服务方可生效。</span><button class="btn">校验并保存</button></div>
 </form>
 
 <div class="card">
-  <div class="band"><b>重启</b></div>
+  <div class="band"><b>重启服务</b></div>
   <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div class="note grow">让改过的配置和保险库里新存的密钥生效。正在执行的任务会先放回队列，重启后接着做，不会丢。</div>
+    <div class="note grow">使修改后的配置与保险库中新增的密钥生效。执行中的任务将回到队列，重启后继续执行。</div>
     <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{.CSRF}}">
-      <button class="btn sec"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V9h-4.5"/></svg>重启助手</button></form>
+      <button class="btn sec"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V9h-4.5"/></svg>重启服务</button></form>
   </div>
 </div>
 {{end}}

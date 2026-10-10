@@ -1,0 +1,122 @@
+{{define "content"}}
+<h1>模型</h1>
+<div class="sub">配置主 AI 使用的接口地址、密钥与模型，并管理协作模型。配置协作模型后，主 AI 可将独立的子任务分派给它们，分派对象依据用户评价产生的评分确定。修改后需重启服务方可生效。</div>
+
+{{with .Data}}
+<h2 style="margin-top:0">模型服务 <span class="count">{{len .Providers}}</span></h2>
+<div class="card">
+  {{if .Providers}}<table>
+    <thead><tr><th>名称</th><th>接口地址</th><th>密钥</th><th>用途</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Providers}}<tr>
+      <td><b style="font-weight:500">{{.Name}}</b></td>
+      <td><span class="mono">{{.BaseURL}}</span></td>
+      <td>{{if .KeyOK}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">未配置</span>{{end}}<div class="note muted" style="margin-top:4px">{{.KeyState}}</div></td>
+      <td>{{range .UsedBy}}<span class="chip">{{.}}</span>{{else}}<span class="muted">未使用</span>{{end}}</td>
+      <td class="r"><form method="post" action="/models/provider/delete">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+        <button class="btn danger sm">删除</button></form></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">暂无模型服务。请先添加模型服务，否则助手无法运行。</div>{{end}}
+</div>
+
+<form method="post" action="/models/provider" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>添加或修改模型服务</b></div>
+  <div class="pad grid2">
+    <div><label for="p-name">名称</label><input id="p-name" type="text" name="name" placeholder="deepseek">
+      <div class="help">自定义标识，供下方引用。填写已有名称即为修改该服务</div></div>
+    <div><label for="p-url">接口地址</label><input id="p-url" type="text" name="base_url" placeholder="https://api.deepseek.com/v1">
+      <div class="help">OpenAI 兼容接口，填写至 /v1 一级，不含 /chat/completions</div></div>
+    <div class="full"><label for="p-key">API Key</label><input id="p-key" type="password" name="key" autocomplete="new-password">
+      <div class="help">保存至保险库，保存后不可查看。修改已有服务时留空表示沿用原密钥</div></div>
+  </div>
+  <div class="band foot"><span class="note muted">密钥仅发送至此处填写的接口地址。</span><button class="btn">保存</button></div>
+</form>
+
+<h2>主 AI</h2>
+<div class="card">
+  <div class="pad">
+    <div class="note" style="margin-bottom:14px">负责接收任务、规划决策、调用工具并与用户交互的模型。建议选用能力最强的模型。</div>
+    <form method="post" action="/models/main" class="grid2">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <div><label for="m-provider">模型服务</label>
+        <select id="m-provider" name="provider">{{range .Providers}}<option value="{{.Name}}"{{if eq .Name $.Data.MainProvider}} selected{{end}}>{{.Name}}</option>{{else}}<option value="">请先添加模型服务</option>{{end}}</select></div>
+      <div><label for="m-model">模型</label><input id="m-model" type="text" name="model" value="{{.MainModel}}" placeholder="deepseek-chat">
+        <div class="help">服务商文档中的模型标识</div></div>
+      <div class="full actions"><button class="btn">保存</button>
+        <button class="btn sec" formaction="/models/test">连接测试</button>
+        <span class="note muted">连接测试使用已保存的接口地址与密钥，向模型发送一条测试消息。</span></div>
+    </form>
+  </div>
+  {{if .Others}}<div class="band foot" style="display:block">
+    <div class="note muted" style="margin-bottom:6px">以下用途已单独指定模型，未指定的用途沿用主 AI。如需修改，请前往「配置」页。</div>
+    {{range .Others}}<span class="chip">{{.Purpose}} → {{.Provider}} / {{.Model}}</span>{{end}}
+  </div>{{end}}
+</div>
+
+<h2>协作模型 <span class="count">{{len .Agents}}</span></h2>
+<div class="card">
+  {{if .Agents}}<table>
+    <thead><tr><th>名称</th><th>模型</th><th>任务类别</th><th>备注</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Agents}}<tr>
+      <td><b style="font-weight:500">{{.Name}}</b></td>
+      <td><span class="mono">{{.Provider}} / {{.Model}}</span></td>
+      <td>{{range .GoodAt}}<span class="chip">{{catName .}}</span>{{else}}<span class="muted">不限</span>{{end}}</td>
+      <td>{{.Note}}</td>
+      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
+        <form method="post" action="/models/test"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="provider" value="{{.Provider}}"><input type="hidden" name="model" value="{{.Model}}">
+          <button class="btn sec sm">连接测试</button></form>
+        <form method="post" action="/models/agent/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
+      </div></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">暂无协作模型，当前为单模型模式。添加协作模型后，主 AI 可将写作、编程、翻译等子任务分派给它们。</div>{{end}}
+</div>
+
+<form method="post" action="/models/agent" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>添加或修改协作模型</b></div>
+  <div class="pad grid2">
+    <div><label for="a-name">名称</label><input id="a-name" type="text" name="name" placeholder="写作模型">
+      <div class="help">评分按名称记录。填写已有名称即为修改该协作模型</div></div>
+    <div><label for="a-note">备注</label><input id="a-note" type="text" name="note" placeholder="长文写作，成本较低"></div>
+    <div><label for="a-provider">模型服务</label>
+      <select id="a-provider" name="provider">{{range .Providers}}<option value="{{.Name}}">{{.Name}}</option>{{else}}<option value="">请先添加模型服务</option>{{end}}</select></div>
+    <div><label for="a-model">模型</label><input id="a-model" type="text" name="model" placeholder="moonshot-v1-32k"></div>
+    <div class="full"><label>任务类别限制（不选表示不限，按评分分派）</label>
+      <div class="checks">{{range .Categories}}<label class="check" title="{{.Hint}}"><input type="checkbox" name="good_at" value="{{.ID}}">{{.Name}}</label>{{end}}</div></div>
+  </div>
+  <div class="band foot"><span class="note muted">协作模型不具备工具调用能力，仅可访问主 AI 提供的任务说明与材料。</span><button class="btn">保存</button></div>
+</form>
+
+{{if .Standings}}
+<h2>评分</h2>
+<div class="card">
+  <table>
+    <thead><tr><th style="width:200px">任务类别</th><th>协作模型评分（按分派优先级排序）</th></tr></thead>
+    <tbody>{{range .Standings}}<tr>
+      <td><b style="font-weight:500">{{.Category.Name}}</b><div class="note muted">{{.Category.Hint}}</div></td>
+      <td>{{range .Rows}}<div class="score{{if .Next}} next{{end}}">
+        <span class="who">{{.Worker.Name}}</span>
+        {{if eq .Tally.Runs 0}}<span class="note muted">尚无记录，优先试用</span>
+        {{else}}<span class="bar"><i style="width:{{pct .Tally.Score}}%"></i></span><span class="mono">{{pct .Tally.Score}}</span>
+        <span class="note muted">已完成 {{.Tally.Runs}} 项 · 好评 {{.Tally.Good}} · 差评 {{.Tally.Bad}}</span>{{end}}
+        {{if .Next}}<span class="pill info plain">优先分派</span>{{end}}
+      </div>{{end}}</td>
+    </tr>{{end}}</tbody>
+  </table>
+  <div class="band foot"><span class="note muted">评分仅依据用户评价计算：用户明确给出的评价权重为 1，由用户发言推断的评价权重为 0.5，未评价的任务项不计分。同一类别中尚无记录的模型优先试用一次，此后按评分分派。</span></div>
+</div>
+{{end}}
+
+<div class="card">
+  <div class="band"><b>重启服务</b></div>
+  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
+    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="btn sec">重启服务</button></form>
+  </div>
+</div>
+{{end}}
+{{end}}

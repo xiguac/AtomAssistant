@@ -11,6 +11,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomhelper/internal/team"
 )
 
 // TaskQuery 是任务存储里渠道层要用到的部分，由 *pg.Store 提供。
@@ -134,4 +135,31 @@ func (s *MemState) PutNotice(_ context.Context, taskID, fingerprint string) erro
 	defer s.mu.Unlock()
 	s.notices[taskID] = fingerprint
 	return nil
+}
+
+// TeamFeedback 是 Feedback 的实现：把聊天里的评价记到协作成绩上。
+//
+// 走到这里的话是主人在自己配置的渠道里亲口说的，所以算用户的明确表态，一整票。
+type TeamFeedback struct {
+	Store team.Store
+}
+
+var _ Feedback = TeamFeedback{}
+
+func (f TeamFeedback) Worked(ctx context.Context, taskID string) (bool, error) {
+	works, err := f.Store.WorkOfTask(ctx, taskID)
+	return len(works) > 0, err
+}
+
+func (f TeamFeedback) RateLatest(ctx context.Context, taskIDs []string, good bool) (int, error) {
+	works, err := f.Store.LatestWork(ctx, taskIDs)
+	if err != nil {
+		return 0, err
+	}
+	for _, w := range works {
+		if err := f.Store.Rate(ctx, w.ID, team.Verdict(good, team.RatedByUser), team.RatedByUser); err != nil {
+			return 0, err
+		}
+	}
+	return len(works), nil
 }

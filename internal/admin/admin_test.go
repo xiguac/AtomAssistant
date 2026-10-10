@@ -19,9 +19,12 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
+	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
 
@@ -189,7 +192,7 @@ func TestAdmin_改动要带防伪令牌保险库只进不出(t *testing.T) {
 	const secret = "sk-9f8e7d6c5b4a-very-secret"
 	code, loc := e.post("/vault", url.Values{"csrf": {e.csrf}, "label": {"deepseek"}, "note": {"模型密钥"},
 		"value": {secret + "\r\n"}, "tools": {"provider.deepseek，connector.mail"}})
-	if code != http.StatusSeeOther || !strings.Contains(loc, "已存入") {
+	if code != http.StatusSeeOther || !strings.Contains(loc, "已保存") {
 		t.Fatalf("存入失败: %d %s", code, loc)
 	}
 	metas, _ := e.vault.List(ctx)
@@ -277,10 +280,10 @@ func TestAdmin_任务与外部内容的转义(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, body = e.get("/tasks/" + id)
-	if !strings.Contains(body, "等你确认：") || !strings.Contains(body, ">mail.send</span>") || !strings.Contains(body, "做了就收不回来") || !strings.Contains(body, "收到，周五见") || !strings.Contains(body, "liwei@example.com") {
+	if !strings.Contains(body, "待确认操作：") || !strings.Contains(body, ">mail.send</span>") || !strings.Contains(body, "不可撤销") || !strings.Contains(body, "收到，周五见") || !strings.Contains(body, "liwei@example.com") {
 		t.Fatalf("应完整展示等确认的动作:\n%s", body)
 	}
-	if _, home := e.get("/"); !strings.Contains(home, `等你处理 <span class="count warn">1</span>`) || !strings.Contains(home, "等你确认：") {
+	if _, home := e.get("/"); !strings.Contains(home, `待处理 <span class="count warn">1</span>`) || !strings.Contains(home, "待确认：") {
 		t.Fatal("首页应把它列在等你处理里")
 	}
 	if code, loc := e.post("/tasks/"+id+"/approve", url.Values{"csrf": {e.csrf}}); code != http.StatusSeeOther || !strings.Contains(loc, "已批准") {
@@ -304,7 +307,7 @@ func TestAdmin_配置校验与文件(t *testing.T) {
 		"不是 YAML": "::: [",
 	} {
 		code, loc := e.post("/config", url.Values{"csrf": {e.csrf}, "text": {bad}})
-		if code != http.StatusSeeOther || !strings.Contains(loc, "没有保存") {
+		if code != http.StatusSeeOther || !strings.Contains(loc, "未保存") {
 			t.Errorf("%s: 应被拒绝: %d %s", name, code, loc)
 		}
 		if now, _ := os.ReadFile(e.cfg); !bytes.Equal(now, before) {
@@ -342,7 +345,7 @@ func TestAdmin_配置校验与文件(t *testing.T) {
 		loc, _ := url.QueryUnescape(resp.Header.Get("Location"))
 		return resp.StatusCode, loc
 	}
-	if code, loc := upload(`..\..\evil.txt`, "", "x"); code != http.StatusSeeOther || !strings.Contains(loc, "已放进工作区: evil.txt") {
+	if code, loc := upload(`..\..\evil.txt`, "", "x"); code != http.StatusSeeOther || !strings.Contains(loc, "文件已保存至工作区: evil.txt") {
 		t.Fatalf("文件名里的路径应被去掉: %d %s", code, loc)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(e.work), "evil.txt")); err == nil {
@@ -368,5 +371,133 @@ func TestAdmin_配置校验与文件(t *testing.T) {
 	}
 	if code, _ := e.get("/files/download?path=" + url.QueryEscape("../config.yaml")); code != http.StatusNotFound {
 		t.Fatalf("下载工作区之外的文件应被拒绝: %d", code)
+	}
+}
+
+func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+
+	// 一个假的模型接口：核对带来的密钥，回一句话。
+	var gotAuth string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"m1","choices":[{"message":{"content":"收到"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer fake.Close()
+
+	// 配置里原有的内容和注释不能因为在这一页保存而丢掉。
+	before, _ := os.ReadFile(e.cfg)
+	if err := os.WriteFile(e.cfg, append([]byte("# 我自己写的注释\n"), before...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		code, loc := e.post(path, form)
+		if code != http.StatusSeeOther {
+			t.Fatalf("%s 应跳转，实际 %d", path, code)
+		}
+		return loc
+	}
+
+	// 不是本机的明文接口、没填密钥的新服务：都不收。
+	if loc := post("/models/provider", url.Values{"name": {"x"}, "base_url": {"http://example.com/v1"}, "key": {"k"}}); !strings.Contains(loc, "必须使用 https") {
+		t.Fatalf("明文接口应被拒绝: %s", loc)
+	}
+	if loc := post("/models/provider", url.Values{"name": {"x"}, "base_url": {fake.URL}}); !strings.Contains(loc, "必须填写 API Key") {
+		t.Fatalf("新服务没有密钥应被拒绝: %s", loc)
+	}
+	if loc := post("/models/provider", url.Values{"name": {"本地"}, "base_url": {fake.URL + "/"}, "key": {" sk-secret-1 "}}); !strings.Contains(loc, "模型服务「本地」已保存") {
+		t.Fatalf("保存模型服务失败: %s", loc)
+	}
+	if loc := post("/models/main", url.Values{"provider": {"本地"}, "model": {"m1"}}); !strings.Contains(loc, "主 AI 已设置为") {
+		t.Fatalf("保存主 AI 失败: %s", loc)
+	}
+	if loc := post("/models/agent", url.Values{"name": {"写手"}, "provider": {"本地"}, "model": {"m2"}, "good_at": {"writing", "translate"}}); !strings.Contains(loc, "协作模型「写手」已保存") {
+		t.Fatalf("保存协作模型失败: %s", loc)
+	}
+	if loc := post("/models/agent", url.Values{"name": {"坏的"}, "provider": {"不存在"}, "model": {"m"}}); !strings.Contains(loc, "不存在") {
+		t.Fatalf("引用不存在的服务应被拒绝: %s", loc)
+	}
+
+	raw, _ := os.ReadFile(e.cfg)
+	text := string(raw)
+	if strings.Contains(text, "sk-secret-1") {
+		t.Fatal("密钥不能出现在配置文件里")
+	}
+	for _, want := range []string{"# 我自己写的注释", "files:", "api_key: vault://本地", "purpose: plan", "fallback:", "name: 写手", "- writing"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("配置里应有 %q:\n%s", want, text)
+		}
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil {
+		t.Fatalf("保存出来的配置应能加载: %v", err)
+	}
+	router, err := file.BuildRouter(ctx, e.vault)
+	if err != nil {
+		t.Fatalf("保存出来的配置应能接通模型: %v", err)
+	}
+	if _, err := router.CompleteWith(ctx, "写手", llm.Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "hi"}}}); err != nil {
+		t.Fatalf("协作模型应能调用: %v", err)
+	}
+
+	// 测试连接：用的是保险库里的密钥。
+	if loc := post("/models/test", url.Values{"provider": {"本地"}, "model": {"m1"}}); !strings.Contains(loc, "连接成功") || gotAuth != "Bearer sk-secret-1" {
+		t.Fatalf("测试连接应成功并带上密钥: %s %q", loc, gotAuth)
+	}
+	// 修改时留空密钥：密钥不变。在用的服务删不掉。
+	if loc := post("/models/provider", url.Values{"name": {"本地"}, "base_url": {fake.URL}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("留空密钥应保留原来的: %s", loc)
+	}
+	if loc := post("/models/provider/delete", url.Values{"name": {"本地"}}); !strings.Contains(loc, "正在使用中") {
+		t.Fatalf("在用的服务不应能删: %s", loc)
+	}
+	_, body := e.get("/models")
+	for _, want := range []string{"已配置", "写手", "尚无记录，优先试用", `value="m1"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("模型页应有 %q", want)
+		}
+	}
+	if strings.Contains(body, "sk-secret-1") {
+		t.Fatal("模型页不能显示密钥")
+	}
+
+	// 任务页上评价协作模型交的活，成绩跟着变。
+	task := core.NewTask("写周报", "写周报", core.TrustUser)
+	if err := e.store.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	work := &team.Work{ID: team.WorkID(task.ID, 1, 0), TaskID: task.ID, StepSeq: 1, Worker: "写手",
+		Category: team.CatWriting, Title: "<b>周报</b>", CreatedAt: time.Now().UTC()}
+	if err := e.store.Team().PutWork(ctx, work); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := e.get("/tasks/" + task.ID); !strings.Contains(body, "协作产出") || strings.Contains(body, "<b>周报</b>") {
+		t.Fatal("任务页应列出协作成果，标题要转义")
+	}
+	if loc := post("/tasks/"+task.ID+"/rate", url.Values{"work": {"别的任务:1:0"}, "verdict": {"good"}}); !strings.Contains(loc, "不属于此任务") {
+		t.Fatalf("不能评别的任务的活: %s", loc)
+	}
+	if loc := post("/tasks/"+task.ID+"/rate", url.Values{"work": {work.ID}, "verdict": {"bad"}}); !strings.Contains(loc, "评价已保存") {
+		t.Fatalf("评价失败: %s", loc)
+	}
+	all, err := e.store.Team().Tally(ctx)
+	if err != nil || len(all) != 1 || all[0].Bad != team.WeightUser || all[0].Runs != 1 {
+		t.Fatalf("评价应记成一整票差评: %+v %v", all, err)
+	}
+	if _, body := e.get("/tasks/" + task.ID); !strings.Contains(body, "用户评价：不满意") {
+		t.Fatal("任务页应显示已有的评价")
+	}
+
+	// 删掉协作模型再删服务：主 AI 还在用，仍然删不掉。
+	if loc := post("/models/agent/delete", url.Values{"name": {"写手"}}); !strings.Contains(loc, "协作模型「写手」已删除") {
+		t.Fatalf("删除协作模型失败: %s", loc)
+	}
+	if now, _ := os.ReadFile(e.cfg); strings.Contains(string(now), "agents:") {
+		t.Fatalf("最后一个协作模型删掉后不应留下空的一节:\n%s", now)
 	}
 }

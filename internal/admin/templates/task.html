@@ -5,15 +5,15 @@
 <div class="card pad">
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <h1 style="font-size:20px;line-height:28px">{{.Task.Title}}</h1>
-    {{if .Pending}}<span class="pill warn">等你确认</span>
-    {{else if .Question}}<span class="pill warn">等你回答</span>
+    {{if .Pending}}<span class="pill warn">待确认</span>
+    {{else if .Question}}<span class="pill warn">待回复</span>
     {{else}}<span class="pill {{stateClass .Task.State}}">{{stateName .Task.State}}</span>{{end}}
   </div>
   {{if and .Task.Goal (ne .Task.Goal .Task.Title)}}<div class="quote" style="margin-top:14px">{{.Task.Goal}}</div>{{end}}
   {{if and .Task.Reason (not .Pending) (not .Question)}}<div style="margin-top:14px;white-space:pre-wrap;word-break:break-word">{{.Task.Reason}}</div>{{end}}
   <div class="note muted" style="margin-top:14px">
-    {{when .Task.CreatedAt}} 创建 · 已用 {{.Task.Usage.Tokens}} tokens · {{.Task.Usage.CostCents}} 分 ·
-    来源：{{if eq (print .Task.Origin) "user"}}你本人{{else}}{{.Task.Origin}}{{end}}
+    创建于 {{when .Task.CreatedAt}} · 用量 {{.Task.Usage.Tokens}} tokens · 费用 {{.Task.Usage.CostCents}} 分 ·
+    来源：{{if eq (print .Task.Origin) "user"}}用户{{else}}{{.Task.Origin}}{{end}}
     {{range .Task.Tags}} · <span class="chip">{{.}}</span>{{end}}
   </div>
 </div>
@@ -22,17 +22,17 @@
 <div class="card" style="margin-top:16px;border-left:3px solid var(--warn-bar)">
   <div class="band">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <b style="font-size:16px">等你确认：<span class="mono" style="font-size:14px">{{.Pending.Tool}}</span></b>
-      {{if .Irreversible}}<span class="pill bad plain">做了就收不回来</span>{{end}}
+      <b style="font-size:16px">待确认操作：<span class="mono" style="font-size:14px">{{.Pending.Tool}}</span></b>
+      {{if .Irreversible}}<span class="pill bad plain">不可撤销</span>{{end}}
     </div>
   </div>
   <div class="pad">
-    <div class="note" style="margin-bottom:14px">批准之前看清楚它要做什么。下面是这一步的全部参数。</div>
+    <div class="note" style="margin-bottom:14px">批准前请核对该操作的全部参数。</div>
     <dl class="kv">
       {{range .Fields}}<dt>{{.Key}}</dt><dd>{{if .Long}}<div class="box">{{.Value}}</div>{{else}}{{.Value}}{{end}}</dd>{{end}}
     </dl>
-    {{if .Why}}<div class="note" style="margin-top:14px">助手的理由：{{.Why}}</div>{{end}}
-    {{if .Rule}}<div class="note" style="margin-top:6px;color:var(--warn)">为什么要你确认：{{.Rule}}</div>{{end}}
+    {{if .Why}}<div class="note" style="margin-top:14px">执行理由：{{.Why}}</div>{{end}}
+    {{if .Rule}}<div class="note" style="margin-top:6px;color:var(--warn)">需确认的原因：{{.Rule}}</div>{{end}}
   </div>
   <div class="band foot" style="align-items:flex-start">
     <form method="post" action="/tasks/{{.Task.ID}}/approve">
@@ -40,8 +40,8 @@
     </form>
     <form method="post" action="/tasks/{{.Task.ID}}/reject" class="actions grow" style="justify-content:flex-end">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <input class="grow" type="text" name="reason" placeholder="不批准的话，告诉它哪里要改…">
-      <button class="btn danger">打回</button>
+      <input class="grow" type="text" name="reason" placeholder="驳回时请说明修改意见">
+      <button class="btn danger">驳回</button>
     </form>
   </div>
 </div>
@@ -50,16 +50,39 @@
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="pad" style="padding-bottom:8px">
     {{if .Question}}<div style="font-weight:500;margin-bottom:12px;white-space:pre-wrap">{{.Question}}</div>{{end}}
-    <textarea class="bare" name="text" placeholder="{{if .Question}}回答它的问题…{{else}}随时给它补充材料…{{end}}" style="min-height:60px"></textarea>
+    <textarea class="bare" name="text" placeholder="{{if .Question}}请输入回复{{else}}可在此补充说明或材料{{end}}" style="min-height:60px"></textarea>
   </div>
   <div class="band foot">
-    <span class="note muted">{{if .Question}}它在等你这句话才能往下做。{{else}}任务还在进行，你说的话它下一步就能看到。{{end}}</span>
+    <span class="note muted">{{if .Question}}任务将在收到回复后继续执行。{{else}}任务执行中，补充内容将在下一步生效。{{end}}</span>
     <button class="btn">发送</button>
   </div>
 </form>
 {{end}}
 
-<h2>做过的步骤 <span class="count">{{len .Steps}}</span></h2>
+{{if .Works}}
+<h2>协作产出 <span class="count">{{len .Works}}</span></h2>
+<div class="card">
+  <table>
+    <thead><tr><th>任务项</th><th style="width:120px">执行模型</th><th style="width:290px">评价</th></tr></thead>
+    <tbody>{{range .Works}}<tr>
+      <td><b style="font-weight:500">{{.Title}}</b> <span class="chip">{{catName .Category}}</span>
+        {{if .Text}}<div><details><summary>查看产出</summary><pre>{{.Text}}</pre></details></div>{{end}}</td>
+      <td>{{.Worker}}</td>
+      <td><div class="actions" style="flex-wrap:nowrap">
+        {{if gt .Rating 0.0}}<span class="pill ok plain">{{if eq .RatedBy "user"}}用户评价：满意{{else}}推断：满意{{end}}</span>
+        {{else if lt .Rating 0.0}}<span class="pill bad plain">{{if eq .RatedBy "user"}}用户评价：不满意{{else}}推断：不满意{{end}}</span>{{end}}
+        <form method="post" action="/tasks/{{$.Data.Task.ID}}/rate"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="work" value="{{.ID}}"><input type="hidden" name="verdict" value="good"><button class="btn sec sm">满意</button></form>
+        <form method="post" action="/tasks/{{$.Data.Task.ID}}/rate"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="work" value="{{.ID}}"><input type="hidden" name="verdict" value="bad"><button class="btn danger sm">不满意</button></form>
+      </div></td>
+    </tr>{{end}}</tbody>
+  </table>
+  <div class="band foot"><span class="note muted">评价将影响同类任务的后续分派。由用户发言推断的评价权重为 0.5，以此处的明确评价为准。</span></div>
+</div>
+{{end}}
+
+<h2>执行步骤 <span class="count">{{len .Steps}}</span></h2>
 <div class="card">
   {{if .Steps}}<ol class="steps">
     {{range .Steps}}<li>
@@ -68,7 +91,7 @@
         <div class="head">
           <span class="tool">{{if .ToolName}}{{.ToolName}}{{else}}{{.Type}}{{end}}</span>
           {{$st := print .Status}}
-          <span class="pill plain {{if eq $st "done"}}ok{{else if eq $st "failed"}}bad{{else if eq $st "awaiting"}}warn{{else if eq $st "skipped"}}bad{{end}}">{{if eq $st "done"}}完成{{else if eq $st "failed"}}失败{{else if eq $st "awaiting"}}等确认{{else if eq $st "skipped"}}未执行{{else if eq $st "approved"}}已批准{{else}}{{$st}}{{end}}</span>
+          <span class="pill plain {{if eq $st "done"}}ok{{else if eq $st "failed"}}bad{{else if eq $st "awaiting"}}warn{{else if eq $st "skipped"}}bad{{end}}">{{if eq $st "done"}}完成{{else if eq $st "failed"}}失败{{else if eq $st "awaiting"}}待确认{{else if eq $st "skipped"}}未执行{{else if eq $st "approved"}}已批准{{else}}{{$st}}{{end}}</span>
           {{if and .Out (eq $st "done") (eq (print .OutputTrust) "external")}}<span class="pill warn plain">外部内容</span>{{end}}
         </div>
         {{if .Err}}<div class="err">{{.Err}}</div>{{end}}
@@ -78,7 +101,7 @@
         </div>
       </div>
     </li>{{end}}
-  </ol>{{else}}<div class="empty">还没有开始。</div>{{end}}
+  </ol>{{else}}<div class="empty">任务尚未开始执行。</div>{{end}}
 </div>
 {{end}}
 {{end}}

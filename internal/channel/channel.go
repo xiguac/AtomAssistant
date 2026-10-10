@@ -89,6 +89,14 @@ type Tasks interface {
 	PendingAction(ctx context.Context, taskID string) (*Pending, error)
 }
 
+// Feedback 记下主人对协作模型交的活的评价，由 TeamFeedback 提供。
+type Feedback interface {
+	// Worked 报告一个任务里有没有派给协作模型的活。
+	Worked(ctx context.Context, taskID string) (bool, error)
+	// RateLatest 给这些任务里最近派过活的那一个打分，返回评了几份。
+	RateLatest(ctx context.Context, taskIDs []string, good bool) (int, error)
+}
+
 // ChatState 记录一个会话最近一次来信，回复时要用。
 type ChatState struct {
 	Channel   string
@@ -163,6 +171,7 @@ type Hub struct {
 	bindings map[string]Binding
 	tasks    Tasks
 	state    State
+	feedback Feedback
 	log      *slog.Logger
 	now      func() time.Time
 
@@ -188,6 +197,12 @@ func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hu
 		h.bindings[name] = b
 	}
 	return h, nil
+}
+
+// WithFeedback 让主人能在聊天里用 /赞 和 /踩 评价协作模型交的活。
+func (h *Hub) WithFeedback(f Feedback) *Hub {
+	h.feedback = f
+	return h
 }
 
 // Run 启动全部渠道的接收和进展推送，直到 ctx 结束。
@@ -284,6 +299,42 @@ func isApproval(text string) bool {
 // newPrefix 是强制开一件新事的前缀。
 const newPrefix = "/new"
 
+// 评价协作成果的两个口令。必须是整句：夸一句"不错"多半是在说整件事，
+// 而这里要的是明确针对"交出来的东西"的表态，所以用不会和日常说话撞上的写法。
+const (
+	praiseWord = "/赞"
+	blameWord  = "/踩"
+)
+
+// rateHint 是办完一件有协作模型参与的事之后，附在结论后面的一句提示。
+const rateHint = "\n\n（这件事有一部分是协作模型做的。回 " + praiseWord + " 或 " + blameWord + " 告诉我做得怎么样，以后同类的活按你的评价来派。）"
+
+// rate 记下主人对这个会话里最近一件事的协作成果的评价。
+func (h *Hub) rate(ctx context.Context, channel, chat, tag string, good bool) error {
+	if h.feedback == nil {
+		h.say(ctx, channel, chat, "现在是主 AI 一个人在干活，没有可评价的协作模型。")
+		return nil
+	}
+	recent, err := h.tasks.ByTag(ctx, tag, false, 20)
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(recent))
+	for _, t := range recent {
+		ids = append(ids, t.ID)
+	}
+	n, err := h.feedback.RateLatest(ctx, ids, good)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		h.say(ctx, channel, chat, "最近的事里没有协作模型做的部分，没什么可评的。")
+		return nil
+	}
+	h.say(ctx, channel, chat, "记下了。")
+	return nil
+}
+
 // route 决定一条消息该去哪。
 func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	text := strings.TrimSpace(m.Text)
@@ -302,6 +353,10 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 			return nil
 		}
 		return h.create(ctx, text, tag)
+	}
+
+	if text == praiseWord || text == blameWord {
+		return h.rate(ctx, channel, m.Chat, tag, text == praiseWord)
 	}
 
 	active, err := h.tasks.ByTag(ctx, tag, true, 20)
@@ -400,7 +455,17 @@ func (h *Hub) Notify(ctx context.Context, since time.Time) error {
 func (h *Hub) describe(ctx context.Context, t *core.Task) (text, fingerprint string, err error) {
 	switch {
 	case t.State == core.StateDone:
-		return orElse(t.Reason, "办完了。"), "done", nil
+		text := orElse(t.Reason, "办完了。")
+		if h.feedback != nil {
+			worked, err := h.feedback.Worked(ctx, t.ID)
+			if err != nil {
+				return "", "", err
+			}
+			if worked {
+				text += rateHint
+			}
+		}
+		return text, "done", nil
 	case t.State == core.StateFailed:
 		return "这件事没办成：" + orElse(t.Reason, "原因不明"), "failed", nil
 	case t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval:

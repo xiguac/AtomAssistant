@@ -358,3 +358,61 @@ func TestNewHub_渠道名(t *testing.T) {
 		t.Fatalf("没有主人的渠道不应处理任何消息: %v", tasks.log)
 	}
 }
+
+// fakeFeedback 记录聊天里给出的评价。worked 里列出派过活的任务。
+type fakeFeedback struct {
+	worked map[string]bool
+	rated  []string
+}
+
+func (f *fakeFeedback) Worked(_ context.Context, id string) (bool, error) { return f.worked[id], nil }
+func (f *fakeFeedback) RateLatest(_ context.Context, ids []string, good bool) (int, error) {
+	for _, id := range ids {
+		if f.worked[id] {
+			f.rated = append(f.rated, fmt.Sprintf("%s|%v", id, good))
+			return 1, nil
+		}
+	}
+	return 0, nil
+}
+
+func TestRoute_聊天里评价协作模型交的活(t *testing.T) {
+	h, qq, tasks := hub(t)
+	ctx := context.Background()
+	last := func() string { return qq.sent[len(qq.sent)-1].Text }
+
+	// 没配协作模型：口令不会被当成一件新事去办。
+	h.Handle(ctx, "qq", from("OWNER", "/赞", "m1"))
+	if len(tasks.log) != 0 || !strings.Contains(last(), "没有可评价的协作模型") {
+		t.Fatalf("没配协作模型时应直接说明: %v %q", tasks.log, last())
+	}
+
+	fb := &fakeFeedback{worked: map[string]bool{}}
+	h.WithFeedback(fb)
+	h.Handle(ctx, "qq", from("OWNER", "帮我写一份方案", "m2"))
+	task := tasks.tasks[0]
+	// 最近的事里没有协作模型做的部分。
+	h.Handle(ctx, "qq", from("OWNER", "/踩", "m3"))
+	if len(fb.rated) != 0 || !strings.Contains(last(), "没什么可评的") {
+		t.Fatalf("没有协作成果时不应记评价: %v %q", fb.rated, last())
+	}
+
+	// 办完之后，有协作模型参与的事会在结论后面提示可以评价。
+	fb.worked[task.ID] = true
+	task.State, task.Reason, task.UpdatedAt = core.StateDone, "方案写好了。", time.Now()
+	if err := h.Notify(ctx, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(last(), "方案写好了。") || !strings.Contains(last(), "/赞") {
+		t.Fatalf("结论后面应提示可以评价: %q", last())
+	}
+	h.Handle(ctx, "qq", from("OWNER", "/踩", "m4"))
+	if len(fb.rated) != 1 || fb.rated[0] != task.ID+"|false" || last() != "记下了。" {
+		t.Fatalf("应给最近那件事记一个差评: %v %q", fb.rated, last())
+	}
+	// 口令必须是整句：带着别的话的是一件新事。
+	h.Handle(ctx, "qq", from("OWNER", "/踩 的意思是什么", "m5"))
+	if len(fb.rated) != 1 || !strings.HasPrefix(tasks.log[len(tasks.log)-1], "create:") {
+		t.Fatalf("不是整句的口令不应被当成评价: %v %v", fb.rated, tasks.log)
+	}
+}

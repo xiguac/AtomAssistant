@@ -34,7 +34,7 @@ const (
 // 表名只来自这里，不接受外部输入，所以拼进 SQL 是安全的。
 var sectionTables = map[Section][]string{
 	SectionMemory: {"memories", "memory_revisions", "memory_pending", "style_samples", "style_profiles"},
-	SectionTasks:  {"tasks", "task_steps", "audit_log", "schedules", "channel_chats", "channel_notices"},
+	SectionTasks:  {"tasks", "task_steps", "audit_log", "schedules", "channel_chats", "channel_notices", "team_work"},
 	SectionEvents: {"events", "event_subscriptions"},
 	SectionVault:  {"vault_items"},
 	SectionSkills: {"skills"},
