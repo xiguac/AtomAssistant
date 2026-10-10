@@ -176,6 +176,7 @@ func TestWebSearch_较早查到的结论留在上下文里不必再查(t *testin
 	add(ToolWebSearch, `{"query":"慕田峪 交通"}`, `{"answer":"结论：916 路转 h23。"}`, core.StepDone)
 	add(ToolWebSearch, `{"query":"最近一步"}`, `{"answer":"最近的结果"}`, core.StepDone)
 	add(ToolWebSearch, `{"query":"最近两步"}`, `{"answer":"最近的结果"}`, core.StepDone)
+	add(ToolWebSearch, `{"query":"最近三步"}`, `{"answer":"最近的结果"}`, core.StepDone)
 
 	var found *llm.Segment
 	for _, seg := range p.segments(task, history) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
+	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
@@ -708,9 +709,12 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 			Trust:   core.TrustSystem,
 			Source:  "步骤日志摘要",
 		})
-		// 摘要里只有"查过什么"，没有"查到了什么"。搜索结果一旦滑出窗口，
-		// 模型就会把同一件事再查一遍——每查一次都是两三万 token。所以把较早查到的结论留一份。
-		if found := earlierFindings(history[:cut]); found != "" {
+	}
+	// 搜索结果是外部内容，上下文一紧最先被裁掉的就是它——哪怕它就在最近几步里。
+	// 模型看不到查到了什么，就会把同一件事再查一遍，每查一次都是两三万 token。
+	// 所以除了钉住的最近几步，之前每次搜索的结论都留一份钉住的短摘要。
+	if older := len(history) - pinnedSteps; older > 0 {
+		if found := earlierFindings(history[:older]); found != "" {
 			segs = append(segs, llm.Segment{
 				Role:    llm.RoleUser,
 				Content: "较早的联网搜索已经查到下面这些，不要再查同样的事：\n" + found,
@@ -789,9 +793,15 @@ func outputChars(s *core.Step) int {
 	if s.ToolName == ToolDispatch {
 		return dispatchOutputChars
 	}
-	// 搜索结果就是这一步的全部价值，截得太短等于白查。
+	// 搜索结果就是这一步的全部价值，截得太短等于白查；但也不能太长，
+	// 几步搜索就把上下文占满的话，别的内容会被挤出去。
 	if s.ToolName == ToolWebSearch {
-		return 8000
+		return 4000
+	}
+	// 读文件一次返回一段，后面跟着"下一段从哪读"。截断了模型就看不到这一段的结尾和续读位置，
+	// 只会在同一个文件上来回读。
+	if s.ToolName == ToolFileRead || s.ToolName == ToolSheetRead {
+		return 2*files.ChunkBytes + 1000
 	}
 	// 一段 Skill 正文被截断的话，模型拿到的就是半篇说明。
 	if s.ToolName == ToolSkillRead {
