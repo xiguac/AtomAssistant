@@ -177,6 +177,10 @@ atomctl vault put qqbot "QQ 机器人 AppSecret" channel.qq
 （`api_key: vault://deepseek`，保险库那一条授权给 `provider.deepseek`）。保存前可以点「测试连接」看通不通。
 这一页改的就是配置文件里 `providers` / `routes` / `fallback` / `agents` 几节，文件里其余的内容和注释原样保留。
 
+模型服务支持两种接口协议：**OpenAI 兼容**（默认）和 **Anthropic 兼容**，在添加服务时选择。
+两种都提供的服务建议用 OpenAI 兼容：它有"只输出 JSON"的开关，主 AI 的每一步决策都靠这个保证能被解析；
+Anthropic 协议没有这个开关，只能靠提示词约束。
+
 ### 多模型协作
 
 不同的模型擅长的事不一样，而且这件事没法事先知道，只能用出来。所以：

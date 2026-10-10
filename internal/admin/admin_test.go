@@ -501,3 +501,47 @@ func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T)
 		t.Fatalf("最后一个协作模型删掉后不应留下空的一节:\n%s", now)
 	}
 }
+
+func TestAdmin_模型服务的接口协议(t *testing.T) {
+	e := setup(t)
+	e.login()
+	// 一个按 Anthropic Messages 格式应答的假接口。
+	var gotPath, gotKey string
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotKey = r.URL.Path, r.Header.Get("x-api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"m","content":[{"type":"text","text":"收到"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer fake.Close()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+
+	if loc := post("/models/provider", url.Values{"name": {"a"}, "base_url": {fake.URL}, "key": {"k1"}, "protocol": {"grpc"}}); !strings.Contains(loc, "接口协议取值无效") {
+		t.Fatalf("不认识的协议应被拒绝: %s", loc)
+	}
+	if loc := post("/models/provider", url.Values{"name": {"a"}, "base_url": {fake.URL}, "key": {"k1"}, "protocol": {"anthropic"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存失败: %s", loc)
+	}
+	// 之后只改地址、不选协议：协议沿用原来的。
+	if loc := post("/models/provider", url.Values{"name": {"a"}, "base_url": {fake.URL + "/"}, "protocol": {""}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存失败: %s", loc)
+	}
+	if raw, _ := os.ReadFile(e.cfg); !strings.Contains(string(raw), "protocol: anthropic") {
+		t.Fatalf("协议应写进配置并在修改时保留:\n%s", raw)
+	}
+	if loc := post("/models/test", url.Values{"provider": {"a"}, "model": {"m"}}); !strings.Contains(loc, "连接成功") || gotPath != "/v1/messages" || gotKey != "k1" {
+		t.Fatalf("应按 Anthropic 协议发起连接测试: %s %s %s", loc, gotPath, gotKey)
+	}
+	if _, body := e.get("/models"); !strings.Contains(body, "<td>Anthropic</td>") {
+		t.Fatal("模型页应显示协议")
+	}
+	// 改回默认协议：配置里不留这一项。
+	post("/models/provider", url.Values{"name": {"a"}, "base_url": {fake.URL}, "protocol": {"openai"}})
+	if raw, _ := os.ReadFile(e.cfg); strings.Contains(string(raw), "protocol") {
+		t.Fatalf("默认协议不应写进配置:\n%s", raw)
+	}
+}

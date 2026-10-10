@@ -13,6 +13,12 @@ import (
 	"github.com/xiguac/atomhelper/internal/team"
 )
 
+// 模型服务的接口协议。
+const (
+	ProtocolOpenAI    = "openai"
+	ProtocolAnthropic = "anthropic"
+)
+
 // AgentConfig 是一个协作模型：主 AI 可以把一块活派给它。
 //
 // 配了协作模型，主 AI 才有"派活"这个工具。派给谁不由主 AI 决定，由用户的评价决定，
@@ -122,9 +128,11 @@ func (f *File) Provider(ctx context.Context, name string, secrets SecretLender) 
 			return nil, fmt.Errorf("config: provider %s 的密钥环境变量 %s 未设置",
 				pc.Name, pc.APIKeyEnv)
 		}
-		return llm.NewOpenAICompatible(llm.OpenAIConfig{
-			Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Timeout: pc.Timeout,
-		})
+		cfg := llm.OpenAIConfig{Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Timeout: pc.Timeout}
+		if pc.Protocol == ProtocolAnthropic {
+			return llm.NewAnthropicCompatible(cfg)
+		}
+		return llm.NewOpenAICompatible(cfg)
 	}
 	return nil, fmt.Errorf("config: 没有名叫 %s 的模型服务", name)
 }

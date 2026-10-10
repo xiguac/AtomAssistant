@@ -9,11 +9,20 @@
 # 模型服务。密钥只能通过环境变量提供，不允许写在这个文件里——
 # 配置文件常被复制、备份、贴进聊天窗口求助，密钥不该跟着一起走。
 # ---------------------------------------------------------------
+#
+# protocol 是接口协议，不写按 openai：
+#   openai     OpenAI Chat Completions 兼容。base_url 写到 /v1 一级。国内主流服务都支持，建议优先用它：
+#              它有"只输出 JSON"的开关，规划结果能稳定解析。
+#   anthropic  Anthropic Messages 兼容（Claude，以及提供该格式的其他服务）。base_url 写到 /v1 的上一级。
 providers:
   - name: deepseek
     base_url: https://api.deepseek.com/v1
     api_key_env: DEEPSEEK_API_KEY
     timeout: 120s
+  # - name: claude
+  #   base_url: https://api.anthropic.com
+  #   protocol: anthropic
+  #   api_key: vault://claude
 
 # ---------------------------------------------------------------
 # 按用途路由模型。规划用强模型，打标/摘要/抽取用便宜模型——

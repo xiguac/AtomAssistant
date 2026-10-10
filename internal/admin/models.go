@@ -140,13 +140,14 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	base := strings.TrimRight(strings.TrimSpace(r.PostFormValue("base_url")), "/")
 	// 密钥原样存入，只去掉粘贴时常带上的首尾空白——密钥里不会有空白。
 	key := strings.TrimSpace(r.PostFormValue("key"))
+	protocol := r.PostFormValue("protocol")
 	err := func() error {
 		if !vault.ValidLabel(name) || strings.ContainsAny(name, " /") {
 			return errors.New("名称仅支持字母、数字、中文及 _ - .")
 		}
 		u, err := url.Parse(base)
 		if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-			return errors.New("接口地址格式应为 https://…，填写至 /v1 一级，不含 /chat/completions")
+			return errors.New("接口地址格式应为 https://…，不含 /chat/completions 或 /messages")
 		}
 		// 密钥会随每次请求发往这个地址：不是本机就必须加密传输。
 		if u.Scheme == "http" && !loopback(u.Hostname()) {
@@ -167,6 +168,16 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request, _ *view) {
 			pc = m.Providers[at]
 		}
 		pc.BaseURL = base
+		// 没选协议表示沿用原来的（新增时即默认的 OpenAI 兼容）。默认协议不写进配置，保持文件简洁。
+		switch protocol {
+		case "":
+		case config.ProtocolOpenAI:
+			pc.Protocol = ""
+		case config.ProtocolAnthropic:
+			pc.Protocol = protocol
+		default:
+			return errors.New("接口协议取值无效")
+		}
 		if key != "" {
 			// 原来就指着保险库里某一条的，换的就是那一条；否则存成和服务同名的一条。
 			label := name

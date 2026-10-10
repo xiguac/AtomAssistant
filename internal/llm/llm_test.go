@@ -373,3 +373,71 @@ func TestNewOpenAICompatible_缺少必填项时报错(t *testing.T) {
 		}
 	}
 }
+
+func TestAnthropicCompatible_按Messages接口收发(t *testing.T) {
+	var gotKey, gotVersion, gotPath, gotAuth string
+	var gotBody anthropicRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey, gotVersion, gotPath = r.Header.Get("x-api-key"), r.Header.Get("anthropic-version"), r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m-1",
+			"content": []any{
+				map[string]any{"type": "thinking", "thinking": "先想一想"},
+				map[string]any{"type": "text", "text": "你好"},
+			},
+			"usage": map[string]any{"input_tokens": 12, "output_tokens": 8},
+		})
+	}))
+	defer srv.Close()
+
+	// 地址写到 /v1 的上一级和写到 /v1 都认。
+	for _, base := range []string{srv.URL + "/apps/anthropic", srv.URL + "/apps/anthropic/v1/"} {
+		p, err := NewAnthropicCompatible(OpenAIConfig{Name: "test", BaseURL: base, APIKey: "sk-test", Timeout: 5 * time.Second})
+		if err != nil {
+			t.Fatalf("构造失败: %v", err)
+		}
+		resp, err := p.Complete(context.Background(), Request{
+			Model: "m-1", JSONMode: true,
+			Messages: []Message{
+				{Role: RoleSystem, Content: "只输出 JSON"},
+				{Role: RoleUser, Content: "hi"},
+				{Role: RoleAssistant, Content: "嗯"},
+				{Role: RoleTool, Content: "工具结果"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("调用失败: %v", err)
+		}
+		if gotPath != "/apps/anthropic/v1/messages" || gotKey != "sk-test" || gotVersion != anthropicVersion || gotAuth != "" {
+			t.Fatalf("请求的地址或鉴权不对: %s %s %s %q", gotPath, gotKey, gotVersion, gotAuth)
+		}
+		// 系统提示单列；没给长度上限时补默认值；只剩 user / assistant 两种角色。
+		if gotBody.System != "只输出 JSON" || gotBody.MaxTokens != anthropicDefaultMaxTokens || len(gotBody.Messages) != 3 ||
+			gotBody.Messages[0].Role != RoleUser || gotBody.Messages[1].Role != RoleAssistant || gotBody.Messages[2].Role != RoleUser {
+			t.Fatalf("请求体不对: %+v", gotBody)
+		}
+		// 思考过程不算进答案。
+		if resp.Content != "你好" || resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 8 || resp.Model != "m-1" {
+			t.Fatalf("返回解析不对: %+v", resp)
+		}
+	}
+
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`))
+	}))
+	defer bad.Close()
+	p, _ := NewAnthropicCompatible(OpenAIConfig{Name: "test", BaseURL: bad.URL, APIKey: "k"})
+	_, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if !errors.Is(err, ErrUpstream) || !strings.Contains(err.Error(), "invalid x-api-key") {
+		t.Fatalf("上游报错应带出原因: %v", err)
+	}
+	if _, err := p.Complete(context.Background(), Request{Messages: []Message{{Role: RoleSystem, Content: "只有系统提示"}}}); err == nil {
+		t.Fatal("只有系统提示时应报错")
+	}
+	if _, err := NewAnthropicCompatible(OpenAIConfig{Name: "x", BaseURL: "https://x"}); err == nil {
+		t.Fatal("缺少密钥应报错")
+	}
+}

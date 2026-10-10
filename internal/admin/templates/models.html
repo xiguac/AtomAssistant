@@ -6,10 +6,11 @@
 <h2 style="margin-top:0">模型服务 <span class="count">{{len .Providers}}</span></h2>
 <div class="card">
   {{if .Providers}}<table>
-    <thead><tr><th>名称</th><th>接口地址</th><th>密钥</th><th>用途</th><th class="r">操作</th></tr></thead>
+    <thead><tr><th>名称</th><th>接口地址</th><th>协议</th><th>密钥</th><th>用途</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Providers}}<tr>
       <td><b style="font-weight:500">{{.Name}}</b></td>
-      <td><span class="mono">{{.BaseURL}}</span></td>
+      <td><span class="mono" style="word-break:break-all">{{.BaseURL}}</span></td>
+      <td>{{if eq .Protocol "anthropic"}}Anthropic{{else}}OpenAI{{end}}</td>
       <td>{{if .KeyOK}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">未配置</span>{{end}}<div class="note muted" style="margin-top:4px">{{.KeyState}}</div></td>
       <td>{{range .UsedBy}}<span class="chip">{{.}}</span>{{else}}<span class="muted">未使用</span>{{end}}</td>
       <td class="r"><form method="post" action="/models/provider/delete">
@@ -26,8 +27,11 @@
     <div><label for="p-name">名称</label><input id="p-name" type="text" name="name" placeholder="deepseek">
       <div class="help">自定义标识，供下方引用。填写已有名称即为修改该服务</div></div>
     <div><label for="p-url">接口地址</label><input id="p-url" type="text" name="base_url" placeholder="https://api.deepseek.com/v1">
-      <div class="help">OpenAI 兼容接口，填写至 /v1 一级，不含 /chat/completions</div></div>
-    <div class="full"><label for="p-key">API Key</label><input id="p-key" type="password" name="key" autocomplete="new-password">
+      <div class="help">OpenAI 协议填写至 /v1 一级；Anthropic 协议填写至 /v1 的上一级。均不含 /chat/completions 或 /messages</div></div>
+    <div><label for="p-proto">接口协议</label>
+      <select id="p-proto" name="protocol"><option value="">沿用现有设置（新增时为 OpenAI 兼容）</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic 兼容</option></select>
+      <div class="help">两种协议均支持的服务建议选用 OpenAI 兼容：其 JSON 输出模式可保证规划结果可解析</div></div>
+    <div><label for="p-key">API Key</label><input id="p-key" type="password" name="key" autocomplete="new-password">
       <div class="help">保存至保险库，保存后不可查看。修改已有服务时留空表示沿用原密钥</div></div>
   </div>
   <div class="band foot"><span class="note muted">密钥仅发送至此处填写的接口地址。</span><button class="btn">保存</button></div>

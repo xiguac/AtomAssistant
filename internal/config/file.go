@@ -238,6 +238,9 @@ func (f *File) Mail(secrets SecretLender) (*mail.Client, error) {
 type ProviderConfig struct {
 	Name    string `yaml:"name"`
 	BaseURL string `yaml:"base_url"`
+	// Protocol 是接口协议：openai（默认，OpenAI Chat Completions 兼容）/ anthropic（Anthropic Messages 兼容）。
+	// 两种都支持的服务优先用 openai：它有"只输出 JSON"的开关，规划和提炼都靠这个保证输出能被解析。
+	Protocol string `yaml:"protocol,omitempty"`
 	// APIKeyEnv 是存放密钥的环境变量名。
 	//
 	// 刻意不允许在配置文件里直接写密钥：配置文件常被复制、备份、
@@ -382,6 +385,11 @@ func (f *File) validate() error {
 	for _, p := range f.Providers {
 		if p.Name == "" || p.BaseURL == "" || (p.APIKeyEnv == "") == (p.APIKey == "") {
 			return fmt.Errorf("config: provider 必须配齐 name / base_url，密钥用 api_key_env 或 api_key（保险库句柄）二选一")
+		}
+		switch p.Protocol {
+		case "", ProtocolOpenAI, ProtocolAnthropic:
+		default:
+			return fmt.Errorf("config: provider %s 的 protocol 取值非法: %q（可选 openai / anthropic）", p.Name, p.Protocol)
 		}
 		if p.APIKey != "" && !strings.HasPrefix(p.APIKey, "vault://") {
 			return fmt.Errorf("config: provider %s 的 api_key 只能写保险库句柄（vault://名字），不能直接写密钥", p.Name)
