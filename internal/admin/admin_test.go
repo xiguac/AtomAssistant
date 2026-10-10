@@ -935,3 +935,33 @@ func TestAdmin_连接测试在后台提交不刷新页面(t *testing.T) {
 		t.Fatal("日历和邮件的连接测试都应在后台提交，且未配置时也能测")
 	}
 }
+
+func TestAdmin_经HTTPS代理访问时会话只走加密连接(t *testing.T) {
+	e := setup(t)
+	login := func(proto string) *http.Cookie {
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/login", strings.NewReader(url.Values{"password": {password}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if proto != "" {
+			req.Header.Set("X-Forwarded-Proto", proto)
+		}
+		resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		for _, c := range resp.Cookies() {
+			if c.Name == cookieName {
+				return c
+			}
+		}
+		t.Fatal("登录后应下发会话")
+		return nil
+	}
+	if c := login("https"); !c.Secure || !c.HttpOnly {
+		t.Fatalf("经 HTTPS 代理登录时会话应标成仅限加密连接: %+v", c)
+	}
+	// 经 SSH 隧道直接访问（明文、本机）时不能标，否则浏览器不会带上它，登不进去。
+	if c := login(""); c.Secure {
+		t.Fatal("直接经本机明文访问时不应标成仅限加密连接")
+	}
+}

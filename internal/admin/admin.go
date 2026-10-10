@@ -421,7 +421,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.sessions[id] = session{csrf: csrf, expires: now.Add(sessionTTL)}
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: id, Path: "/", HttpOnly: true, Secure: s.opts.TLS,
+		// 前面有代理替后台提供 HTTPS 时（代理会带上这个头），cookie 同样只许走加密连接。
+		// 这个头是请求方说了算的，但它只会让 cookie 管得更严，冒充它占不到便宜。
+		Name: cookieName, Value: id, Path: "/", HttpOnly: true,
+		Secure:   s.opts.TLS || r.Header.Get("X-Forwarded-Proto") == "https",
 		SameSite: http.SameSiteStrictMode, MaxAge: int(sessionTTL.Seconds()),
 	})
 	s.opts.Log.Info("后台登录成功", "来自", r.RemoteAddr)
