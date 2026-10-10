@@ -114,12 +114,23 @@ channels:
 		"缺 app_id": "channels:\n  - {name: qq, type: qq, secret: 'vault://x'}\n",
 		"名字含斜杠":    "channels:\n  - {name: a/b, type: qq, app_id: '1', secret: 'vault://x'}\n",
 	} {
-		f, err := LoadFile(writeConfig(t, body))
-		if err != nil {
-			t.Fatalf("%s: 加载失败: %v", name, err)
+		// 这些错在加载时就拦下：后台保存配置只过加载这一道校验。
+		if _, err := LoadFile(writeConfig(t, body)); err == nil {
+			t.Errorf("%s: 应在加载时被拒绝", name)
 		}
-		if _, err := f.BuildChannels(lender, nil); err == nil {
-			t.Errorf("%s: 应被拒绝", name)
-		}
+	}
+
+	// 后台只改渠道一节，其余内容原样保留。
+	raw := []byte("# 说明\nreply:\n  style: concise\n")
+	out, err := WriteChannels(raw, []ChannelConfig{{Name: "qq", Type: "qq", AppID: "1", Secret: "vault://channel.qq", Owners: []string{"A"}}})
+	if err != nil || !strings.HasPrefix(string(out), string(raw)) || strings.Contains(string(out), "sandbox") {
+		t.Fatalf("写回渠道一节不对: %v\n%s", err, out)
+	}
+	back, err := ReadChannels(out)
+	if err != nil || len(back) != 1 || back[0].AppID != "1" || back[0].Owners[0] != "A" {
+		t.Fatalf("读回渠道一节不对: %+v %v", back, err)
+	}
+	if gone, err := WriteChannels(out, nil); err != nil || string(gone) != string(raw) {
+		t.Fatalf("删光渠道后应回到原样: %v\n%q", err, gone)
 	}
 }

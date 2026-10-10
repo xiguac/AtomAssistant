@@ -545,3 +545,78 @@ func TestAdmin_模型服务的接口协议(t *testing.T) {
 		t.Fatalf("默认协议不应写进配置:\n%s", raw)
 	}
 }
+
+func TestAdmin_渠道页接入机器人并指定主人(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	before, _ := os.ReadFile(e.cfg)
+
+	if loc := post("/channels", url.Values{"name": {"qq"}, "type": {"qq"}, "app_id": {"1020"}}); !strings.Contains(loc, "必须填写 AppSecret") {
+		t.Fatalf("新增渠道没有凭据应被拒绝: %s", loc)
+	}
+	if loc := post("/channels", url.Values{"name": {"wx"}, "type": {"wechat"}, "app_id": {"1"}, "secret": {"s"}}); !strings.Contains(loc, "不支持") {
+		t.Fatalf("不支持的类型应被拒绝: %s", loc)
+	}
+	if loc := post("/channels", url.Values{"name": {"qq"}, "type": {"qq"}, "app_id": {"1020"}, "secret": {"app-secret-1"}, "sandbox": {"1"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存渠道失败: %s", loc)
+	}
+	raw, _ := os.ReadFile(e.cfg)
+	text := string(raw)
+	if strings.Contains(text, "app-secret-1") || !strings.HasPrefix(text, string(before)) ||
+		!strings.Contains(text, "secret: vault://channel.qq") || !strings.Contains(text, "sandbox: true") {
+		t.Fatalf("凭据应进保险库、配置里只留句柄，其余内容不动:\n%s", text)
+	}
+	// 保存渠道不会顺带指定主人：主人只能单独、明确地添加。
+	file, err := config.LoadFile(e.cfg)
+	if err != nil || len(file.Channels) != 1 || len(file.Channels[0].Owners) != 0 {
+		t.Fatalf("新渠道不应有主人: %+v %v", file, err)
+	}
+	// 凭据授权给这个渠道自己，启动时取得出来。
+	bindings, err := file.BuildChannels(e.vault, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("保存出来的渠道应能构造: %v", err)
+	}
+	if _, body := e.get("/channels"); !strings.Contains(body, "尚未指定主人") || !strings.Contains(body, "凭据已配置") || strings.Contains(body, "app-secret-1") {
+		t.Fatal("渠道页应提示尚无主人，且不显示凭据")
+	}
+
+	if loc := post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"有 空格"}}); !strings.Contains(loc, "不含空白字符") {
+		t.Fatalf("带空白的标识应被拒绝: %s", loc)
+	}
+	post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"OPENID-A"}})
+	post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"OPENID-B"}})
+	post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"OPENID-A"}}) // 重复添加不产生两条
+	// 修改渠道（换 AppID、不填凭据）：主人名单和凭据都保留。
+	if loc := post("/channels", url.Values{"name": {"qq"}, "type": {"qq"}, "app_id": {"2030"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("修改渠道失败: %s", loc)
+	}
+	post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"OPENID-B"}, "remove": {"1"}})
+	file, err = config.LoadFile(e.cfg)
+	if err != nil || file.Channels[0].AppID != "2030" || file.Channels[0].Sandbox ||
+		strings.Join(file.Channels[0].Owners, ",") != "OPENID-A" || file.Channels[0].Secret != "vault://channel.qq" {
+		t.Fatalf("修改后的渠道不对: %+v %v", file.Channels, err)
+	}
+
+	if loc := post("/channels/delete", url.Values{"name": {"qq"}}); !strings.Contains(loc, "已删除") {
+		t.Fatalf("删除渠道失败: %s", loc)
+	}
+	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
+		t.Fatalf("删除后配置应回到原样:\n%q\n%q", now, before)
+	}
+	// 不登录碰不到这些表单。
+	fresh := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := fresh.PostForm(e.srv.URL+"/channels/owner", url.Values{"name": {"qq"}, "owner": {"X"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "/login") {
+		t.Fatalf("未登录应被引到登录页: %d", resp.StatusCode)
+	}
+}

@@ -205,8 +205,8 @@ func (m *Models) UsedBy(provider string) []string {
 // modelKeys 是 Models 管的那几节在配置文件里的名字。
 var modelKeys = []string{"providers", "routes", "fallback", "agents"}
 
-func isModelKey(key string) bool {
-	for _, k := range modelKeys {
+func hasKey(keys []string, key string) bool {
+	for _, k := range keys {
 		if k == key {
 			return true
 		}
@@ -223,11 +223,49 @@ func ReadModels(raw []byte) (Models, error) {
 	return m, nil
 }
 
-// WriteModels 把模型相关的几节写回配置文件的原文。
+// WriteModels 把模型相关的几节写回配置文件的原文，其余的部分原样保留。
+func WriteModels(raw []byte, m Models) ([]byte, error) {
+	values := map[string]any{}
+	if len(m.Providers) > 0 {
+		values["providers"] = m.Providers
+	}
+	if len(m.Routes) > 0 {
+		values["routes"] = m.Routes
+	}
+	if m.Fallback != nil {
+		values["fallback"] = m.Fallback
+	}
+	if len(m.Agents) > 0 {
+		values["agents"] = m.Agents
+	}
+	return writeSections(raw, modelKeys, values)
+}
+
+// ReadChannels 从配置文件的原文里读出消息渠道一节。
+func ReadChannels(raw []byte) ([]ChannelConfig, error) {
+	var f struct {
+		Channels []ChannelConfig `yaml:"channels"`
+	}
+	if err := yaml.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("config: 解析配置失败: %w", err)
+	}
+	return f.Channels, nil
+}
+
+// WriteChannels 把消息渠道一节写回配置文件的原文，其余的部分原样保留。
+func WriteChannels(raw []byte, channels []ChannelConfig) ([]byte, error) {
+	values := map[string]any{}
+	if len(channels) > 0 {
+		values["channels"] = channels
+	}
+	return writeSections(raw, []string{"channels"}, values)
+}
+
+// writeSections 把最外层的若干小节写回配置文件的原文。values 里没有的小节会被删掉。
 //
 // 只替换这几节各自占的那几行，其余的部分一个字都不动——注释、空行、排版都是用户自己的。
 // 被替换的小节内部的注释留不住。
-func WriteModels(raw []byte, m Models) ([]byte, error) {
+func writeSections(raw []byte, keys []string, values map[string]any) ([]byte, error) {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
@@ -257,19 +295,6 @@ func WriteModels(raw []byte, m Models) ([]byte, error) {
 		}
 	}
 
-	values := map[string]any{}
-	if len(m.Providers) > 0 {
-		values["providers"] = m.Providers
-	}
-	if len(m.Routes) > 0 {
-		values["routes"] = m.Routes
-	}
-	if m.Fallback != nil {
-		values["fallback"] = m.Fallback
-	}
-	if len(m.Agents) > 0 {
-		values["agents"] = m.Agents
-	}
 	render := func(key string) ([]string, error) {
 		v, ok := values[key]
 		if !ok {
@@ -291,7 +316,7 @@ func WriteModels(raw []byte, m Models) ([]byte, error) {
 	present := map[string]bool{}
 	for i := len(tops) - 1; i >= 0; i-- {
 		key := tops[i].key
-		if !isModelKey(key) {
+		if !hasKey(keys, key) {
 			continue
 		}
 		present[key] = true
@@ -310,7 +335,7 @@ func WriteModels(raw []byte, m Models) ([]byte, error) {
 		lines = append(lines[:tops[i].start], append(fresh, lines[end:]...)...)
 	}
 	// 原来没有的小节接在最后。
-	for _, key := range modelKeys {
+	for _, key := range keys {
 		if present[key] {
 			continue
 		}
@@ -325,6 +350,10 @@ func WriteModels(raw []byte, m Models) ([]byte, error) {
 			lines = append(lines, "")
 		}
 		lines = append(lines, fresh...)
+	}
+	// 删掉最后一节之后，它前面那行空行就成了结尾的空行，一并去掉。
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
 	}
 	if len(lines) == 0 {
 		return nil, nil

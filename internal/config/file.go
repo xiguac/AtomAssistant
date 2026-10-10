@@ -79,12 +79,12 @@ type ChannelConfig struct {
 	Secret string `yaml:"secret"`
 	// Owners 是主人在这个渠道里的账号标识。只有他们发来的消息会被处理。
 	// 第一次接入时留空：给机器人发一句话，它会把你的标识回给你。
-	Owners []string `yaml:"owners"`
+	Owners []string `yaml:"owners,omitempty"`
 	// Sandbox 为真时连 QQ 的沙箱环境（机器人还没上线、只在沙箱里调试时用）。
-	Sandbox bool `yaml:"sandbox"`
+	Sandbox bool `yaml:"sandbox,omitempty"`
 	// APIBase 与 TokenURL 覆盖平台接口的地址，只在对着自建的模拟服务调试时才需要。
-	APIBase  string `yaml:"api_base"`
-	TokenURL string `yaml:"token_url"`
+	APIBase  string `yaml:"api_base,omitempty"`
+	TokenURL string `yaml:"token_url,omitempty"`
 }
 
 // qqAPIBase 定出 QQ 接口的地址：显式指定的优先，其次是沙箱，都没有则用正式环境。
@@ -100,6 +100,35 @@ func (c ChannelConfig) qqAPIBase() string {
 
 // VaultUser 返回这个渠道在保险库授权名单里的名字。
 func (c ChannelConfig) VaultUser() string { return "channel." + c.Name }
+
+// ChannelTypes 是目前支持的渠道种类。
+var ChannelTypes = []string{"qq"}
+
+// validateChannels 校验消息渠道一节。
+//
+// 在加载时就查：后台保存配置只过这一道校验，写错的渠道要在保存时拦下，而不是重启之后助手起不来。
+func (f *File) validateChannels() error {
+	seen := map[string]bool{}
+	for _, c := range f.Channels {
+		if c.Name == "" || strings.ContainsAny(c.Name, "/ ") {
+			return fmt.Errorf("config: 渠道名 %q 不合法（不能为空，不能含 / 和空格）", c.Name)
+		}
+		if seen[c.Name] {
+			return fmt.Errorf("config: 渠道 %s 重复", c.Name)
+		}
+		seen[c.Name] = true
+		if c.Type != "qq" {
+			return fmt.Errorf("config: 渠道 %s 的类型 %q 不支持（目前支持 qq）", c.Name, c.Type)
+		}
+		if c.AppID == "" {
+			return fmt.Errorf("config: 渠道 %s 缺少 app_id", c.Name)
+		}
+		if !strings.HasPrefix(c.Secret, "vault://") {
+			return fmt.Errorf("config: 渠道 %s 的 secret 只能写保险库句柄（vault://名字），不能直接写密钥", c.Name)
+		}
+	}
+	return nil
+}
 
 // BuildChannels 按配置构造消息渠道。
 func (f *File) BuildChannels(secrets SecretLender, log *slog.Logger) ([]channel.Binding, error) {
@@ -396,6 +425,9 @@ func (f *File) validate() error {
 		}
 	}
 	if err := f.validateModels(); err != nil {
+		return err
+	}
+	if err := f.validateChannels(); err != nil {
 		return err
 	}
 	for _, t := range f.Tools {
