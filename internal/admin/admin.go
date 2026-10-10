@@ -92,6 +92,8 @@ type Server struct {
 
 	mu       sync.Mutex
 	sessions map[string]session
+	// hash 是当前生效的密码摘要：后台改过的优先，否则是环境变量里的。
+	hash     string
 	failures int
 	lockedAt time.Time
 }
@@ -137,6 +139,9 @@ func New(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("admin: ATOM_ADMIN_PASSWORD_HASH 不是有效的 bcrypt 摘要（用 atomctl admin passwd 生成）")
 	}
 	s := &Server{opts: opts, sessions: make(map[string]session), tmpl: make(map[string]*template.Template)}
+	if err := s.loadPassword(); err != nil {
+		return nil, err
+	}
 	funcs := template.FuncMap{
 		"when": func(t time.Time) string {
 			if t.IsZero() {
@@ -298,6 +303,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /connectors/holidays", auth(s.holidaysSave))
 	mux.HandleFunc("POST /connectors/disable", auth(s.connectorDisable))
 	mux.HandleFunc("POST /connectors/test", auth(s.connectorTest))
+	mux.HandleFunc("GET /password", auth(s.passwordPage))
+	mux.HandleFunc("POST /password", auth(s.passwordChange))
 	mux.HandleFunc("GET /models", auth(s.modelsPage))
 	mux.HandleFunc("POST /models/provider", auth(s.providerSave))
 	mux.HandleFunc("POST /models/provider/delete", auth(s.providerDelete))
@@ -373,7 +380,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	password := r.PostFormValue("password")
-	if bcrypt.CompareHashAndPassword([]byte(s.opts.PasswordHash), []byte(password)) != nil {
+	s.mu.Lock()
+	hash := s.hash
+	s.mu.Unlock()
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		s.mu.Lock()
 		s.failures++
 		s.lockedAt = time.Now()

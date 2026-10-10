@@ -37,7 +37,8 @@ svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; st
 .nav a { display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:8px; color:var(--text-2); font-size:13px; font-weight:500; }
 .nav a:hover { background:var(--canvas); color:var(--text); }
 .nav a.on { background:var(--wash); color:var(--primary); }
-.side-foot { margin-top:auto; border-top:1px solid var(--line); padding:14px 20px; display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--text-2); }
+.side-foot { margin-top:auto; border-top:1px solid var(--line); padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; font-size:12px; color:var(--text-2); }
+.side-foot > span { flex-basis:100%; }
 .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--ok); margin-right:8px; vertical-align:middle; }
 .dot.warn { background:var(--warn-bar); }
 .linkbtn { background:none; border:0; padding:0; font:inherit; font-size:12px; color:var(--text-2); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
@@ -215,6 +216,7 @@ details[open] summary { color:var(--text-2); }
   </nav>
   <div class="side-foot">
     <span>{{if .Status}}<i class="dot warn"></i>服务未运行{{else}}<i class="dot"></i>服务运行中{{end}}</span>
+    <a class="linkbtn" href="/password">修改密码</a>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="linkbtn"><svg class="ico" viewBox="0 0 24 24"><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10"/><path d="M15 8l4 4-4 4M19 12H9.5"/></svg>退出</button></form>
   </div>

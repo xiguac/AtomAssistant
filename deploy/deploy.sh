@@ -116,6 +116,8 @@ case "${1:-release}" in
       HASH=\$(sudo bash -c 'set -a; . /etc/atomhelper/env; set +a; /opt/atomhelper/current/atomctl admin passwd 2>/dev/null')
       [ -n \"\$HASH\" ] || { echo '生成摘要失败（口令太短？）' >&2; exit 1; }
       sudo sed -i '/^ATOM_ADMIN_PASSWORD_HASH=/d' /etc/atomhelper/env
+      # 在后台页面里改过的密码存在这个文件里并且优先生效；这里重设时把它删掉，新设的才算数。
+      sudo rm -f /var/lib/atomhelper/config/admin-password.hash
       printf 'ATOM_ADMIN_PASSWORD_HASH=%s\n' \"\$HASH\" | sudo tee -a /etc/atomhelper/env >/dev/null
       sudo systemctl restart atomhelper"
     unset PW PW2

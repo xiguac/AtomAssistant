@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/xiguac/atomhelper/internal/channel"
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
@@ -776,5 +778,92 @@ func TestAdmin_保存模型服务时同时做连接测试(t *testing.T) {
 	// 协作模型的表单里也能直接测试。
 	if _, body := e.get("/models"); strings.Count(body, `formaction="/models/test"`) < 2 || !strings.Contains(body, `name="test_model"`) {
 		t.Fatal("主 AI、协作模型、模型服务三处都应能做连接测试")
+	}
+}
+
+func TestAdmin_在后台修改登录密码(t *testing.T) {
+	e := setup(t)
+	e.login()
+	const next = "a much better passphrase"
+	post := func(form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post("/password", form)
+		return loc
+	}
+	// 另一处已登录的会话：改密码之后应当失效。
+	jar, _ := cookiejar.New(nil)
+	other := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if resp, err := other.PostForm(e.srv.URL+"/login", url.Values{"password": {password}}); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+
+	for name, c := range map[string]struct {
+		form url.Values
+		want string
+	}{
+		"当前密码不对": {url.Values{"current": {"wrong"}, "new": {next}, "confirm": {next}}, "当前密码错误"},
+		"两次不一致":  {url.Values{"current": {password}, "new": {next}, "confirm": {next + "x"}}, "不一致"},
+		"太短":     {url.Values{"current": {password}, "new": {"short"}, "confirm": {"short"}}, "至少需要 10 个字符"},
+		"和原来一样":  {url.Values{"current": {password}, "new": {password}, "confirm": {password}}, "不能与当前密码相同"},
+	} {
+		if loc := post(c.form); !strings.Contains(loc, c.want) {
+			t.Errorf("%s: 应被拒绝并说明: %s", name, loc)
+		}
+	}
+	if loc := post(url.Values{"current": {password}, "new": {next}, "confirm": {next}}); !strings.Contains(loc, "登录密码已修改") {
+		t.Fatalf("修改失败: %s", loc)
+	}
+	// 摘要存在配置文件旁边，不是明文。
+	file := filepath.Join(filepath.Dir(e.cfg), passwordFileName)
+	raw, err := os.ReadFile(file)
+	if err != nil || strings.Contains(string(raw), next) || !strings.HasPrefix(string(raw), "$2") {
+		t.Fatalf("新密码应以摘要形式保存: %v", err)
+	}
+	// 正在用的会话还在；别处的会话被踢出。
+	if code, _ := e.get("/"); code != http.StatusOK {
+		t.Fatalf("当前会话应保留: %d", code)
+	}
+	resp, err := other.Get(e.srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("其他会话应被退出: %d", resp.StatusCode)
+	}
+	// 旧密码不能再登录，新密码可以。
+	login := func(pw string) int {
+		c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		resp, err := c.PostForm(e.srv.URL+"/login", url.Values{"password": {pw}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if login(password) != http.StatusUnauthorized || login(next) != http.StatusSeeOther {
+		t.Fatal("修改后应只有新密码能登录")
+	}
+
+	// 重启之后仍然以改过的为准；文件坏了要明说，不悄悄退回旧密码。
+	opts := Options{Store: e.store, Vault: e.vault, ConfigPath: e.cfg, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	opts.PasswordHash, _ = HashPassword(password)
+	again, err := New(opts)
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(again.hash), []byte(next)) != nil {
+		t.Fatalf("重启后应使用后台改过的密码: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(opts); err == nil {
+		t.Fatal("密码文件损坏时应拒绝启动并说明")
+	}
+	// 删掉文件：环境变量里的那个重新生效（忘记密码时的退路）。
+	_ = os.Remove(file)
+	if again, err := New(opts); err != nil || bcrypt.CompareHashAndPassword([]byte(again.hash), []byte(password)) != nil {
+		t.Fatalf("删除密码文件后应回到环境变量里的密码: %v", err)
 	}
 }
