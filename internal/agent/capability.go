@@ -21,8 +21,10 @@ import (
 type CapabilityService interface {
 	SearchSkills(ctx context.Context, query string, limit int) ([]market.SkillHit, error)
 	SearchServers(ctx context.Context, query string, limit int) ([]market.ServerHit, error)
-	InstallSkill(ctx context.Context, id string) (*skill.Skill, error)
-	InstallServer(ctx context.Context, registryName string) (*market.Server, []string, error)
+	// 两个安装方法：低风险的直接装上；有外传风险的不装，返回 Pending。
+	// accept 为真表示用户已经批准，装上先前搁置的那一份。
+	InstallSkill(ctx context.Context, id string, accept bool) (*skill.Skill, *market.Pending, error)
+	InstallServer(ctx context.Context, registryName string, accept bool) (*market.Server, []string, *market.Pending, error)
 }
 
 // SkillLibrary 读取已安装的 Skill，由 skill.Store 提供。
@@ -43,6 +45,9 @@ const capabilityRule = `缺少能力时自己去找，不要直接说办不到�
   搜索词用英文关键词，简短具体（如 weather、meeting notes）；一次没找到可以换个说法再找一两次。
 - 找到合适的就用 ` + ToolCapabilityInstall + ` 装上。安装前系统会做安全扫描，没通过的装不上——
   那就换一个，不要想办法绕过，也不要反复装同一个。
+- 扫描通过的分两档：低风险的直接装上；会把用户的信息传到外部的不会直接装，结果里是
+  needs_approval 和风险点。这时先看有没有风险更低的替代；确实要装它，就带 accept_risk=true 再调一次，
+  系统会把风险点交给用户审批。不要在第一次安装时就带 accept_risk，也不要替用户判断风险可以接受。
 - Skill 是一篇办事的说明，装好后用 ` + ToolSkillRead + ` 读它，按里面的办法用你已有的工具去办；
   它提到的脚本和命令你运行不了，跳过这些部分，只取用得上的做法。
   MCP server 装好后，它的工具会直接出现在可用工具里。
@@ -57,9 +62,12 @@ var capabilityToolset = []mcpgw.ToolInfo{
 			`"kind":{"type":"string","enum":["skill","mcp"],"description":"只找其中一类，不写两类都找"}},"required":["query"]}`,
 		core.SideEffectReadOnly),
 	builtin(ToolCapabilityInstall,
-		`安装 `+ToolCapabilitySearch+` 找到的一个 Skill 或 MCP server。安装前会做安全扫描，扫描不通过就装不上。装上后长期保留。`,
+		`安装 `+ToolCapabilitySearch+` 找到的一个 Skill 或 MCP server。安装前会做安全扫描，扫描不通过就装不上。`+
+			`低风险的直接装上并长期保留；有外传风险的返回 needs_approval 和风险点，不会装上。`,
 		`{"type":"object","properties":{"kind":{"type":"string","enum":["skill","mcp"]},`+
-			`"id":{"type":"string","description":"搜索结果里的 id（Skill）或 name（MCP server），原样填写"}},"required":["kind","id"]}`,
+			`"id":{"type":"string","description":"搜索结果里的 id（Skill）或 name（MCP server），原样填写"},`+
+			`"accept_risk":{"type":"boolean","description":"只有上一次安装它返回了 needs_approval 之后才填 true，填了会请用户审批"}},`+
+			`"required":["kind","id"]}`,
 		core.SideEffectReversible),
 	builtin(ToolSkillRead,
 		`读一个已安装的 Skill 的全文。长的分段返回：结果里有 next_offset 时带上它再读一次。`+
@@ -72,11 +80,12 @@ func isCapabilityTool(name string) bool {
 	return name == ToolCapabilitySearch || name == ToolCapabilityInstall || name == ToolSkillRead
 }
 
-// CapabilityDefaults 给安装加上默认放行：用户没有为它单独写规则时，扫描通过就直接装。
+// CapabilityDefaults 给安装加上默认放行：用户没有为它单独写规则时，扫描通过的低风险安装直接执行。
 //
-// 这是用户的要求：缺什么自己找、查过没问题就装，不必每次来问。
-// 放行的只是"装上"——装上的 Skill 不带来任何工具，装上的 MCP server 只有固定的保守边界
-// （见 mcpgw 的 unreviewedGrant）。和日历一样，任务读过外部内容之后不适用（见 Approver.drivenBy）。
+// 这是用户的要求：缺什么自己找，低风险的自动装，会把本机信息外传的要他批准。
+// 这里放行的只是前一档。后一档不归规则管：安装器评估出风险后会把安装搁置，
+// 再装必须带 accept_risk，而带这个参数的安装一律要用户批准（见 Approver.installRisk）。
+// 装上的 Skill 不带来任何工具，装上的 MCP server 只有固定的保守边界（见 mcpgw 的 unreviewedGrant）。
 func CapabilityDefaults(p *policy.Policy) {
 	for _, r := range p.Rules {
 		if r.Tool == ToolCapabilityInstall {
@@ -137,6 +146,8 @@ type capabilityInput struct {
 	Kind   string `json:"kind"`
 	ID     string `json:"id"`
 	Offset int    `json:"offset"`
+	// AcceptRisk 为真表示这是一次要用户批准的、有风险的安装。
+	AcceptRisk bool `json:"accept_risk"`
 }
 
 const (
@@ -210,24 +221,38 @@ func (a *Actuator) installCapability(ctx context.Context, in capabilityInput) (j
 	}
 	switch in.Kind {
 	case "skill":
-		sk, err := a.capabilities.InstallSkill(ctx, id)
+		sk, pending, err := a.capabilities.InstallSkill(ctx, id, in.AcceptRisk)
 		if err != nil {
 			return nil, err
+		}
+		if pending != nil {
+			return needsApproval(pending)
 		}
 		return json.Marshal(map[string]any{
 			"installed": "skill", "id": sk.ID, "scan": "通过",
 			"next": "用 " + ToolSkillRead + " 读它",
 		})
 	case "mcp":
-		srv, tools, err := a.capabilities.InstallServer(ctx, id)
+		srv, tools, pending, err := a.capabilities.InstallServer(ctx, id, in.AcceptRisk)
 		if err != nil {
 			return nil, err
+		}
+		if pending != nil {
+			return needsApproval(pending)
 		}
 		return json.Marshal(map[string]any{
 			"installed": "mcp", "server": srv.Name, "scan": "通过", "tools": tools,
 		})
 	}
 	return nil, fmt.Errorf("agent: kind 只能是 skill 或 mcp，实际是 %q", in.Kind)
+}
+
+// needsApproval 是一次被搁置的安装交回给模型的结果。
+func needsApproval(p *market.Pending) (json.RawMessage, error) {
+	return json.Marshal(map[string]any{
+		"installed": false, "needs_approval": true, "scan": "通过，但有风险", "risks": p.Risks,
+		"next": "没有装上。先看有没有风险更低的替代；确实要装它，带 accept_risk=true 再调一次，由用户审批",
+	})
 }
 
 func (a *Actuator) readSkill(ctx context.Context, in capabilityInput) (json.RawMessage, error) {

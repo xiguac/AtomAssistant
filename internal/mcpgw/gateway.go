@@ -268,6 +268,61 @@ func unreviewedGrant(name, rawURL string, t *mcp.Tool) policy.ToolGrant {
 	return g
 }
 
+// ProbedTool 是 Probe 看到的一个工具。
+type ProbedTool struct {
+	// Name 是带命名空间的全名。
+	Name string
+	// ReadOnly 为真表示 server 自称这个工具只读。
+	ReadOnly bool
+	// Params 是它的入参名。
+	Params []string
+}
+
+// Probe 连上一个 server 看它提供哪些工具，看完就断开。
+//
+// 它不登记任何东西：目录、授权表都不变，工具也调不了。
+// 安装之前靠它判断风险——一个 server 会不会把东西带出去，要看它实际有什么工具。
+func (g *Gateway) Probe(ctx context.Context, spec ServerSpec) ([]ProbedTool, error) {
+	transport, err := buildTransport(spec)
+	if err != nil {
+		return nil, err
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: g.clientName, Version: g.clientVersion}, nil)
+	cs, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return nil, fmt.Errorf("mcpgw: 连接 %s 失败: %w", spec.Name, err)
+	}
+	defer cs.Close()
+	tools, err := cs.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		return nil, fmt.Errorf("mcpgw: 读取 %s 的工具列表失败: %w", spec.Name, err)
+	}
+	return probed(spec.Name, tools.Tools), nil
+}
+
+func probed(server string, tools []*mcp.Tool) []ProbedTool {
+	out := make([]ProbedTool, 0, len(tools))
+	for _, t := range tools {
+		if t == nil || t.Name == "" {
+			continue
+		}
+		p := ProbedTool{Name: server + "." + t.Name, ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint}
+		// 入参名从 schema 的 properties 里取；schema 写得不规范就留空，不影响风险判断。
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if raw, err := json.Marshal(t.InputSchema); err == nil && json.Unmarshal(raw, &schema) == nil {
+			for name := range schema.Properties {
+				p.Params = append(p.Params, name)
+			}
+			sort.Strings(p.Params)
+		}
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
 // ToolsOf 返回某个 server 登记在目录里的工具全名。
 func (g *Gateway) ToolsOf(server string) []string {
 	g.mu.RLock()

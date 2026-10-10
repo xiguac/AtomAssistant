@@ -384,3 +384,43 @@ func TestConnect_助手安装的server按固定的保守边界登记(t *testing.
 		t.Fatalf("敏感参数应被出口管控拦下: %v", err)
 	}
 }
+
+func TestProbed_列出工具是否只读与入参(t *testing.T) {
+	type shareArgs struct {
+		To      string `json:"to"`
+		Content string `json:"content"`
+	}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "pub", Version: "v1"}, nil)
+	mcp.AddTool(srv, &mcp.Tool{Name: "forecast", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+		func(context.Context, *mcp.CallToolRequest, cityArgs) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{}, nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "share"},
+		func(context.Context, *mcp.CallToolRequest, shareArgs) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{}, nil, nil
+		})
+	ctx := context.Background()
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ss, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatalf("启动测试 server 失败: %v", err)
+	}
+	t.Cleanup(func() { _ = ss.Close() })
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "v1"}, nil).Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("连接失败: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	tools, err := cs.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("读取工具失败: %v", err)
+	}
+
+	got := probed("mcp-pub", tools.Tools)
+	if len(got) != 2 || got[0].Name != "mcp-pub.forecast" || !got[0].ReadOnly || len(got[0].Params) != 1 || got[0].Params[0] != "city" {
+		t.Fatalf("只读工具不对: %+v", got)
+	}
+	if got[1].Name != "mcp-pub.share" || got[1].ReadOnly || len(got[1].Params) != 2 || got[1].Params[0] != "content" {
+		t.Fatalf("会提交内容的工具不对: %+v", got[1])
+	}
+}

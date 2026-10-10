@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ type Approver struct {
 	classifier *policy.Classifier
 	usage      UsageTracker
 	history    StepLister
+	risks      InstallRisks
 	now        func() time.Time
 }
 
@@ -41,6 +43,43 @@ type StepLister interface {
 func (a *Approver) WithHistory(s StepLister) *Approver {
 	a.history = s
 	return a
+}
+
+// InstallRisks 给出一次被搁置的安装的风险点，由 *market.Installer 提供。
+type InstallRisks interface {
+	PendingRisks(kind, id string) []string
+}
+
+// WithInstallRisks 让审批在请用户批准一次有风险的安装时，能把风险点一条条列给他。
+func (a *Approver) WithInstallRisks(r InstallRisks) *Approver {
+	a.risks = r
+	return a
+}
+
+// installRisk 判断这个动作是不是"用户批准后才能装"的那种安装，是的话给出展示给用户的理由。
+//
+// 认的是参数里的 accept_risk：安装器只有在评估出风险、把安装搁置之后，才接受带这个参数的调用。
+// 理由里的风险点取自安装器当时的评估，不取模型的转述。
+func (a *Approver) installRisk(d kernel.Decision) (string, bool) {
+	if d.ToolName != ToolCapabilityInstall {
+		return "", false
+	}
+	var in capabilityInput
+	if err := json.Unmarshal(d.Input, &in); err != nil || !in.AcceptRisk {
+		return "", false
+	}
+	what := "Skill"
+	if in.Kind == "mcp" {
+		what = "MCP server"
+	}
+	var risks []string
+	if a.risks != nil {
+		risks = a.risks.PendingRisks(in.Kind, strings.TrimSpace(in.ID))
+	}
+	if len(risks) == 0 {
+		return fmt.Sprintf("要安装的 %s %s 有把本机信息传到外部的风险，需要你批准", what, in.ID), true
+	}
+	return fmt.Sprintf("要安装的 %s %s 有下面的风险，需要你批准：\n- %s", what, in.ID, strings.Join(risks, "\n- ")), true
 }
 
 // CalendarDefaults 给日历的新建和修改加上默认放行：用户没有为它们单独写规则时，直接执行。
@@ -82,6 +121,12 @@ func (a *Approver) drivenBy(ctx context.Context, t *core.Task, d kernel.Decision
 	if d.ToolName == ToolMailMark || d.ToolName == ToolMailMove {
 		return t.Origin, "", nil
 	}
+	// 安装必然跟在搜索后面，搜索结果又必然是外部内容；对它套用这条规则，助手就永远不能自己装东西。
+	// 安装该不该问用户，看的是装的东西有没有风险，不是看任务读过什么：
+	// 低风险的直接装，有外传风险的一律要批准（见 CheckAction 里的 installRisk）。
+	if d.ToolName == ToolCapabilityInstall {
+		return t.Origin, "", nil
+	}
 	steps, err := a.history.ListSteps(ctx, t.ID)
 	if err != nil {
 		return t.Origin, "", err
@@ -93,11 +138,6 @@ func (a *Approver) drivenBy(ctx context.Context, t *core.Task, d kernel.Decision
 		// 看自己的日历不算读外部内容：新建日程之前查一下有没有冲突是正常做法，
 		// 把它算进去的话每一次新建都要确认。
 		if s.ToolName == ToolCalendarEvents || s.ToolName == ToolCalendarList {
-			continue
-		}
-		// 安装必然跟在搜索后面，搜索结果又必然是外部内容；把它算进去，助手就永远不能自己装东西。
-		// 这个例外只给安装这一个动作：装之前有扫描，装上的东西也只有固定的保守边界。
-		if d.ToolName == ToolCapabilityInstall && s.ToolName == ToolCapabilitySearch {
 			continue
 		}
 		source := s.ToolName
@@ -124,6 +164,11 @@ func NewApprover(p *policy.Policy, c *policy.Classifier, u UsageTracker) *Approv
 // CheckAction 判定一个待执行动作。
 func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decision) (kernel.ApprovalOutcome, string, error) {
 	now := a.now()
+
+	// 有外传风险的安装必须由用户批准，没有任何规则能放行它。
+	if reason, risky := a.installRisk(d); risky {
+		return kernel.ApprovalManual, reason, nil
+	}
 
 	// 参数分级失败时按最保守处理：分不清就不能放行。
 	_, maxPrivacy, err := a.classifier.ClassifyJSON(classifiable(d))

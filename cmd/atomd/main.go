@@ -344,6 +344,17 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		Scanner: skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
 		Skills:  st.Skills(),
 		Servers: st.MCPInstalls(),
+		Probe: func(ctx context.Context, srv *market.Server) ([]market.ToolBrief, error) {
+			tools, err := gw.Probe(ctx, unreviewedSpec(srv))
+			if err != nil {
+				return nil, err
+			}
+			out := make([]market.ToolBrief, 0, len(tools))
+			for _, t := range tools {
+				out = append(out, market.ToolBrief{Name: t.Name, ReadOnly: t.ReadOnly, Params: t.Params})
+			}
+			return out, nil
+		},
 		Connect: func(ctx context.Context, srv *market.Server) ([]string, error) {
 			if configured[srv.Name] {
 				return nil, fmt.Errorf("配置文件里已经有名为 %s 的 MCP server", srv.Name)
@@ -355,7 +366,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		},
 	}
 	approver := agent.NewApprover(approval, policy.NewClassifier(), agent.NewMemoryUsageTracker()).
-		WithHistory(st)
+		WithHistory(st).WithInstallRisks(installer)
 
 	// 记忆与任务同库，共用连接池。
 	memStore := st.Memories()

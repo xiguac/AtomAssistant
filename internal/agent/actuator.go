@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/kernel"
@@ -200,9 +201,10 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		if err != nil {
 			return kernel.Result{}, err
 		}
-		// 搜索结果和 Skill 正文都是别人写的。安装的回执是我们自己生成的，只含标识。
+		// 搜索结果和 Skill 正文都是别人写的。装上了的回执是我们自己生成的，只含标识；
+		// 被搁置的回执里有风险点，其中引着对方写的原文，仍按外部内容对待。
 		trust := core.TrustExternal
-		if s.ToolName == ToolCapabilityInstall {
+		if s.ToolName == ToolCapabilityInstall && !strings.Contains(string(out), `"needs_approval":true`) {
 			trust = core.TrustToolOutput
 		}
 		return kernel.Result{Output: out, Trust: trust}, nil
