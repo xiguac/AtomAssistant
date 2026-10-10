@@ -705,8 +705,20 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
 		t.Fatalf("全部停用后配置应回到原样:\n%q", now)
 	}
-	if loc := post("/connectors/test", url.Values{"which": {"calendar"}}); !strings.Contains(loc, "尚未配置日历") {
-		t.Fatalf("未配置时连接测试应说明: %s", loc)
+	// 连接测试用的是表单里当前填的内容；没填全、地址不加密、没有密码可用，都当场说明。
+	for form, want := range map[*url.Values]string{
+		{"which": {"calendar"}}: "请填写服务器地址与账号",
+		{"which": {"calendar"}, "url": {"http://caldav.example.com"}, "username": {"me"}, "password": {"p"}}: "https://",
+		{"which": {"calendar"}, "url": {"https://caldav.example.com"}, "username": {"me"}}:                   "请填写密码",
+		{"which": {"mail"}, "imap": {"imap.example.com:993"}, "username": {"me"}}:                            "请填写密码",
+		{"which": {"ftp"}}: "连接器类型无效",
+	} {
+		if loc := post("/connectors/test", *form); !strings.Contains(loc, want) {
+			t.Fatalf("连接测试应提示 %q: %s", want, loc)
+		}
+	}
+	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
+		t.Fatal("连接测试不应保存任何东西")
 	}
 }
 
@@ -865,5 +877,61 @@ func TestAdmin_在后台修改登录密码(t *testing.T) {
 	_ = os.Remove(file)
 	if again, err := New(opts); err != nil || bcrypt.CompareHashAndPassword([]byte(again.hash), []byte(password)) != nil {
 		t.Fatalf("删除密码文件后应回到环境变量里的密码: %v", err)
+	}
+}
+
+func TestAdmin_连接测试在后台提交不刷新页面(t *testing.T) {
+	e := setup(t)
+	e.login()
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"model":"m1","choices":[{"message":{"content":"收到"}}],"usage":{}}`)
+	}))
+	defer fake.Close()
+	e.post("/models/provider", url.Values{"csrf": {e.csrf}, "name": {"a"}, "base_url": {fake.URL}, "key": {"k"}})
+
+	// 页面上的脚本提交时带一个标记：这时要的是结果本身，不是跳转。
+	call := func(form url.Values) (int, string, string) {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		req, _ := http.NewRequest(http.MethodPost, e.srv.URL+"/models/test", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("X-Requested-With", "fetch")
+		resp, err := e.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(body)
+	}
+	code, ctype, body := call(url.Values{"provider": {"a"}, "model": {"m1"}})
+	if code != http.StatusOK || !strings.HasPrefix(ctype, "application/json") || !strings.Contains(body, `"ok":true`) || !strings.Contains(body, "连接成功") {
+		t.Fatalf("应直接返回测试结果: %d %s %s", code, ctype, body)
+	}
+	if _, _, body := call(url.Values{"provider": {"没有"}, "model": {"m1"}}); !strings.Contains(body, `"ok":false`) || !strings.Contains(body, "没有名叫") {
+		t.Fatalf("失败时应返回原因: %s", body)
+	}
+
+	// 脚本只有后台自己的这一个文件，页面里没有内联脚本；安全策略只放行它，并且只许它向后台自己发请求。
+	resp, err := e.client.Get(e.srv.URL + "/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "connect-src 'self'") || strings.Contains(csp, "script-src 'unsafe-inline'") {
+		t.Fatalf("安全策略不对: %s", csp)
+	}
+	if strings.Count(string(page), "<script") != 1 || !strings.Contains(string(page), `<script src="/static/app.js" defer></script>`) ||
+		strings.Count(string(page), "data-async") < 2 {
+		t.Fatal("页面应只引用后台自己的脚本，连接测试按钮应标记为后台提交")
+	}
+	if code, js := e.get("/static/app.js"); code != http.StatusOK || !strings.Contains(js, "data-async") {
+		t.Fatalf("脚本应能取到: %d", code)
+	}
+	if _, body := e.get("/connectors"); strings.Count(body, "data-async") != 2 {
+		t.Fatal("日历和邮件的连接测试都应在后台提交，且未配置时也能测")
 	}
 }

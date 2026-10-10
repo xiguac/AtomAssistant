@@ -54,6 +54,11 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
+// appJS 是后台唯一的一段脚本，见文件开头的说明。
+//
+//go:embed static/app.js
+var appJS []byte
+
 const (
 	cookieName = "atom_session"
 	sessionTTL = 12 * time.Hour
@@ -271,6 +276,11 @@ func token() (string, error) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	// 脚本是固定的内容，里面没有任何数据，不登录也能取：登录页同样引用它。
+	mux.HandleFunc("GET /static/app.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(appJS)
+	})
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 
@@ -319,8 +329,9 @@ func (s *Server) Handler() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		// 页面不引用任何外部资源，也不许被别的网页嵌进去。
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		// 页面不引用任何外部资源，也不许被别的网页嵌进去。脚本只认自己这一个文件，不许内联：
+		// 就算哪里的转义出了纰漏，混进页面的脚本也不会被执行。脚本只能向后台自己发请求。
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
@@ -476,6 +487,16 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, _ *view) {
 
 // back 做完一件事后跳回某个页面，带上一句结果。
 func back(w http.ResponseWriter, r *http.Request, to, notice string, err error) {
+	// 页面上的脚本在后台提交时要的是结果本身，不是跳转。
+	if r.Header.Get("X-Requested-With") == "fetch" {
+		w.Header().Set("Content-Type", "application/json")
+		out := map[string]any{"ok": err == nil, "message": notice}
+		if err != nil {
+			out["message"] = err.Error()
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return
+	}
 	q := "?ok=" + template.URLQueryEscaper(notice)
 	if err != nil {
 		q = "?e=" + template.URLQueryEscaper(err.Error())

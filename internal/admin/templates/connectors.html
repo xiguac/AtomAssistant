@@ -16,11 +16,11 @@
       <div class="help">新建日程默认写入的日历名称。账号下仅有一个日历时可不填</div></div>
   </div>
   <div class="band foot">
-    <span class="note muted">连接测试使用已保存的配置。</span>
+    <span class="note muted">连接测试使用表单中当前填写的内容，不会保存。密码留空时使用已保存的密码。</span>
     <div class="actions">
       <button class="btn" style="order:9">保存</button>
-      {{if .Calendar}}<button class="btn danger" formaction="/connectors/disable" name="which" value="calendar">停用</button>
-      <button class="btn sec" formaction="/connectors/test" name="which" value="calendar">连接测试</button>{{end}}
+      {{if .Calendar}}<button class="btn danger" formaction="/connectors/disable" name="which" value="calendar">停用</button>{{end}}
+      <button class="btn sec" formaction="/connectors/test" name="which" value="calendar" data-async>连接测试</button>
     </div>
   </div>
 </form>
@@ -44,8 +44,8 @@
     <span class="note muted">邮件内容属于外部内容，由邮件引出的操作均需经你确认。</span>
     <div class="actions">
       <button class="btn" style="order:9">保存</button>
-      {{if .Mail}}<button class="btn danger" formaction="/connectors/disable" name="which" value="mail">停用</button>
-      <button class="btn sec" formaction="/connectors/test" name="which" value="mail">连接测试</button>{{end}}
+      {{if .Mail}}<button class="btn danger" formaction="/connectors/disable" name="which" value="mail">停用</button>{{end}}
+      <button class="btn sec" formaction="/connectors/test" name="which" value="mail" data-async>连接测试</button>
     </div>
   </div>
 </form>

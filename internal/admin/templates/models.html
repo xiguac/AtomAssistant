@@ -52,7 +52,7 @@
       <div><label for="m-model">模型</label><input id="m-model" type="text" name="model" value="{{.MainModel}}" placeholder="deepseek-chat">
         <div class="help">服务商文档中的模型标识</div></div>
       <div class="full actions"><button class="btn">保存</button>
-        <button class="btn sec" formaction="/models/test">连接测试</button>
+        <button class="btn sec" formaction="/models/test" data-async>连接测试</button>
         <span class="note muted">连接测试使用已保存的接口地址与密钥，向模型发送一条测试消息。</span></div>
     </form>
   </div>
@@ -74,7 +74,7 @@
       <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
         <form method="post" action="/models/test"><input type="hidden" name="csrf" value="{{$.CSRF}}">
           <input type="hidden" name="provider" value="{{.Provider}}"><input type="hidden" name="model" value="{{.Model}}">
-          <button class="btn sec sm">连接测试</button></form>
+          <button class="btn sec sm" data-async>连接测试</button></form>
         <form method="post" action="/models/agent/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
           <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
       </div></td>
@@ -97,7 +97,7 @@
   </div>
   <div class="band foot"><span class="note muted">协作模型不具备工具调用能力，仅可访问主 AI 提供的任务说明与材料。</span>
     <div class="actions"><button class="btn" style="order:9">保存</button>
-      <button class="btn sec" formaction="/models/test">连接测试</button></div></div>
+      <button class="btn sec" formaction="/models/test" data-async>连接测试</button></div></div>
 </form>
 
 {{if .Standings}}

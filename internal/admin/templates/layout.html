@@ -116,6 +116,10 @@ details.dropdown .menu label.check { display:flex; gap:10px; padding:7px 8px; bo
 details.dropdown .menu label.check:hover { background:var(--canvas); }
 details.dropdown .menu label.check:has(input:checked) { background:var(--wash); }
 details.dropdown .menu .mono { margin-left:auto; }
+.async-result { margin:0 20px 16px; padding:10px 14px; border-radius:8px; border:1px solid var(--line); font-size:13px; line-height:20px; white-space:pre-wrap; word-break:break-word; }
+.async-result.ok { background:var(--ok-bg); border-color:var(--ok-line); color:var(--ok); }
+.async-result.bad { background:var(--bad-bg); border-color:var(--bad-line); color:var(--bad); }
+td .async-result { margin:8px 0 0; text-align:left; white-space:normal; }
 label.check { display:inline-flex; align-items:center; gap:6px; margin:0; font-weight:400; color:var(--text); cursor:pointer; }
 .score { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:3px 0; }
 .score .who { width:96px; flex:none; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -196,6 +200,7 @@ details[open] summary { color:var(--text-2); }
   .rows .t { width:140px; }
 }
 </style>
+<script src="/static/app.js" defer></script>
 </head>
 <body>
 {{if .CSRF}}

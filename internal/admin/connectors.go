@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/config"
+	"github.com/xiguac/atomhelper/internal/connector/calendar"
+	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
 
@@ -218,41 +220,73 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 	back(w, r, "/connectors", names[which]+"已停用，重启服务后生效。保险库中的密码仍保留，可在「保险库」页删除。", err)
 }
 
-// connectorTest 用已保存的配置登录一次，确认服务器地址、账号、密码是否正确。
+// connectorTest 用表单里当前填写的内容登录一次，确认服务器地址、账号、密码是否正确。
+//
+// 测的是页面上正填着的，不是已经保存的：填完先测、测通了再保存才是顺手的次序。
+// 密码一栏留空时用保险库里已保存的那个。测试不保存任何东西。
 func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
+	typed := strings.TrimRight(r.PostFormValue("password"), "\r\n")
 	result, err := func() (string, error) {
-		file, err := config.LoadFile(s.opts.ConfigPath)
+		_, saved, err := s.readConnectors()
 		if err != nil {
 			return "", err
 		}
-		if file == nil {
-			return "", errors.New("配置文件不存在")
+		// secret 定出这次测试用的密码：填了就用填的，没填就向保险库借已保存的。
+		secret := func(handle, user string) (func(context.Context) (string, error), error) {
+			if typed != "" {
+				return func(context.Context) (string, error) { return typed, nil }, nil
+			}
+			if handle == "" {
+				return nil, errors.New("请填写密码")
+			}
+			return s.opts.Vault.Lend(handle, user)
 		}
 		// 真实的邮件和日历服务器在公网上，握手加登录比本地慢得多。
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
 		switch which {
 		case "calendar":
-			cal, err := file.Calendar(s.opts.Vault)
+			url := strings.TrimSpace(r.PostFormValue("url"))
+			user := strings.TrimSpace(r.PostFormValue("username"))
+			if url == "" || user == "" {
+				return "", errors.New("请填写服务器地址与账号")
+			}
+			if !strings.HasPrefix(url, "https://") {
+				return "", errors.New("服务器地址必须以 https:// 开头：密码将随每次请求发送")
+			}
+			handle := ""
+			if saved.Calendar != nil {
+				handle = saved.Calendar.Password
+			}
+			take, err := secret(handle, config.VaultUserCalendar)
 			if err != nil {
 				return "", err
 			}
-			if cal == nil {
-				return "", errors.New("尚未配置日历")
-			}
-			list, err := cal.Calendars(ctx)
+			list, err := (&calendar.Client{Endpoint: url, Username: user, Secret: take}).Calendars(ctx)
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("日历连接成功，共 %d 个日历。", len(list)), nil
+			names := make([]string, 0, len(list))
+			for _, c := range list {
+				names = append(names, c.Name)
+			}
+			return fmt.Sprintf("日历连接成功，共 %d 个日历：%s", len(list), strings.Join(names, "、")), nil
 		case "mail":
-			box, err := file.Mail(s.opts.Vault)
-			if err != nil {
-				return "", err
+			imap := strings.TrimSpace(r.PostFormValue("imap"))
+			user := strings.TrimSpace(r.PostFormValue("username"))
+			if imap == "" || user == "" {
+				return "", errors.New("请填写收信服务器与账号")
 			}
-			if box == nil {
-				return "", errors.New("尚未配置邮件")
+			handle := ""
+			box := &mail.Client{IMAPAddr: imap, Username: user}
+			if saved.Mail != nil {
+				handle = saved.Mail.Password
+				// 加密方式页面上没有，沿用已保存的。
+				box.IMAPSecurity = mail.Security(saved.Mail.IMAPSecurity)
+			}
+			if box.Secret, err = secret(handle, config.VaultUserMail); err != nil {
+				return "", err
 			}
 			folders, err := box.Folders(ctx)
 			if err != nil {
