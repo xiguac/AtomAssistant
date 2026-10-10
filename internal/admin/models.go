@@ -203,7 +203,17 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("模型服务已在后台修改", "服务", name, "换了密钥", key != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/models", "模型服务「"+name+"」已保存，重启服务后生效。", err)
+	notice := "模型服务「" + name + "」已保存，重启服务后生效。"
+	// 填了测试用的模型就顺手测一次：地址或密钥填错了，当场就知道，不必等到重启之后。
+	if model := strings.TrimSpace(r.PostFormValue("test_model")); err == nil && model != "" {
+		result, testErr := s.probeModel(r.Context(), name, model)
+		if testErr != nil {
+			err = fmt.Errorf("模型服务「%s」已保存，但连接测试未通过: %w", name, testErr)
+		} else {
+			notice += result
+		}
+	}
+	back(w, r, "/models", notice, err)
 }
 
 // sealProviderKey 把一家模型服务的密钥存进保险库。
@@ -309,38 +319,43 @@ func (s *Server) agentDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/models", "协作模型「"+name+"」已删除。历史评分仍保留，以相同名称重新添加后可继续沿用。", err)
 }
 
-// modelTest 用已保存的配置向一个模型发一句话，看接口、密钥、模型名对不对。
-func (s *Server) modelTest(w http.ResponseWriter, r *http.Request, _ *view) {
-	provider := r.PostFormValue("provider")
-	model := strings.TrimSpace(r.PostFormValue("model"))
-	reply, err := func() (string, error) {
-		if provider == "" || model == "" {
-			return "", errors.New("请选择模型服务并填写模型标识")
-		}
-		file, err := config.LoadFile(s.opts.ConfigPath)
-		if err != nil {
-			return "", err
-		}
-		if file == nil {
-			return "", errors.New("配置文件不存在")
-		}
-		p, err := file.Provider(r.Context(), provider, s.opts.Vault)
-		if err != nil {
-			return "", err
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
-		defer cancel()
-		resp, err := p.Complete(ctx, llm.Request{
-			// 留够长度：会先思考再作答的模型，思考也占这个额度，给少了回答是空的。
-			Model: model, MaxTokens: 1024,
-			Messages: []llm.Message{{Role: llm.RoleUser, Content: "这是一次连通测试，请只回复两个字：收到"}},
-		})
-		return resp.Content, err
-	}()
+// probeModel 用已保存的配置向一个模型发一句话，确认接口地址、密钥、模型标识是否正确，返回给人看的结果。
+func (s *Server) probeModel(ctx context.Context, provider, model string) (string, error) {
+	if provider == "" || model == "" {
+		return "", errors.New("请选择模型服务并填写模型标识")
+	}
+	file, err := config.LoadFile(s.opts.ConfigPath)
+	if err != nil {
+		return "", err
+	}
+	if file == nil {
+		return "", errors.New("配置文件不存在")
+	}
+	p, err := file.Provider(ctx, provider, s.opts.Vault)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	resp, err := p.Complete(ctx, llm.Request{
+		// 留够长度：会先思考再作答的模型，思考也占这个额度，给少了回答是空的。
+		Model: model, MaxTokens: 1024,
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "这是一次连通测试，请只回复两个字：收到"}},
+	})
+	if err != nil {
+		return "", err
+	}
+	reply := resp.Content
 	if strings.TrimSpace(reply) == "" {
 		reply = "（未返回文本）"
 	}
-	back(w, r, "/models", fmt.Sprintf("%s / %s 连接成功。模型回复：%s", provider, model, shorten(reply, 80)), err)
+	return fmt.Sprintf("%s / %s 连接成功。模型回复：%s", provider, model, shorten(reply, 80)), nil
+}
+
+// modelTest 是页面上的「连接测试」按钮。
+func (s *Server) modelTest(w http.ResponseWriter, r *http.Request, _ *view) {
+	result, err := s.probeModel(r.Context(), r.PostFormValue("provider"), strings.TrimSpace(r.PostFormValue("model")))
+	back(w, r, "/models", result, err)
 }
 
 func shorten(s string, n int) string {

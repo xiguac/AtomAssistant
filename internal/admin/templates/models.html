@@ -31,10 +31,14 @@
     <div><label for="p-proto">接口协议</label>
       <select id="p-proto" name="protocol"><option value="">沿用现有设置（新增时为 OpenAI 兼容）</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic 兼容</option></select>
       <div class="help">两种协议均支持的服务建议选用 OpenAI 兼容：其 JSON 输出模式可保证规划结果可解析</div></div>
-    <div><label for="p-key">API Key</label><input id="p-key" type="password" name="key" autocomplete="new-password">
+    <div class="full"><label for="p-key">API Key</label><input id="p-key" type="password" name="key" autocomplete="new-password">
       <div class="help">保存至保险库，保存后不可查看。修改已有服务时留空表示沿用原密钥</div></div>
   </div>
-  <div class="band foot"><span class="note muted">密钥仅发送至此处填写的接口地址。</span><button class="btn">保存</button></div>
+  <div class="band foot">
+    <div class="actions grow"><label for="p-test" style="margin:0;white-space:nowrap">连接测试所用模型</label>
+      <input id="p-test" class="grow" type="text" name="test_model" placeholder="填写模型标识后，保存时将同时进行连接测试"></div>
+    <button class="btn">保存并测试</button>
+  </div>
 </form>
 
 <h2>主 AI</h2>
@@ -91,7 +95,9 @@
     <div class="full"><label>任务类别限制（不选表示不限，按评分分派）</label>
       <div class="checks">{{range .Categories}}<label class="check" title="{{.Hint}}"><input type="checkbox" name="good_at" value="{{.ID}}">{{.Name}}</label>{{end}}</div></div>
   </div>
-  <div class="band foot"><span class="note muted">协作模型不具备工具调用能力，仅可访问主 AI 提供的任务说明与材料。</span><button class="btn">保存</button></div>
+  <div class="band foot"><span class="note muted">协作模型不具备工具调用能力，仅可访问主 AI 提供的任务说明与材料。</span>
+    <div class="actions"><button class="btn" style="order:9">保存</button>
+      <button class="btn sec" formaction="/models/test">连接测试</button></div></div>
 </form>
 
 {{if .Standings}}

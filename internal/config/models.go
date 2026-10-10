@@ -261,6 +261,23 @@ func WriteChannels(raw []byte, channels []ChannelConfig) ([]byte, error) {
 	return writeSections(raw, []string{"channels"}, values)
 }
 
+// ReadToolNames 从配置文件的原文里读出已授权的 MCP 工具的名字。读不出来时返回空。
+func ReadToolNames(raw []byte) []string {
+	var f struct {
+		Tools []struct {
+			Name string `yaml:"name"`
+		} `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal(raw, &f); err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(f.Tools))
+	for _, t := range f.Tools {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
 // ReadConnectors 从配置文件的原文里读出连接器一节。
 func ReadConnectors(raw []byte) (ConnectorsConfig, error) {
 	var f struct {

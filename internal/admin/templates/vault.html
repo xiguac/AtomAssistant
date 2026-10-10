@@ -5,10 +5,10 @@
 <div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>保险库不提供查看功能，已保存的值对任何人均不可见。如需修改，请以相同名称重新保存。</div></div>
 
 <div class="card">
-  <div class="band"><b>条目列表</b><span class="count">{{len .Data}}</span></div>
-  {{if .Data}}<table>
+  <div class="band"><b>条目列表</b><span class="count">{{len .Data.Items}}</span></div>
+  {{if .Data.Items}}<table>
     <thead><tr><th>名称</th><th>用途</th><th>授权工具</th><th>创建时间</th><th class="r">操作</th></tr></thead>
-    <tbody>{{range .Data}}<tr>
+    <tbody>{{range .Data.Items}}<tr>
       <td><span class="mono" style="color:var(--text)">vault://{{.Label}}</span></td>
       <td>{{.Note}}</td>
       <td>{{range .AllowedTools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">未授权</span>{{end}}</td>
@@ -30,20 +30,10 @@
       <div class="help">用途说明，对助手可见，请勿填写敏感内容</div></div>
     <div class="full"><label for="v-value">值</label><input id="v-value" type="password" name="value" autocomplete="new-password">
       <div class="help">按原样保存，保存后不再显示</div></div>
-    <div class="full"><label for="v-tools">授权工具</label><input id="v-tools" type="text" name="tools" placeholder="connector.calendar, connector.mail">
-      <div class="help">以逗号分隔。未列出的工具引用该条目时，调用将被拒绝</div></div>
+    <div class="full"><label>授权工具</label>
+      <div class="checks">{{range .Data.Tools}}<label class="check" title="{{.Value}}"><input type="checkbox" name="tools" value="{{.Value}}">{{.Label}}</label>{{end}}</div>
+      <div class="help">仅勾选的对象可使用该条目，未勾选的对象引用时调用将被拒绝。列表来自当前配置：新增模型服务、渠道或工具后会出现在此处</div></div>
   </div>
   <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>
-
-<div class="card">
-  <div class="band"><b>授权工具的命名规则</b></div>
-  <div class="pad"><dl class="kv" style="grid-template-columns:200px 1fr">
-    <dt>provider.服务名称</dt><dd>模型服务，例如 provider.deepseek</dd>
-    <dt>connector.calendar</dt><dd>日历连接器</dd>
-    <dt>connector.mail</dt><dd>邮件连接器。iCloud 的 App 专用密码可同时授权给日历与邮件</dd>
-    <dt>channel.渠道名称</dt><dd>消息渠道，例如 channel.qq</dd>
-    <dt>maps.book_ride</dt><dd>MCP 工具填写完整名称</dd>
-  </dl></div>
-</div>
 {{end}}

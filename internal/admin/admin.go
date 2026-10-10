@@ -669,13 +669,66 @@ func (s *Server) vaultPage(w http.ResponseWriter, r *http.Request, v *view) {
 		v.Error = err.Error()
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Label < metas[j].Label })
-	v.Data = metas
+	v.Data = vaultData{Items: metas, Tools: s.toolOptions(metas)}
 	s.render(w, "vault", v)
+}
+
+type vaultData struct {
+	Items []vault.Meta
+	// Tools 是可以被授权使用保险库条目的对象，供页面勾选。
+	Tools []toolOption
+}
+
+// toolOption 是授权列表里的一项。
+type toolOption struct {
+	// Value 是写进授权名单的标识，Label 是给人看的说明。
+	Value, Label string
+}
+
+// toolOptions 列出当前配置里所有可以被授权的对象：模型服务、连接器、消息渠道、已授权的 MCP 工具。
+//
+// 做成勾选而不是手写：标识写错一个字符，授权就悄悄落空，调用时才报错。
+// 已有条目上出现过、但配置里已经没有的标识也列出来，免得替换条目时把它丢掉。
+func (s *Server) toolOptions(metas []vault.Meta) []toolOption {
+	out := []toolOption{
+		{config.VaultUserCalendar, "日历连接器"},
+		{config.VaultUserMail, "邮件连接器"},
+	}
+	seen := map[string]bool{config.VaultUserCalendar: true, config.VaultUserMail: true}
+	add := func(value, label string) {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, toolOption{value, label})
+		}
+	}
+	// 配置读不出来时只少了这部分选项，页面照常可用。
+	if raw, err := os.ReadFile(s.opts.ConfigPath); err == nil {
+		if m, err := config.ReadModels(raw); err == nil {
+			for _, p := range m.Providers {
+				add(p.VaultUser(), "模型服务 "+p.Name)
+			}
+		}
+		if list, err := config.ReadChannels(raw); err == nil {
+			for _, c := range list {
+				add(c.VaultUser(), "消息渠道 "+c.Name)
+			}
+		}
+		for _, name := range config.ReadToolNames(raw) {
+			add(name, "工具 "+name)
+		}
+	}
+	for _, m := range metas {
+		for _, t := range m.AllowedTools {
+			add(t, t)
+		}
+	}
+	return out
 }
 
 func (s *Server) vaultPut(w http.ResponseWriter, r *http.Request, _ *view) {
 	var tools []string
-	for _, t := range strings.FieldsFunc(r.PostFormValue("tools"), func(c rune) bool { return c == ',' || c == '，' || c == ' ' || c == '\n' || c == '\r' }) {
+	// 页面上是逐项勾选的，每项一个值；一个值里用逗号分隔多个的写法也认。
+	for _, t := range strings.FieldsFunc(strings.Join(r.PostForm["tools"], ","), func(c rune) bool { return c == ',' || c == '，' || c == ' ' || c == '\n' || c == '\r' }) {
 		if t = strings.TrimSpace(t); t != "" {
 			tools = append(tools, t)
 		}

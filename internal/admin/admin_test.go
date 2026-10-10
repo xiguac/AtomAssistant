@@ -707,3 +707,73 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 		t.Fatalf("未配置时连接测试应说明: %s", loc)
 	}
 }
+
+func TestAdmin_保险库的授权工具从列表勾选(t *testing.T) {
+	e := setup(t)
+	e.login()
+	raw, _ := os.ReadFile(e.cfg)
+	extra := "providers:\n  - {name: qwen, base_url: 'https://x/v1', api_key: 'vault://qwen'}\n" +
+		"channels:\n  - {name: qq, type: qq, app_id: '1', secret: 'vault://channel.qq'}\n" +
+		"tools:\n  - {name: maps.book_ride, side_effect: irreversible}\n"
+	if err := os.WriteFile(e.cfg, append(raw, extra...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, body := e.get("/vault")
+	// 可选项来自当前配置；页面上没有手写标识的输入框。
+	for _, want := range []string{`value="connector.calendar"`, `value="connector.mail"`, `value="provider.qwen"`, `value="channel.qq"`, `value="maps.book_ride"`} {
+		if !strings.Contains(body, `type="checkbox" name="tools" `+want) {
+			t.Fatalf("授权列表里应有 %s", want)
+		}
+	}
+	if strings.Contains(body, `type="text" name="tools"`) {
+		t.Fatal("授权工具不应再是手写的输入框")
+	}
+	// 勾了两项：两项都记入授权名单。
+	if code, loc := e.post("/vault", url.Values{"csrf": {e.csrf}, "label": {"icloud"}, "value": {"p"},
+		"tools": {"connector.calendar", "connector.mail"}}); code != http.StatusSeeOther || !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存失败: %d %s", code, loc)
+	}
+	metas, err := e.vault.List(context.Background())
+	if err != nil || len(metas) != 1 || strings.Join(metas[0].AllowedTools, ",") != "connector.calendar,connector.mail" {
+		t.Fatalf("授权名单不对: %+v %v", metas, err)
+	}
+}
+
+func TestAdmin_保存模型服务时同时做连接测试(t *testing.T) {
+	e := setup(t)
+	e.login()
+	status := http.StatusOK
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, `{"error":{"message":"invalid api key"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"model":"m1","choices":[{"message":{"content":"收到"}}],"usage":{}}`)
+	}))
+	defer fake.Close()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+
+	if loc := post("/models/provider", url.Values{"name": {"a"}, "base_url": {fake.URL}, "key": {"k"}, "test_model": {"m1"}}); !strings.Contains(loc, "已保存") || !strings.Contains(loc, "连接成功") {
+		t.Fatalf("保存并测试应同时报告两个结果: %s", loc)
+	}
+	// 密钥不对：照样保存（可能只是模型标识写错了），但明确说测试没通过、为什么。
+	status = http.StatusUnauthorized
+	loc := post("/models/provider", url.Values{"name": {"b"}, "base_url": {fake.URL}, "key": {"bad"}, "test_model": {"m1"}})
+	if !strings.Contains(loc, "已保存，但连接测试未通过") || !strings.Contains(loc, "invalid api key") {
+		t.Fatalf("测试不通过时应说明原因: %s", loc)
+	}
+	if raw, _ := os.ReadFile(e.cfg); !strings.Contains(string(raw), "name: b") {
+		t.Fatal("测试不通过不应阻止保存")
+	}
+	// 协作模型的表单里也能直接测试。
+	if _, body := e.get("/models"); strings.Count(body, `formaction="/models/test"`) < 2 || !strings.Contains(body, `name="test_model"`) {
+		t.Fatal("主 AI、协作模型、模型服务三处都应能做连接测试")
+	}
+}
