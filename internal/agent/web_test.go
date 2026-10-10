@@ -159,3 +159,52 @@ func TestWebSearch_含绝密信息的问题发不出去上过网之后的改动�
 		t.Fatalf("上过网之后记日程应由用户确认，实际 %s", out)
 	}
 }
+
+func TestWebSearch_较早查到的结论留在上下文里不必再查(t *testing.T) {
+	p := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{RecentSteps: 2}).WithWebSearch(true)
+	task := core.NewTask("t", "规划北京行程", core.TrustUser)
+	long := strings.Repeat("票", findingChars+50)
+	var history []*core.Step
+	add := func(tool, input, output string, status core.StepStatus) {
+		s := core.NewStep(task.ID, len(history)+1, core.StepTool, json.RawMessage(input))
+		s.ToolName, s.Status, s.Output, s.OutputTrust = tool, status, json.RawMessage(output), core.TrustExternal
+		history = append(history, s)
+	}
+	add(ToolWebSearch, `{"query":"故宫 门票 价格"}`, `{"answer":"结论：旺季 60 元。`+long+`"}`, core.StepDone)
+	add(ToolWebSearch, `{"query":"失败的那次"}`, `{}`, core.StepFailed)
+	add(ToolCalendarEvents, `{}`, `{"events":[]}`, core.StepDone)
+	add(ToolWebSearch, `{"query":"慕田峪 交通"}`, `{"answer":"结论：916 路转 h23。"}`, core.StepDone)
+	add(ToolWebSearch, `{"query":"最近一步"}`, `{"answer":"最近的结果"}`, core.StepDone)
+	add(ToolWebSearch, `{"query":"最近两步"}`, `{"answer":"最近的结果"}`, core.StepDone)
+
+	var found *llm.Segment
+	for _, seg := range p.segments(task, history) {
+		if seg.Source == "较早的联网搜索结果" {
+			found = &seg
+		}
+	}
+	if found == nil {
+		t.Fatal("较早的搜索结论应留在上下文里")
+	}
+	// 网上的内容，照旧是外部内容；钉住，不随预算被裁掉。
+	if found.Trust != core.TrustExternal || !found.Pinned {
+		t.Fatalf("这一段应是钉住的外部内容: %+v", found)
+	}
+	for _, want := range []string{"故宫 门票 价格", "旺季 60 元", "慕田峪 交通", "916 路转 h23", "不要再查"} {
+		if !strings.Contains(found.Content, want) {
+			t.Errorf("应包含 %q:\n%s", want, found.Content)
+		}
+	}
+	// 只留结论的开头；失败的、不是搜索的、还在窗口里的最近几步都不重复列。
+	if strings.Contains(found.Content, long) || strings.Contains(found.Content, "失败的那次") ||
+		strings.Contains(found.Content, "最近一步") || strings.Count(found.Content, "步骤 ") != 2 {
+		t.Fatalf("这一段的内容不对:\n%s", found.Content)
+	}
+
+	// 没有较早的搜索就没有这一段。
+	for _, seg := range p.segments(task, history[4:]) {
+		if seg.Source == "较早的联网搜索结果" {
+			t.Fatal("没有较早的搜索时不该有这一段")
+		}
+	}
+}

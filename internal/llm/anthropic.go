@@ -74,7 +74,7 @@ type anthropicRequest struct {
 }
 
 // webSearchTool 是服务端执行的联网搜索工具：搜索由模型服务自己完成，我们只拿结果。
-var webSearchTool = map[string]any{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+var webSearchTool = map[string]any{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
 
 type anthropicResponse struct {
 	Model   string `json:"model"`

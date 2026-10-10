@@ -697,6 +697,18 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 			Trust:   core.TrustSystem,
 			Source:  "步骤日志摘要",
 		})
+		// 摘要里只有"查过什么"，没有"查到了什么"。搜索结果一旦滑出窗口，
+		// 模型就会把同一件事再查一遍——每查一次都是两三万 token。所以把较早查到的结论留一份。
+		if found := earlierFindings(history[:cut]); found != "" {
+			segs = append(segs, llm.Segment{
+				Role:    llm.RoleUser,
+				Content: "较早的联网搜索已经查到下面这些，不要再查同样的事：\n" + found,
+				// 网上的内容，照旧在围栏里。
+				Trust:  core.TrustExternal,
+				Source: "较早的联网搜索结果",
+				Pinned: true,
+			})
+		}
 	}
 	recent := history[cut:]
 	for i, s := range recent {

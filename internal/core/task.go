@@ -111,7 +111,8 @@ type Usage struct {
 //
 // 墙钟只算执行时间，所以 24 小时是"真正在跑"的上限，等待多久都不占它。
 func DefaultBudget() Budget {
-	return Budget{MaxTokens: 200_000, MaxCostCents: 500, MaxWallClock: 24 * time.Hour}
+	// token 上限按"要上网查十来件事的任务也能跑完"来定：一次联网搜索连同搜到的网页要两三万 token。
+	return Budget{MaxTokens: 600_000, MaxCostCents: 500, MaxWallClock: 24 * time.Hour}
 }
 
 // Exceeded 报告用量是否已经超出预算，以及超的是哪一项。
