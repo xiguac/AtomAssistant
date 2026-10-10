@@ -31,8 +31,11 @@
     <div class="full"><label for="v-value">值</label><input id="v-value" type="password" name="value" autocomplete="new-password">
       <div class="help">按原样保存，保存后不再显示</div></div>
     <div class="full"><label>授权工具</label>
-      <div class="checks">{{range .Data.Tools}}<label class="check" title="{{.Value}}"><input type="checkbox" name="tools" value="{{.Value}}">{{.Label}}</label>{{end}}</div>
-      <div class="help">仅勾选的对象可使用该条目，未勾选的对象引用时调用将被拒绝。列表来自当前配置：新增模型服务、渠道或工具后会出现在此处</div></div>
+      <details class="dropdown">
+        <summary><span class="none">请选择</span><span class="some">已选择</span></summary>
+        <div class="menu">{{range .Data.Tools}}<label class="check"><input type="checkbox" name="tools" value="{{.Value}}"><span>{{.Label}}</span><span class="mono muted">{{.Value}}</span></label>{{end}}</div>
+      </details>
+      <div class="help">可多选。仅选中的对象可使用该条目，其余对象引用时调用将被拒绝。选项来自当前配置：新增模型服务、渠道或工具后会出现在此处</div></div>
   </div>
   <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>

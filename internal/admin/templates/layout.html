@@ -98,6 +98,20 @@ label { display:block; font-size:13px; line-height:16px; font-weight:500; color:
 input[type=text], input[type=password], textarea, select { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:13px/20px var(--sans); padding:7px 10px; outline:0; }
 input[type=text], input[type=password], select { height:36px; }
 .checks { display:flex; flex-wrap:wrap; gap:8px 18px; }
+/* 下拉多选：不用脚本，展开与收起靠 details，选中的数量靠 :has 反映在框里 */
+details.dropdown { display:block; position:relative; }
+details.dropdown summary { display:flex; align-items:center; justify-content:space-between; height:36px; margin:0; padding:0 10px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--muted); font-size:13px; list-style:none; cursor:pointer; }
+details.dropdown summary::-webkit-details-marker { display:none; }
+details.dropdown summary::after { content:""; width:7px; height:7px; border-right:1.5px solid var(--text-2); border-bottom:1.5px solid var(--text-2); transform:rotate(45deg) translateY(-2px); }
+details.dropdown[open] summary { border-color:var(--primary-hover); box-shadow:0 0 0 3px rgba(37,99,235,.12); color:var(--muted); }
+details.dropdown .some { display:none; color:var(--text); }
+details.dropdown:has(input:checked) .none { display:none; }
+details.dropdown:has(input:checked) .some { display:inline; }
+details.dropdown .menu { position:absolute; z-index:5; left:0; right:0; top:40px; max-height:260px; overflow:auto; background:#fff; border:1px solid var(--line); border-radius:8px; padding:4px; }
+details.dropdown .menu label.check { display:flex; gap:10px; padding:7px 8px; border-radius:6px; }
+details.dropdown .menu label.check:hover { background:var(--canvas); }
+details.dropdown .menu label.check:has(input:checked) { background:var(--wash); }
+details.dropdown .menu .mono { margin-left:auto; }
 label.check { display:inline-flex; align-items:center; gap:6px; margin:0; font-weight:400; color:var(--text); cursor:pointer; }
 .score { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:3px 0; }
 .score .who { width:96px; flex:none; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
