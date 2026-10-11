@@ -27,7 +27,7 @@ a:hover { color:var(--primary-hover); }
 code, .mono { font-family:var(--mono); font-size:12px; }
 svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
 
-/* 框架：固定侧栏 + 主区域 */
+/* 框架：左侧固定侧栏 + 右侧内容区。内容区在宽屏上再分左右两栏，一屏能看到的东西更多。 */
 .side { position:fixed; inset:0 auto 0 0; width:240px; background:var(--card); border-right:1px solid var(--line); display:flex; flex-direction:column; }
 .brand { display:flex; align-items:center; gap:10px; padding:22px 20px 26px; }
 .brand svg { width:28px; height:28px; color:var(--primary); }
@@ -44,15 +44,23 @@ svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; st
 .linkbtn { background:none; border:0; padding:0; font:inherit; font-size:12px; color:var(--text-2); cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
 .linkbtn:hover { color:var(--text); }
 .linkbtn svg.ico { width:14px; height:14px; }
-.main { margin-left:240px; padding:32px 32px 64px; }
-.wrap { max-width:960px; margin:0 auto; }
-.wrap.narrow { max-width:768px; }
+.main { margin-left:240px; padding:24px 28px 56px; }
+.wrap { max-width:1560px; margin:0 auto; }
+/* 左右分栏：左边是主要内容（列表、正文），右边是操作与补充信息。.even 表示两栏等宽。 */
+.cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(360px,440px); gap:20px 24px; align-items:start; }
+.cols.even { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+.cols > * { min-width:0; }
+.cols > * > h2:first-child { margin-top:0; }
+/* 窄的那一栏里，表单一行只放一个字段，底栏放不下时换行。 */
+.cols:not(.even) > :last-child .grid2 { grid-template-columns:1fr; }
+.cols > * .band.foot { flex-wrap:wrap; }
+.sticky { position:sticky; top:24px; }
 
 /* 标题 */
 .crumb { font-size:12px; color:var(--muted); margin-bottom:10px; }
 .crumb a { color:var(--text-2); }
 h1 { font-size:24px; line-height:32px; font-weight:600; letter-spacing:-.015em; margin:0; }
-.sub { color:var(--text-2); font-size:13px; line-height:18px; margin:6px 0 24px; max-width:720px; }
+.sub { color:var(--text-2); font-size:13px; line-height:18px; margin:6px 0 20px; max-width:960px; }
 h2 { font-size:16px; line-height:24px; font-weight:600; letter-spacing:-.005em; margin:28px 0 12px; display:flex; align-items:center; gap:10px; }
 .count { font-size:12px; line-height:16px; font-weight:500; padding:1px 8px; border-radius:9999px; background:var(--recess); color:var(--text-2); }
 .count.warn { background:#FEF3C7; color:var(--warn); }
@@ -168,6 +176,8 @@ td.time { color:var(--text-2); font:12px/20px var(--mono); white-space:nowrap; }
 .kv { display:grid; grid-template-columns:96px 1fr; gap:10px 16px; font-size:13px; }
 .kv dt { color:var(--text-2); font:12px/20px var(--mono); margin:0; }
 .kv dd { margin:0; min-width:0; word-break:break-word; }
+.kv.wide { grid-template-columns:110px 1fr; }
+.kv.wide dt { font-family:var(--sans); font-size:13px; }
 .box { background:var(--canvas); border:1px solid var(--line); border-radius:8px; padding:12px 14px; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:20px; }
 .quote { border-left:2px solid var(--line-strong); padding:2px 0 2px 14px; color:var(--text-2); white-space:pre-wrap; word-break:break-word; }
 pre { margin:8px 0 0; background:var(--canvas); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:12px/18px var(--mono); white-space:pre-wrap; word-break:break-word; max-height:420px; overflow:auto; }
@@ -185,10 +195,45 @@ details[open] summary { color:var(--text-2); }
 .steps .tool { font:12px/20px var(--mono); color:var(--text); font-weight:500; }
 .steps .err { color:var(--bad); font-size:13px; margin-top:4px; }
 
-/* 登录 */
-.login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
-.login .card { width:360px; padding:28px; }
-.login .brand { padding:0 0 22px; }
+/* 登录：左边是表单，右边是说明 */
+.login { min-height:100vh; display:grid; grid-template-columns:minmax(380px,520px) 1fr; }
+.login-panel { background:var(--card); border-right:1px solid var(--line); padding:56px 56px 40px; display:flex; flex-direction:column; justify-content:center; }
+.login-panel .brand { padding:0 0 36px; }
+.login-panel h1 { font-size:22px; line-height:30px; }
+.login-panel .sub { margin-bottom:20px; }
+.login-panel form { display:grid; }
+.login-panel .help { margin-top:18px; }
+.login-panel .async-result { margin:12px 0 0; }
+.btn.wide { width:100%; margin-top:16px; height:40px; }
+.login-or { display:flex; align-items:center; gap:12px; margin:18px 0 2px; color:var(--muted); font-size:12px; }
+.login-or::before, .login-or::after { content:""; flex:1; height:1px; background:var(--line); }
+.login-steps { display:flex; align-items:center; gap:10px; margin-bottom:18px; font-size:12px; font-weight:500; color:var(--muted); }
+.login-steps i { width:28px; height:1px; background:var(--line-strong); }
+.login-steps .on { color:var(--primary); }
+.login-steps .done { color:var(--ok); }
+.login-side { display:flex; align-items:center; padding:56px; background:var(--canvas); }
+.login-side > div { max-width:460px; }
+.login-side h2 { margin:0 0 18px; font-size:18px; }
+.login-side ul { list-style:none; margin:0; padding:0; display:grid; gap:14px; }
+.login-side li { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
+.login-side li b { display:block; font-weight:500; }
+.login-side li span { display:block; color:var(--text-2); font-size:13px; line-height:18px; margin-top:4px; }
+input.otp { height:48px; font:600 22px/28px var(--mono); letter-spacing:.3em; text-align:center; }
+input.otp.sm { height:36px; font-size:15px; letter-spacing:.2em; max-width:200px; }
+input.otp::placeholder { font:400 13px/20px var(--sans); letter-spacing:normal; }
+
+/* 登录与安全 */
+label.method { display:flex; align-items:flex-start; gap:12px; padding:12px 14px; border:1px solid var(--line); border-radius:8px; }
+label.method:has(input:checked) { border-color:#BFDBFE; background:var(--wash); }
+label.method input { margin-top:3px; }
+label.method > span:nth-child(2) { flex:1; min-width:0; }
+label.method b { display:block; font-weight:500; }
+label.method .note { display:block; margin-top:2px; }
+.totp { display:grid; grid-template-columns:200px 1fr; gap:20px; align-items:start; }
+.totp .qr { border:1px solid var(--line); border-radius:8px; overflow:hidden; line-height:0; }
+.howto { margin:0 0 14px; padding-left:18px; color:var(--text-2); font-size:13px; line-height:20px; }
+.secret { letter-spacing:.08em; word-break:break-all; font-size:13px; }
+.band .async-result { flex-basis:100%; margin:0; }
 
 @media (max-width:860px) {
   .side { position:static; width:auto; flex-direction:row; align-items:center; flex-wrap:wrap; border-right:0; border-bottom:1px solid var(--line); }
@@ -198,9 +243,20 @@ details[open] summary { color:var(--text-2); }
   .main { margin-left:0; padding:20px 16px 48px; }
   .grid2 { grid-template-columns:1fr; }
   .rows .t { width:140px; }
+  .login { grid-template-columns:1fr; }
+  .login-panel { border-right:0; padding:32px 24px; }
+  .login-side { display:none; }
+  .totp { grid-template-columns:1fr; }
+}
+/* 内容区不够宽时，左右两栏叠成一栏。 */
+@media (max-width:1240px) {
+  .cols, .cols.even { grid-template-columns:1fr; }
+  .cols:not(.even) > :last-child .grid2 { grid-template-columns:1fr 1fr; }
+  .sticky { position:static; }
 }
 </style>
 <script src="/static/app.js" defer></script>
+{{if or (eq .Page "login") (eq .Page "security")}}<script src="/static/passkey.js" defer></script>{{end}}
 </head>
 <body>
 {{if .CSRF}}
@@ -217,16 +273,16 @@ details[open] summary { color:var(--text-2); }
     <a href="/channels" class="{{if eq .Page "channels"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/></svg>渠道</a>
     <a href="/connectors" class="{{if eq .Page "connectors"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.5 5a4.6 4.6 0 0 1 6.5 6.5L17.5 13"/><path d="M13 17.5 11.5 19A4.6 4.6 0 0 1 5 12.5L6.5 11"/></svg>连接器</a>
     <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>文件</a>
+    <a href="/security" class="{{if eq .Page "security"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.5c0 4.2 2.9 7.4 7 9 4.1-1.6 7-4.8 7-9V6Z"/><path d="m9.3 12 2 2 3.5-4"/></svg>登录与安全</a>
     <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg>配置</a>
   </nav>
   <div class="side-foot">
     <span>{{if .Status}}<i class="dot warn"></i>服务未运行{{else}}<i class="dot"></i>服务运行中{{end}}</span>
-    <a class="linkbtn" href="/password">修改密码</a>
     <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="linkbtn"><svg class="ico" viewBox="0 0 24 24"><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10"/><path d="M15 8l4 4-4 4M19 12H9.5"/></svg>退出</button></form>
   </div>
 </aside>
-<main class="main"><div class="wrap{{if or (eq .Page "config") (eq .Page "restarting")}}{{end}}">
+<main class="main"><div class="wrap">
   {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：
 {{.Status}}
 

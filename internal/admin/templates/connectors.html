@@ -3,6 +3,8 @@
 <div class="sub">配置日历（CalDAV）与邮件（IMAP / SMTP）的账号，以及节假日订阅。密码保存至保险库，保存后不可查看。修改后需重启服务方可生效。</div>
 
 {{with .Data}}
+<div class="cols even">
+<div>
 <h2 style="margin-top:0">日历 {{if .Calendar}}{{if .CalendarKey}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">密码未配置</span>{{end}}{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
 <form method="post" action="/connectors/calendar" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -25,6 +27,24 @@
   </div>
 </form>
 
+<h2>节假日订阅 {{if .Holidays}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+<form method="post" action="/connectors/holidays" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad">
+    <label for="hol-url">订阅地址</label><input id="hol-url" type="text" name="url" value="{{if .Holidays}}{{.Holidays.URL}}{{else}}https://calendars.icloud.com/holidays/cn_zh.ics{{end}}">
+    <div class="help">公开的日历订阅（.ics），无需账号，用于查询法定节假日与调休安排</div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">订阅地址必须使用 https。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Holidays}}<button class="btn danger" formaction="/connectors/disable" name="which" value="holidays">停用</button>{{end}}
+    </div>
+  </div>
+</form>
+
+</div>
+<div>
 <h2>邮件 {{if .Mail}}{{if .MailKey}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">密码未配置</span>{{end}}{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
 <form method="post" action="/connectors/mail" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -50,22 +70,6 @@
   </div>
 </form>
 
-<h2>节假日订阅 {{if .Holidays}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
-<form method="post" action="/connectors/holidays" class="card">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="pad">
-    <label for="hol-url">订阅地址</label><input id="hol-url" type="text" name="url" value="{{if .Holidays}}{{.Holidays.URL}}{{else}}https://calendars.icloud.com/holidays/cn_zh.ics{{end}}">
-    <div class="help">公开的日历订阅（.ics），无需账号，用于查询法定节假日与调休安排</div>
-  </div>
-  <div class="band foot">
-    <span class="note muted">订阅地址必须使用 https。</span>
-    <div class="actions">
-      <button class="btn" style="order:9">保存</button>
-      {{if .Holidays}}<button class="btn danger" formaction="/connectors/disable" name="which" value="holidays">停用</button>{{end}}
-    </div>
-  </div>
-</form>
-
 <div class="card">
   <div class="band"><b>重启服务</b></div>
   <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
@@ -73,6 +77,8 @@
     <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
       <button class="btn sec">重启服务</button></form>
   </div>
+</div>
+</div>
 </div>
 {{end}}
 {{end}}

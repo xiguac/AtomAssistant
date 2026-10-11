@@ -6,7 +6,7 @@
 #   deploy/deploy.sh           之后每次更新：编译、上传、切换、检查，起不来就自动退回上一版
 #   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
-#   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://127.0.0.1:8780
+#   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
 #   deploy/deploy.sh status    看服务状态和最近的日志
 #   deploy/deploy.sh rollback  退回上一个版本
 #
@@ -134,7 +134,7 @@ case "${1:-release}" in
     unset PW PW2
     if result=$(healthy); then
       echo "口令已设置，服务已启动（$result）。"
-      echo "用 deploy/deploy.sh tunnel 打开隧道，然后在浏览器里访问 http://127.0.0.1:$ADMIN_PORT"
+      echo "用 deploy/deploy.sh tunnel 打开隧道，然后在浏览器里访问 http://localhost:$ADMIN_PORT"
     else
       echo "!! 口令已写入，但服务没有起来。最近的日志：" >&2
       remote "sudo journalctl -u atomhelper -n 30 --no-pager" >&2 || true
@@ -142,7 +142,8 @@ case "${1:-release}" in
     fi
     ;;
   tunnel)
-    echo "隧道已打开：在浏览器里访问 http://127.0.0.1:$ADMIN_PORT  （按 Ctrl+C 关闭）"
+    # 地址用 localhost 而不是 127.0.0.1：通行密钥只认域名，不认 IP 地址。
+    echo "隧道已打开：在浏览器里访问 http://localhost:$ADMIN_PORT  （按 Ctrl+C 关闭）"
     ssh -i "$DEPLOY_KEY" -N -L "$ADMIN_PORT:127.0.0.1:$ADMIN_PORT" "$DEPLOY_USER@$DEPLOY_HOST"
     ;;
   status)

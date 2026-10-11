@@ -2,18 +2,9 @@
 <h1>任务</h1>
 <div class="sub">创建任务，处理待确认的操作与待回复的问题。</div>
 
-<form method="post" action="/tasks" class="card">
-  <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <div class="pad" style="padding-bottom:8px">
-    <textarea class="bare" name="goal" placeholder="例如：下周五下午三点与供应商开会，地点 3 号会议室，请添加日程"></textarea>
-  </div>
-  <div class="band foot">
-    <span class="note muted">请简要描述任务目标。信息不足时，助手会向你提问。</span>
-    <button class="btn">创建任务</button>
-  </div>
-</form>
-
 {{with .Data}}
+<div class="cols">
+<div>
 <h2>待处理 <span class="count {{if .Waiting}}warn{{end}}">{{len .Waiting}}</span></h2>
 {{range .Waiting}}
 <a class="attn" href="/tasks/{{.ID}}">
@@ -43,6 +34,21 @@
     <span class="d">{{short .Reason 100}}</span>
     <span class="w">{{when .UpdatedAt}}</span>
   </a>{{else}}<div class="empty" style="justify-content:center">暂无已结束的任务。</div>{{end}}
+</div>
+</div>
+<div>
+<form method="post" action="/tasks" class="card sticky">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>创建任务</b></div>
+  <div class="pad" style="padding-bottom:8px">
+    <textarea class="bare" name="goal" style="min-height:150px" placeholder="例如：下周五下午三点与供应商开会，地点 3 号会议室，请添加日程"></textarea>
+  </div>
+  <div class="band foot">
+    <span class="note muted">请简要描述任务目标。信息不足时，助手会向你提问。</span>
+    <button class="btn">创建任务</button>
+  </div>
+</form>
+</div>
 </div>
 {{end}}
 {{end}}

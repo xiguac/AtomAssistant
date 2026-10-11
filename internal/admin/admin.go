@@ -16,6 +16,7 @@ package admin
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -55,10 +56,15 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
-// appJS 是后台唯一的一段脚本，见文件开头的说明。
+// appJS 是后台各页共用的一段脚本，见文件开头的说明。
 //
 //go:embed static/app.js
 var appJS []byte
+
+// passkeyJS 只在登录页和「登录与安全」页加载：通行密钥必须由浏览器里的脚本向设备发起。
+//
+//go:embed static/passkey.js
+var passkeyJS []byte
 
 const (
 	cookieName = "atom_session"
@@ -100,10 +106,18 @@ type Server struct {
 
 	mu       sync.Mutex
 	sessions map[string]session
+	// ceremonies 是进行到一半的通行密钥操作。
+	ceremonies map[string]ceremony
 	// hash 是当前生效的密码摘要：后台改过的优先，否则是环境变量里的。
 	hash     string
 	failures int
 	lockedAt time.Time
+
+	// authMu 保证登录方式的"读出—改动—存回"不会和另一个请求交错。
+	authMu sync.Mutex
+	// ticket 用来加密两步登录之间暂存的密码，密钥只活在这个进程里。
+	ticket cipher.AEAD
+	now    func() time.Time
 }
 
 type session struct {
@@ -146,9 +160,14 @@ func New(opts Options) (*Server, error) {
 	if _, err := bcrypt.Cost([]byte(opts.PasswordHash)); err != nil {
 		return nil, fmt.Errorf("admin: ATOM_ADMIN_PASSWORD_HASH 不是有效的 bcrypt 摘要（用 atomctl admin passwd 生成）")
 	}
-	s := &Server{opts: opts, sessions: make(map[string]session), tmpl: make(map[string]*template.Template)}
+	s := &Server{opts: opts, sessions: make(map[string]session), ceremonies: make(map[string]ceremony),
+		tmpl: make(map[string]*template.Template), now: time.Now}
 	if err := s.loadPassword(); err != nil {
 		return nil, err
+	}
+	var err error
+	if s.ticket, err = newTicketCipher(); err != nil {
+		return nil, fmt.Errorf("admin: 初始化登录失败: %w", err)
 	}
 	funcs := template.FuncMap{
 		"when": func(t time.Time) string {
@@ -284,8 +303,15 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(appJS)
 	})
+	mux.HandleFunc("GET /static/passkey.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(passkeyJS)
+	})
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
+	mux.HandleFunc("POST /login/code", s.loginCode)
+	mux.HandleFunc("POST /login/passkey/begin", s.passkeyLoginBegin)
+	mux.HandleFunc("POST /login/passkey/finish", s.passkeyLoginFinish)
 
 	auth := func(h func(http.ResponseWriter, *http.Request, *view)) http.HandlerFunc { return s.authed(h) }
 	mux.HandleFunc("POST /logout", auth(s.logout))
@@ -316,6 +342,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /connectors/holidays", auth(s.holidaysSave))
 	mux.HandleFunc("POST /connectors/disable", auth(s.connectorDisable))
 	mux.HandleFunc("POST /connectors/test", auth(s.connectorTest))
+	mux.HandleFunc("GET /security", auth(s.securityPage))
+	mux.HandleFunc("POST /security/methods", auth(s.methodsSave))
+	mux.HandleFunc("POST /security/totp/start", auth(s.totpStart))
+	mux.HandleFunc("POST /security/totp/confirm", auth(s.totpConfirm))
+	mux.HandleFunc("POST /security/totp/cancel", auth(s.totpCancel))
+	mux.HandleFunc("POST /security/totp/remove", auth(s.totpRemove))
+	mux.HandleFunc("POST /security/passkey/begin", auth(s.passkeyRegisterBegin))
+	mux.HandleFunc("POST /security/passkey/finish", auth(s.passkeyRegisterFinish))
+	mux.HandleFunc("POST /security/passkey/remove", auth(s.passkeyRemove))
 	mux.HandleFunc("GET /password", auth(s.passwordPage))
 	mux.HandleFunc("POST /password", auth(s.passwordChange))
 	mux.HandleFunc("GET /models", auth(s.modelsPage))
@@ -378,62 +413,6 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true, "assistant_running": status == ""})
 }
 
-func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "login", &view{Error: r.URL.Query().Get("e")})
-}
-
-func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	if s.failures >= maxFailures && time.Since(s.lockedAt) < lockFor {
-		s.mu.Unlock()
-		w.WriteHeader(http.StatusTooManyRequests)
-		s.render(w, "login", &view{Error: "密码连续输入错误次数过多，请稍后重试。"})
-		return
-	}
-	s.mu.Unlock()
-
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	password := r.PostFormValue("password")
-	s.mu.Lock()
-	hash := s.hash
-	s.mu.Unlock()
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		s.mu.Lock()
-		s.failures++
-		s.lockedAt = time.Now()
-		s.mu.Unlock()
-		s.opts.Log.Warn("后台登录失败", "来自", r.RemoteAddr)
-		w.WriteHeader(http.StatusUnauthorized)
-		s.render(w, "login", &view{Error: "密码错误。"})
-		return
-	}
-	id, err1 := token()
-	csrf, err2 := token()
-	if err1 != nil || err2 != nil {
-		http.Error(w, "生成会话失败", http.StatusInternalServerError)
-		return
-	}
-	s.mu.Lock()
-	s.failures = 0
-	now := time.Now()
-	for k, v := range s.sessions {
-		if now.After(v.expires) {
-			delete(s.sessions, k)
-		}
-	}
-	s.sessions[id] = session{csrf: csrf, expires: now.Add(sessionTTL)}
-	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{
-		// 前面有代理替后台提供 HTTPS 时（代理会带上这个头），cookie 同样只许走加密连接。
-		// 这个头是请求方说了算的，但它只会让 cookie 管得更严，冒充它占不到便宜。
-		Name: cookieName, Value: id, Path: "/", HttpOnly: true,
-		Secure:   s.opts.TLS || r.Header.Get("X-Forwarded-Proto") == "https",
-		SameSite: http.SameSiteStrictMode, MaxAge: int(sessionTTL.Seconds()),
-	})
-	s.opts.Log.Info("后台登录成功", "来自", r.RemoteAddr)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
 // authed 包住需要登录的页面：没登录的去登录页；改动数据的请求还要核对防伪令牌。
 func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -452,6 +431,19 @@ func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
+		}
+		// 还没有设置任何登录方式时，凭密码进来的人哪里都去不了，只能先去把登录方式设好。
+		if !setupExempt(r.URL.Path) {
+			a, err := s.loadAuth(r.Context())
+			if err != nil {
+				s.opts.Log.Error("读取登录方式失败", "err", err)
+				http.Error(w, "读取登录方式失败，详见服务日志。", http.StatusInternalServerError)
+				return
+			}
+			if !a.configured() {
+				http.Redirect(w, r, "/security", http.StatusSeeOther)
+				return
+			}
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			// 上传文件的表单很大，其余的都很小。
@@ -479,6 +471,11 @@ func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.
 		}
 		h(w, r, &view{CSRF: sess.csrf, Notice: r.URL.Query().Get("ok"), Error: r.URL.Query().Get("e")})
 	}
+}
+
+// setupExempt 报告一个地址在"还没设置登录方式"时是否仍然可以访问：设置登录方式本身，以及退出。
+func setupExempt(p string) bool {
+	return p == "/security" || strings.HasPrefix(p, "/security/") || p == "/password" || p == "/logout"
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request, _ *view) {

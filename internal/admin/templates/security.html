@@ -1,0 +1,111 @@
+{{define "content"}}
+<h1>登录与安全</h1>
+<div class="sub">设置管理后台的登录方式。可启用一种或同时启用两种；至少须保留一种可用的方式。</div>
+
+{{with .Data}}
+{{if .Setup}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>尚未设置登录方式，后台的其他页面暂不可用。请绑定验证器或登记通行密钥；设置完成后，仅凭密码将无法登录。</div></div>{{end}}
+
+<div class="cols even">
+<div>
+  <form method="post" action="/security/methods" class="card">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="band"><b>登录方式</b></div>
+    <div class="pad" style="display:grid;gap:14px">
+      <label class="check method"><input type="checkbox" name="password_totp" value="1"{{if .PasswordTOTP}} checked{{end}}{{if not .TOTPBound}} disabled{{end}}>
+        <span><b>密码 + 动态验证码</b><span class="note">输入密码后，再输入手机验证器上的 6 位数字。{{if not .TOTPBound}}须先绑定验证器。{{end}}</span></span>
+        {{if and .PasswordTOTP .TOTPBound}}<span class="pill ok plain">已启用</span>{{else if .TOTPBound}}<span class="pill plain">未启用</span>{{else}}<span class="pill plain">未绑定</span>{{end}}</label>
+      <label class="check method"><input type="checkbox" name="passkey" value="1"{{if .Passkey}} checked{{end}}{{if not .Passkeys}} disabled{{end}}>
+        <span><b>通行密钥</b><span class="note">使用设备上的指纹、面容或硬件密钥登录。{{if not .Passkeys}}须先登记通行密钥。{{end}}</span></span>
+        {{if and .Passkey .Passkeys}}<span class="pill ok plain">已启用</span>{{else if .Passkeys}}<span class="pill plain">未启用</span>{{else}}<span class="pill plain">未登记</span>{{end}}</label>
+    </div>
+    <div class="band foot"><span class="note muted">两种方式同时启用时，登录时任选其一。</span><button class="btn">保存</button></div>
+  </form>
+
+  <div class="card">
+    <div class="band"><b>动态验证码</b>{{if .TOTPBound}}<span class="pill ok plain">已绑定验证器</span>{{else}}<span class="pill plain">未绑定</span>{{end}}</div>
+    {{if .PendingSecret}}
+    <div class="pad totp">
+      <div class="qr">{{.PendingQR}}</div>
+      <div>
+        <ol class="howto">
+          <li>在手机上打开验证器（Microsoft Authenticator、Google Authenticator 等），选择添加账户。</li>
+          <li>扫描左侧二维码；无法扫码时，选择手动输入并填写下方密钥。</li>
+          <li>输入验证器显示的 6 位数字，完成绑定。</li>
+        </ol>
+        <label>手动输入用的密钥</label>
+        <div class="box mono secret">{{.PendingSecret}}</div>
+        <div class="help">类型选择「基于时间」。该密钥仅在绑定过程中显示，请勿告知他人。</div>
+      </div>
+    </div>
+    <div class="band foot">
+      <form method="post" action="/security/totp/confirm" class="actions grow" autocomplete="off">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input class="grow otp sm" type="text" name="code" inputmode="numeric" maxlength="7" placeholder="6 位验证码" autocomplete="one-time-code" autofocus>
+        <button class="btn">完成绑定</button>
+      </form>
+      <form method="post" action="/security/totp/cancel"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn sec">取消</button></form>
+    </div>
+    {{else}}
+    <div class="pad note">{{if .TOTPBound}}验证器已绑定。更换手机或验证器时，请重新绑定；重新绑定完成后，原验证器上的验证码随即失效。
+      {{else}}绑定手机上的验证器后，登录时除密码外还须输入验证器显示的 6 位数字。{{end}}</div>
+    <div class="band foot">
+      <span class="note muted">支持所有标准验证器（TOTP）。</span>
+      <div class="actions">
+        {{if .TOTPBound}}<form method="post" action="/security/totp/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn danger">解除绑定</button></form>{{end}}
+        <form method="post" action="/security/totp/start"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn{{if .TOTPBound}} sec{{end}}">{{if .TOTPBound}}重新绑定{{else}}绑定验证器{{end}}</button></form>
+      </div>
+    </div>
+    {{end}}
+  </div>
+
+  <form method="post" action="/password" autocomplete="off" class="card">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="band"><b>修改登录密码</b></div>
+    <div class="pad grid2">
+      <div class="full"><label for="pw-current">当前密码</label><input id="pw-current" type="password" name="current" autocomplete="current-password"></div>
+      <div><label for="pw-new">新密码</label><input id="pw-new" type="password" name="new" autocomplete="new-password">
+        <div class="help">至少 10 个字符</div></div>
+      <div><label for="pw-confirm">确认新密码</label><input id="pw-confirm" type="password" name="confirm" autocomplete="new-password"></div>
+    </div>
+    <div class="band foot"><span class="note muted">新密码立即生效，其他已登录的会话将全部退出。密码仅以不可逆的摘要形式保存。</span><button class="btn">修改密码</button></div>
+  </form>
+</div>
+
+<div>
+  <div class="card">
+    <div class="band"><b>通行密钥</b><span class="count">{{len .Passkeys}}</span></div>
+    {{if .Passkeys}}<table>
+      <thead><tr><th>名称</th><th>登记时的访问地址</th><th>登记时间</th><th>最近使用</th><th class="r">操作</th></tr></thead>
+      <tbody>{{range .Passkeys}}<tr>
+        <td><b style="font-weight:500">{{.Name}}</b></td>
+        <td><span class="mono">{{.RPID}}</span>{{if not .Here}}<div class="note" style="color:var(--warn)">当前访问地址下不可用</div>{{end}}</td>
+        <td class="time">{{when .CreatedAt}}</td>
+        <td class="time">{{when .LastUsedAt}}</td>
+        <td class="r"><form method="post" action="/security/passkey/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">删除</button></form></td>
+      </tr>{{end}}</tbody>
+    </table>{{else}}<div class="empty">尚未登记通行密钥。</div>{{end}}
+    <form class="band foot" autocomplete="off">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <input class="grow" type="text" name="name" maxlength="40" placeholder="名称，例如：办公室电脑、YubiKey"{{if .PasskeyBlocked}} disabled{{end}}>
+      <button class="btn" type="button" data-passkey="register"{{if .PasskeyBlocked}} disabled{{end}}>登记通行密钥</button>
+      <div class="async-result" hidden></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="band"><b>使用说明</b></div>
+    <div class="pad">
+      {{if .PasskeyBlocked}}<div class="banner warn" style="margin-bottom:14px"><div>{{.PasskeyBlocked}}</div></div>{{end}}
+      <dl class="kv wide">
+        <dt>绑定的地址</dt><dd>通行密钥与访问后台所用的域名绑定{{if not .PasskeyBlocked}}，当前为 <span class="mono">{{.PasskeyHost}}</span>{{end}}。更换域名后须重新登记。</dd>
+        <dt>本人验证</dt><dd>登录时设备须当场验证使用者（指纹、面容或 PIN）。</dd>
+        <dt>建议</dt><dd>登记两把以上，或同时启用「密码 + 动态验证码」，避免单一设备丢失后无法登录。</dd>
+        <dt>无法登录时</dt><dd>验证器与通行密钥均不可用时，在服务器上运行 <span class="mono">atomctl admin reset-login</span>，恢复为仅凭密码登录并重新设置。</dd>
+      </dl>
+    </div>
+  </div>
+</div>
+</div>
+{{end}}
+{{end}}

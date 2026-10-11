@@ -5,6 +5,8 @@
 <div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>渠道主人拥有与用户本人相同的权限，请仅添加你自己的账号。主人名单只能在此页面或配置文件中由你本人修改，助手无法更改。</div></div>
 
 {{with .Data}}
+<div class="cols">
+<div>
 <h2 style="margin-top:0">已接入的渠道 <span class="count">{{len .Channels}}</span></h2>
 {{range .Channels}}{{$ch := .}}
 <div class="card">
@@ -40,6 +42,8 @@
 <div class="card empty">暂无渠道。</div>
 {{end}}
 
+</div>
+<div>
 <form method="post" action="/channels" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="band"><b>添加或修改渠道</b></div>
@@ -65,6 +69,8 @@
     <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
       <button class="btn sec">重启服务</button></form>
   </div>
+</div>
+</div>
 </div>
 {{end}}
 {{end}}

@@ -3,6 +3,27 @@
 <div class="sub">用户明确陈述的信息直接保存。模型推断的信息以较低权重保存，经后续任务交叉验证后提高权重，也可在此确认或删除。</div>
 
 {{with .Data}}
+<div class="cols">
+<div>
+<h2>已保存 <span class="count">{{len .Memories}}</span></h2>
+<div class="card">
+  {{if .Memories}}<table>
+    <thead><tr><th style="width:96px">类型</th><th style="width:150px">主体</th><th>内容</th><th style="width:150px">来源与权重</th><th class="r" style="width:150px">操作</th></tr></thead>
+    <tbody>{{range .Memories}}<tr>
+      <td><span class="pill plain">{{.Kind}}</span></td>
+      <td>{{.Subject}}{{if .Domain}}<div class="note muted">{{.Domain}}</div>{{end}}</td>
+      <td><div style="white-space:pre-wrap;word-break:break-word">{{short .Current.Value 400}}</div></td>
+      <td>{{if .Inferred}}<span class="pill warn plain">模型推断</span>{{else if eq (print .Current.Source.Kind) "user"}}<span class="pill ok plain">用户陈述</span>{{else if eq (print .Current.Source.Kind) "builtin"}}<span class="pill plain">内置</span>{{else}}<span class="pill plain">{{.Current.Source.Kind}}</span>{{end}}
+        <div class="note muted" style="margin-top:4px">权重 {{pct .Confidence}}%</div></td>
+      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
+        {{if .Inferred}}<form method="post" action="/memory/affirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sec sm">确认</button></form>{{end}}
+        <form method="post" action="/memory/forget"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">删除</button></form>
+      </div></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">暂无记忆。记忆将随任务的执行逐步积累。</div>{{end}}
+</div>
+</div>
+<div>
 <h2 style="margin-top:0">待核实 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
 {{range .Pending}}
 <div class="attn" style="align-items:flex-start">
@@ -20,22 +41,7 @@
 <div class="card empty">暂无待核实的记忆。仅与已有记忆冲突、涉及安全或来源于邮件与网页的信息需要核实。</div>
 {{end}}
 
-<h2>已保存 <span class="count">{{len .Memories}}</span></h2>
-<div class="card">
-  {{if .Memories}}<table>
-    <thead><tr><th style="width:96px">类型</th><th style="width:150px">主体</th><th>内容</th><th style="width:150px">来源与权重</th><th class="r" style="width:150px">操作</th></tr></thead>
-    <tbody>{{range .Memories}}<tr>
-      <td><span class="pill plain">{{.Kind}}</span></td>
-      <td>{{.Subject}}{{if .Domain}}<div class="note muted">{{.Domain}}</div>{{end}}</td>
-      <td><div style="white-space:pre-wrap;word-break:break-word">{{short .Current.Value 400}}</div></td>
-      <td>{{if .Inferred}}<span class="pill warn plain">模型推断</span>{{else if eq (print .Current.Source.Kind) "user"}}<span class="pill ok plain">用户陈述</span>{{else if eq (print .Current.Source.Kind) "builtin"}}<span class="pill plain">内置</span>{{else}}<span class="pill plain">{{.Current.Source.Kind}}</span>{{end}}
-        <div class="note muted" style="margin-top:4px">权重 {{pct .Confidence}}%</div></td>
-      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
-        {{if .Inferred}}<form method="post" action="/memory/affirm"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sec sm">确认</button></form>{{end}}
-        <form method="post" action="/memory/forget"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">删除</button></form>
-      </div></td>
-    </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无记忆。记忆将随任务的执行逐步积累。</div>{{end}}
+</div>
 </div>
 {{end}}
 {{end}}

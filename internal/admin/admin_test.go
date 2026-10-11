@@ -58,6 +58,11 @@ type env struct {
 	cfg    string
 	work   string
 	csrf   string
+	// server 与 clock 让测试能拨动后台看到的时间：动态验证码是按时间算的，而且每个只能用一次。
+	server *Server
+	clock  time.Time
+	// secret 是 login 时绑定的验证器种子。
+	secret string
 }
 
 // setup 需要真实数据库，设置 ATOM_TEST_DSN 后运行。
@@ -103,6 +108,8 @@ func setup(t *testing.T) *env {
 	if err != nil {
 		t.Fatalf("构造后台失败: %v", err)
 	}
+	e.server, e.clock = s, time.Now()
+	s.now = func() time.Time { return e.clock }
 	e.srv = httptest.NewServer(s.Handler())
 	t.Cleanup(e.srv.Close)
 	jar, _ := cookiejar.New(nil)
@@ -136,17 +143,77 @@ func (e *env) post(path string, form url.Values) (int, string) {
 
 var reCSRF = regexp.MustCompile(`name="csrf" value="([0-9a-f]{64})"`)
 
+var (
+	reSecret = regexp.MustCompile(`class="box mono secret">([A-Z2-7]+)<`)
+	reTicket = regexp.MustCompile(`name="ticket" value="([^"]+)"`)
+)
+
+// login 走一遍刚装好时的流程：先凭密码进来，绑定验证器，之后才能用后台。
 func (e *env) login() {
 	e.t.Helper()
-	if code, _ := e.post("/login", url.Values{"password": {password}}); code != http.StatusSeeOther {
-		e.t.Fatalf("登录应成功并跳转，实际 %d", code)
+	if code, loc := e.post("/login", url.Values{"password": {password}}); code != http.StatusSeeOther || !strings.Contains(loc, "/security") {
+		e.t.Fatalf("首次登录应成功并跳去设置登录方式，实际 %d %s", code, loc)
 	}
-	_, body := e.get("/")
+	_, body := e.get("/security")
 	m := reCSRF.FindStringSubmatch(body)
 	if m == nil {
 		e.t.Fatal("页面里应有防伪令牌")
 	}
 	e.csrf = m[1]
+	e.post("/security/totp/start", url.Values{"csrf": {e.csrf}})
+	_, body = e.get("/security")
+	sec := reSecret.FindStringSubmatch(body)
+	if sec == nil {
+		e.t.Fatal("绑定验证器时页面上应有密钥")
+	}
+	e.secret = sec[1]
+	if _, loc := e.post("/security/totp/confirm", url.Values{"csrf": {e.csrf}, "code": {e.code()}}); !strings.Contains(loc, "验证器已绑定") {
+		e.t.Fatalf("绑定验证器失败: %s", loc)
+	}
+	if code, _ := e.get("/"); code != http.StatusOK {
+		e.t.Fatalf("设置好登录方式后应能进入后台: %d", code)
+	}
+}
+
+// code 给出验证器此刻显示的验证码。每取一次把时间往后拨一个周期：同一个验证码不能用第二次。
+func (e *env) code() string {
+	e.t.Helper()
+	e.clock = e.clock.Add(totpPeriod)
+	c, err := totpAt(e.secret, e.clock.Unix()/int64(totpPeriod/time.Second))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return c
+}
+
+func newClient() *http.Client {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// signIn 用密码和动态验证码走完两步登录，返回第二步的状态码和页面。code 为空时用当前正确的验证码。
+func (e *env) signIn(c *http.Client, pw, code string) (int, string) {
+	e.t.Helper()
+	resp, err := c.PostForm(e.srv.URL+"/login", url.Values{"password": {pw}})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	m := reTicket.FindStringSubmatch(string(body))
+	if resp.StatusCode != http.StatusOK || m == nil {
+		return resp.StatusCode, string(body)
+	}
+	if code == "" {
+		code = e.code()
+	}
+	resp, err = c.PostForm(e.srv.URL+"/login/code", url.Values{"ticket": {m[1]}, "code": {code}})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ = io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
 }
 
 func TestAdmin_不登录什么都看不到(t *testing.T) {
@@ -805,12 +872,9 @@ func TestAdmin_在后台修改登录密码(t *testing.T) {
 		return loc
 	}
 	// 另一处已登录的会话：改密码之后应当失效。
-	jar, _ := cookiejar.New(nil)
-	other := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if resp, err := other.PostForm(e.srv.URL+"/login", url.Values{"password": {password}}); err != nil {
-		t.Fatal(err)
-	} else {
-		resp.Body.Close()
+	other := newClient()
+	if code, _ := e.signIn(other, password, ""); code != http.StatusSeeOther {
+		t.Fatalf("另一处登录应成功: %d", code)
 	}
 
 	for name, c := range map[string]struct {
@@ -849,13 +913,8 @@ func TestAdmin_在后台修改登录密码(t *testing.T) {
 	}
 	// 旧密码不能再登录，新密码可以。
 	login := func(pw string) int {
-		c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		resp, err := c.PostForm(e.srv.URL+"/login", url.Values{"password": {pw}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
+		code, _ := e.signIn(newClient(), pw, "")
+		return code
 	}
 	if login(password) != http.StatusUnauthorized || login(next) != http.StatusSeeOther {
 		t.Fatal("修改后应只有新密码能登录")

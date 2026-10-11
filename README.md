@@ -208,18 +208,43 @@ Anthropic 协议没有这个开关，只能靠提示词约束。
 /opt/atomhelper/releases/<版本>/   程序的各个版本，current 链接指向正在用的
 /var/lib/atomhelper/               数据：config/ 配置，files/ 文件工作区
 /etc/atomhelper/env                密钥：数据库连接串、保险库密钥、后台口令摘要
+/var/lib/atomhelper/config/atomhelper.key   数据密钥：首次启动时生成，与这台机器的硬件绑定
 ```
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env   # 填上服务器地址和 SSH 私钥路径
 deploy/deploy.sh setup     # 第一次：装 PostgreSQL、建账号和目录、装 systemd 服务、上传程序
 deploy/deploy.sh passwd    # 设置后台口令并启动（口令在你的终端里输入，不落在任何文件里）
-deploy/deploy.sh tunnel    # 打开隧道，然后访问 http://127.0.0.1:8780
+deploy/deploy.sh tunnel    # 打开隧道，然后访问 http://localhost:8780
 deploy/deploy.sh           # 之后每次更新：编译、上传、切换；新版本起不来会自动退回上一版
 ```
 
 服务器不需要为它开任何入站端口：后台走 SSH 隧道（用的是 SSH 本来就开着的 22），
 QQ 机器人、模型、日历、邮件都是助手主动连出去的。
+
+### 登录后台
+
+光有密码进不了后台。两种登录方式，可以开一种，也可以两种都开（在「登录与安全」页里设）：
+
+- **密码 + 动态验证码**：输完密码，再输手机验证器（Microsoft Authenticator 等，标准 TOTP）上的 6 位数字。
+  密码在第一步并不校验——系统先验验证码，验证码对了才比密码，错了也不说错的是哪一个，
+  所以没有验证器的人连试密码的机会都没有。每个验证码只能用一次。
+- **通行密钥**：用设备上的指纹、面容或硬件密钥登录，要求设备当场验证使用者本人。
+  通行密钥和访问后台用的域名绑定，而且不认 IP 地址：经隧道访问时用 `localhost`，不要用 `127.0.0.1`。
+
+第一次登录只能用密码，进来之后必须先设好一种方式，别的页面才打得开；设好之后单凭密码就进不来了。
+手机丢了、通行密钥也用不了时，在服务器上运行 `atomctl admin reset-login`，回到只凭密码登录的状态重新设置。
+
+### 数据加密
+
+- **数据库**：任务、步骤的输入输出、记忆、事件、审计详情等内容，写进数据库之前先加密，读出来再解密。
+  别的程序拿到数据库的账号、数据文件或者备份，看到的都是密文。调度要用的编号、状态、时间不加密。
+- **密钥**：首次启动时随机生成，存在密钥文件里；包它的那把密钥由安装时的随机种子和这台机器的硬件特征派生，
+  所以数据库连同密钥文件一起被拷到别的机器上也解不开。它挡不了已经拿到这台机器上助手账号的人。
+- **换机器**用导出导入（见下面「迁移服务器」）。机器的硬件标识意外变了（重装系统、云主机迁移）会让密钥文件打不开，
+  所以建议装好之后用 `atomctl key backup <文件>` 留一份用口令加密的备份，出事时用 `atomctl key restore <文件>` 恢复。
+- **工作区文件**默认不加密。在配置的 `files` 一节写 `encrypt: true` 之后，写进工作区的文件落盘即加密，
+  读取、下载、发给你的时候在内存里解开。
 
 ### 处理文件
 
@@ -521,17 +546,20 @@ curl -X POST http://127.0.0.1:8787/events/mail.received   -H "Authorization: Bea
 ### 迁移服务器
 
 ```bash
-# 旧机器：按板块导出，或者一次全导
-atomctl export memory memory.json
-atomctl export all backup.json          # memory / tasks / events / vault / skills
+# 旧机器：按板块导出，或者一次全导。导出时要你当场设一个口令
+atomctl export memory memory.bin
+atomctl export all backup.bin           # memory / tasks / events / vault / skills
 
-# 新机器：先 atomd -migrate-only 建表，再导入
-atomctl import backup.json
+# 新机器：先启动一次 atomd（建表、生成这台机器自己的数据密钥），再导入，输入导出时设的口令
+atomctl import backup.bin
 ```
 
+库里的内容是用旧机器的密钥加密的，那把密钥带不走。所以导出时先解密，再把整个文件用你设的口令加密；
+导入时用口令解开，再用新机器自己的密钥加密后存进去。口令没有找回的办法。
+
 导出在同一个快照里完成，导入在一个事务里完成；已存在的数据不会被覆盖，同一个文件导两次是安全的。
-新机器上的程序版本不能比导出时旧。保险库导出的是密文，**密钥 `ATOM_VAULT_KEY` 要自己带过去**；
-`config.yaml` 和模型密钥同理，它们不在数据库里。
+新机器上的程序版本不能比导出时旧。保险库条目的值仍是保险库自己的密文，**密钥 `ATOM_VAULT_KEY` 要自己带过去**；
+`config.yaml` 和模型密钥同理，它们不在数据库里。后台的登录方式不随导出走，到新机器上重新设置。
 
 demo 流程依次经过：一次推理 → 一次只读查询 → 等待 10 秒 → 一次不可逆操作 → 完成，
 用来观察 `waiting → ready` 唤醒和审批路径。**不会产生任何真实副作用。**
@@ -562,6 +590,7 @@ go run ./cmd/atomd
 | `ATOM_LOG_LEVEL` | `info` | debug / info / warn / error |
 | `ATOM_CONFIG` | 空 | YAML 配置路径。不设置则跑 demo 模式 |
 | `ATOM_VAULT_KEY` | 空 | 保险库密钥。不设置则保险库锁定：能列名字，不能存也不能用 |
+| `ATOM_KEY_FILE` | 配置文件所在目录下的 `atomhelper.key` | 数据密钥文件。首次启动时生成，与本机硬件绑定 |
 | `ATOM_WEBHOOK_ADDR` | 空 | Webhook 监听地址。不设置则不开 |
 | `ATOM_WEBHOOK_TOKEN` | 空 | Webhook 令牌，至少 24 个字符。开了入口就必须设置 |
 | `ATOM_SKILL_SCANNER` | `skillspector` | Skill 安装前扫描器的可执行文件 |

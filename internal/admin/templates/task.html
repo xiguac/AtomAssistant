@@ -2,6 +2,8 @@
 {{with .Data}}
 <div class="crumb"><a href="/">任务</a> / {{short .Task.Title 40}}</div>
 
+<div class="cols even">
+<div>
 <div class="card pad">
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <h1 style="font-size:20px;line-height:28px">{{.Task.Title}}</h1>
@@ -82,6 +84,8 @@
 </div>
 {{end}}
 
+</div>
+<div>
 <h2>执行步骤 <span class="count">{{len .Steps}}</span></h2>
 <div class="card">
   {{if .Steps}}<ol class="steps">
@@ -102,6 +106,8 @@
       </div>
     </li>{{end}}
   </ol>{{else}}<div class="empty">任务尚未开始执行。</div>{{end}}
+</div>
+</div>
 </div>
 {{end}}
 {{end}}

@@ -72,6 +72,8 @@ const usage = `用法:
 
   atomctl admin passwd           为网页管理后台设置登录口令：从标准输入读口令，打印要放进
                                  环境变量 ATOM_ADMIN_PASSWORD_HASH 的摘要
+  atomctl admin reset-login      手机上的验证器和通行密钥都用不了时：清除后台的登录方式设置，
+                                 恢复为只凭密码登录，登录后须重新设置
 
   atomctl connector check        试连配置里的日历和邮件，确认账号、密码和服务器地址都对
 
@@ -120,7 +122,7 @@ func run(args []string) error {
 	// 恢复密钥则正是因为密钥文件用不了。
 	switch {
 	case args[0] == "admin" && len(args) > 1 && args[1] == "passwd":
-		return adminCmd(args[1:])
+		return adminPasswd()
 	case args[0] == "vault" && len(args) > 1 && args[1] == "keygen":
 		return vaultCmd(ctx, nil, cfg.VaultKey, args[1:])
 	case args[0] == "key":
@@ -196,7 +198,7 @@ func run(args []string) error {
 	case "file":
 		return fileCmd(cfg, box, args[1:])
 	case "admin":
-		return adminCmd(args[1:])
+		return adminCmd(ctx, st, args[1:])
 	case "style":
 		return styleCmd(ctx, st, cfg, args[1:])
 	case "skill":

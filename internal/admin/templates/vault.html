@@ -4,6 +4,8 @@
 
 <div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>保险库不提供查看功能，已保存的值对任何人均不可见。如需修改，请以相同名称重新保存。</div></div>
 
+<div class="cols">
+<div>
 <div class="card">
   <div class="band"><b>条目列表</b><span class="count">{{len .Data.Items}}</span></div>
   {{if .Data.Items}}<table>
@@ -20,6 +22,8 @@
   </table>{{else}}<div class="empty">暂无条目。模型的 API Key 可在「模型」页直接填写。</div>{{end}}
 </div>
 
+</div>
+<div>
 <form method="post" action="/vault" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
   <div class="band"><b>新增条目</b></div>
@@ -42,4 +46,6 @@
   </div>
   <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>
+</div>
+</div>
 {{end}}

@@ -52,8 +52,9 @@ func (s *Server) loadPassword() error {
 	return nil
 }
 
-func (s *Server) passwordPage(w http.ResponseWriter, _ *http.Request, v *view) {
-	s.render(w, "password", v)
+// passwordPage 是旧的地址：修改密码现在在「登录与安全」页里。
+func (s *Server) passwordPage(w http.ResponseWriter, r *http.Request, _ *view) {
+	http.Redirect(w, r, "/security", http.StatusSeeOther)
 }
 
 // passwordChange 修改登录密码。要先验证当前密码：会话被人拿到了，也不能凭它直接把密码换掉。
@@ -127,5 +128,5 @@ func (s *Server) passwordChange(w http.ResponseWriter, r *http.Request, _ *view)
 		s.opts.Log.Warn("后台登录密码已修改", "来自", r.RemoteAddr)
 		return nil
 	}()
-	back(w, r, "/password", "登录密码已修改，立即生效。其他已登录的会话已全部退出。", err)
+	back(w, r, "/security", "登录密码已修改，立即生效。其他已登录的会话已全部退出。", err)
 }
