@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/style"
 )
@@ -21,7 +22,7 @@ func TestStyleStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	s, err := pg.Open(ctx, dsn)
+	s, err := pg.Open(ctx, dsn, seal.TestBox())
 	if err != nil {
 		t.Fatalf("连接失败: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestStyleStore(t *testing.T) {
 
 	// 学到的风格随记忆板块一起导出导入。
 	var buf bytes.Buffer
-	if err := s.Export(ctx, []pg.Section{pg.SectionMemory}, &buf); err != nil {
+	if err := s.Export(ctx, []pg.Section{pg.SectionMemory}, &buf, "export passphrase"); err != nil {
 		t.Fatalf("导出失败: %v", err)
 	}
 	if err := store.Clear(ctx); err != nil {
@@ -107,7 +108,7 @@ func TestStyleStore(t *testing.T) {
 	if p, _ := store.GetProfile(ctx, style.SceneChat); p != nil {
 		t.Fatal("清空后不应还有概述")
 	}
-	rep, err := s.Import(ctx, &buf)
+	rep, err := s.Import(ctx, &buf, "export passphrase")
 	if err != nil {
 		t.Fatalf("导入失败: %v", err)
 	}

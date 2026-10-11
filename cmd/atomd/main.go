@@ -31,6 +31,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/schedule"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/skillscan"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/style"
@@ -60,7 +61,17 @@ func run(migrateOnly, checkOnly bool) error {
 	initCtx, cancelInit := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelInit()
 
-	st, err := pg.Open(initCtx, cfg.DSN)
+	// 数据密钥：第一次启动时生成，之后每次从密钥文件里取。它和这台机器的硬件绑在一起。
+	box, created, err := seal.LoadKey(cfg.KeyFile, true)
+	if err != nil {
+		return fmt.Errorf("打开数据密钥 %s 失败: %w", cfg.KeyFile, err)
+	}
+	if created {
+		log.Warn("已生成数据密钥。它与这台机器绑定，换机器请用 atomctl export / import 迁移；"+
+			"建议现在用 atomctl key backup 留一份备份，以防硬件标识意外变化", "密钥文件", cfg.KeyFile)
+	}
+
+	st, err := pg.Open(initCtx, cfg.DSN, box)
 	if err != nil {
 		return err
 	}

@@ -1,13 +1,19 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
+	"time"
 
+	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 )
 
@@ -97,8 +103,20 @@ func oneLine(s string, max int) string {
 	return string(r)
 }
 
+// readSecret 从标准输入读一行口令。写在命令行里会留在 shell 历史和进程列表里。
+func readSecret(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return "", fmt.Errorf("读取口令失败: %w", err)
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
 // exportCmd 把一个或全部板块导出到文件。
-func exportCmd(ctx context.Context, st *pg.Store, which, path string) error {
+//
+// 库里的内容是用这台机器的密钥加密的，带不到别的机器上。导出时解密，再用用户当场设的口令加密。
+func exportCmd(st *pg.Store, which, path string) error {
 	sections := pg.Sections()
 	if which != "all" {
 		sec, err := pg.ParseSection(which)
@@ -107,12 +125,19 @@ func exportCmd(ctx context.Context, st *pg.Store, which, path string) error {
 		}
 		sections = []pg.Section{sec}
 	}
+	passphrase, err := readSecret(fmt.Sprintf("给导出文件设一个口令（至少 %d 个字符），导入时要用，回车结束: ", seal.MinPassphrase))
+	if err != nil {
+		return err
+	}
+	// 等用户输入口令的时间不该算进数据库操作的时限里。
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	// 不覆盖已有文件：导出文件可能是用户唯一的一份备份。
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("创建导出文件失败: %w", err)
 	}
-	if err := st.Export(ctx, sections, f); err != nil {
+	if err := st.Export(ctx, sections, f, passphrase); err != nil {
 		_ = f.Close()
 		_ = os.Remove(path)
 		return err
@@ -121,18 +146,28 @@ func exportCmd(ctx context.Context, st *pg.Store, which, path string) error {
 		return fmt.Errorf("写入导出文件失败: %w", err)
 	}
 	fmt.Printf("已导出 %v 到 %s\n", sections, path)
+	fmt.Println("文件已用你设的口令加密。口令没有任何找回的办法，请记牢。")
 	return nil
 }
 
 // importCmd 从导出文件导入。已存在的数据不会被覆盖。
-func importCmd(ctx context.Context, st *pg.Store, path string) error {
-	f, err := os.Open(path)
+//
+// 用口令解开之后，内容用这台机器自己的密钥重新加密再存进去。
+func importCmd(st *pg.Store, path string) error {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("打开导出文件失败: %w", err)
 	}
-	defer f.Close()
-
-	rep, err := st.Import(ctx, f)
+	// 加密功能上线之前导出的文件没有加密，不用问口令。
+	passphrase := ""
+	if seal.IsPassphraseSealed(raw) {
+		if passphrase, err = readSecret("输入导出时设的口令，回车结束: "); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	rep, err := st.Import(ctx, bytes.NewReader(raw), passphrase)
 	if err != nil {
 		return err
 	}
@@ -144,5 +179,56 @@ func importCmd(ctx context.Context, st *pg.Store, path string) error {
 	for _, t := range tables {
 		fmt.Printf("%s: 新增 %d 行\n", t, rep.Inserted[t])
 	}
+	return nil
+}
+
+// keyCmd 处理 atomctl key 的子命令：备份和恢复数据密钥。
+//
+// 数据密钥和这台机器的硬件绑在一起。正常换机器走导出导入，用不到这里；
+// 这两条命令是给意外情况准备的——云主机迁移、重装系统之后硬件标识变了，密钥文件就打不开了。
+func keyCmd(cfg *config.Config, args []string) error {
+	if len(args) < 2 || (args[0] != "backup" && args[0] != "restore") {
+		return fmt.Errorf("key 需要子命令: backup <文件> / restore <文件>")
+	}
+	path := args[1]
+	if args[0] == "backup" {
+		passphrase, err := readSecret(fmt.Sprintf("给这份备份设一个口令（至少 %d 个字符），回车结束: ", seal.MinPassphrase))
+		if err != nil {
+			return err
+		}
+		backup, err := seal.BackupKey(cfg.KeyFile, passphrase)
+		if err != nil {
+			return err
+		}
+		// 不覆盖已有文件：那可能是另一把密钥的备份。
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return fmt.Errorf("创建备份文件失败: %w", err)
+		}
+		if _, err := f.Write(backup); err != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+			return fmt.Errorf("写入备份文件失败: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("写入备份文件失败: %w", err)
+		}
+		fmt.Printf("数据密钥已备份到 %s。\n", path)
+		fmt.Println("把它存到这台服务器之外的地方。拿到这个文件和口令的人能解开数据库里的全部内容。")
+		return nil
+	}
+	backup, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("打开备份文件失败: %w", err)
+	}
+	passphrase, err := readSecret("输入备份时设的口令，回车结束: ")
+	if err != nil {
+		return err
+	}
+	if err := seal.RestoreKey(cfg.KeyFile, passphrase, backup); err != nil {
+		return err
+	}
+	fmt.Printf("已在 %s 重建密钥文件，并与这台机器绑定。\n", cfg.KeyFile)
+	fmt.Println("如果这条命令是以 root 身份运行的，记得把文件的属主改成运行 atomd 的账号，否则服务读不到它。")
 	return nil
 }

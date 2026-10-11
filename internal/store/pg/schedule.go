@@ -15,10 +15,11 @@ import (
 // ScheduleStore 是 schedule.Store 的 Postgres 实现，与任务存储共用连接池。
 type ScheduleStore struct {
 	pool *pgxpool.Pool
+	z    sealer
 }
 
 // Schedules 返回基于同一连接池的定时任务存储。
-func (s *Store) Schedules() *ScheduleStore { return &ScheduleStore{pool: s.pool} }
+func (s *Store) Schedules() *ScheduleStore { return &ScheduleStore{pool: s.pool, z: s.z} }
 
 var _ schedule.Store = (*ScheduleStore)(nil)
 
@@ -32,7 +33,7 @@ func (s *ScheduleStore) Add(ctx context.Context, sc *schedule.Schedule) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO schedules (`+scheduleColumns+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		sc.ID, sc.Title, sc.Goal, int64(sc.Every), sc.NextRunAt, sc.Enabled,
+		sc.ID, s.z.str("schedules.title", sc.Title), s.z.str("schedules.goal", sc.Goal), int64(sc.Every), sc.NextRunAt, sc.Enabled,
 		int16(sc.Origin), string(sc.Domain), sc.LastTaskID, sc.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入定时任务失败: %w", err)
@@ -69,6 +70,9 @@ func (s *ScheduleStore) query(ctx context.Context, sql string, args ...any) ([]*
 		)
 		if err := rows.Scan(&sc.ID, &sc.Title, &sc.Goal, &every, &sc.NextRunAt, &sc.Enabled,
 			&origin, &domain, &sc.LastTaskID, &sc.CreatedAt); err != nil {
+			return nil, fmt.Errorf("pg: 解析定时任务失败: %w", err)
+		}
+		if err := s.z.opens("schedules.title", &sc.Title, "schedules.goal", &sc.Goal); err != nil {
 			return nil, fmt.Errorf("pg: 解析定时任务失败: %w", err)
 		}
 		sc.Every = time.Duration(every)
@@ -118,7 +122,7 @@ func (s *ScheduleStore) Fire(ctx context.Context, id string, expected, next time
 		return false, nil
 	}
 	if task != nil {
-		if err := insertTask(ctx, tx, task); err != nil {
+		if err := s.z.insertTask(ctx, tx, task); err != nil {
 			return false, err
 		}
 	}

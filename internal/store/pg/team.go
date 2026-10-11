@@ -12,10 +12,11 @@ import (
 // TeamStore 是 team.Store 的 Postgres 实现。
 type TeamStore struct {
 	pool *pgxpool.Pool
+	z    sealer
 }
 
 // Team 返回基于同一连接池的协作记录存储。
-func (s *Store) Team() *TeamStore { return &TeamStore{pool: s.pool} }
+func (s *Store) Team() *TeamStore { return &TeamStore{pool: s.pool, z: s.z} }
 
 var _ team.Store = (*TeamStore)(nil)
 
@@ -26,7 +27,7 @@ func (s *TeamStore) PutWork(ctx context.Context, w *team.Work) error {
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		ON CONFLICT (id) DO UPDATE
 		   SET worker = EXCLUDED.worker, category = EXCLUDED.category, title = EXCLUDED.title`,
-		w.ID, w.TaskID, w.StepSeq, w.Index, w.Worker, string(w.Category), w.Title, w.CreatedAt)
+		w.ID, w.TaskID, w.StepSeq, w.Index, w.Worker, string(w.Category), s.z.str("team_work.title", w.Title), w.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 记录派出去的活失败: %w", err)
 	}
@@ -47,6 +48,9 @@ func (s *TeamStore) queryWork(ctx context.Context, sql string, args ...any) ([]t
 		var cat string
 		if err := rows.Scan(&w.ID, &w.TaskID, &w.StepSeq, &w.Index, &w.Worker, &cat, &w.Title,
 			&w.Rating, &w.RatedBy, &w.CreatedAt); err != nil {
+			return nil, fmt.Errorf("pg: 读取派出去的活失败: %w", err)
+		}
+		if err := s.z.open("team_work.title", &w.Title); err != nil {
 			return nil, fmt.Errorf("pg: 读取派出去的活失败: %w", err)
 		}
 		w.Category = team.Category(cat)

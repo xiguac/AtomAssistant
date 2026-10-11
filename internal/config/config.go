@@ -7,9 +7,12 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xiguac/atomhelper/internal/seal"
 )
 
 // Config 是 atomd 的运行配置。
@@ -30,6 +33,10 @@ type Config struct {
 	// ConfigPath 指向 YAML 配置文件。为空时 atomd 跑在 demo 模式下，
 	// 不接任何真实模型与工具。
 	ConfigPath string
+
+	// KeyFile 是数据密钥文件的路径。数据库里的内容、工作区里的文件都靠它加密，
+	// 它和这台机器的硬件绑在一起。不设置时与配置文件放在同一个目录。
+	KeyFile string
 
 	// VaultKey 是保险库密钥（base64 编码的 32 字节）。只从环境变量来，
 	// 不进配置文件也不进数据库。为空时保险库处于锁定状态。
@@ -67,6 +74,7 @@ func Load() (*Config, error) {
 		LogLevel:   envString("ATOM_LOG_LEVEL", "info"),
 		ConfigPath: os.Getenv("ATOM_CONFIG"),
 		VaultKey:   os.Getenv("ATOM_VAULT_KEY"),
+		KeyFile:    os.Getenv("ATOM_KEY_FILE"),
 
 		WebhookAddr:  os.Getenv("ATOM_WEBHOOK_ADDR"),
 		WebhookToken: os.Getenv("ATOM_WEBHOOK_TOKEN"),
@@ -81,6 +89,10 @@ func Load() (*Config, error) {
 	}
 	if c.DSN == "" {
 		return nil, fmt.Errorf("config: 必须设置 ATOM_DSN")
+	}
+	if c.KeyFile == "" {
+		// 没有配置文件时落在当前目录：systemd 下那是数据目录，开发时是项目目录。
+		c.KeyFile = filepath.Join(filepath.Dir(c.ConfigPath), seal.KeyFileName)
 	}
 	// 开了入口却没有令牌，等于把事件总线敞给所有能连上这个端口的人。
 	if c.WebhookAddr != "" && c.WebhookToken == "" {

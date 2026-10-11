@@ -14,10 +14,11 @@ import (
 // EventStore 是 event.Store 的 Postgres 实现，与任务存储共用连接池。
 type EventStore struct {
 	pool *pgxpool.Pool
+	z    sealer
 }
 
 // Events 返回基于同一连接池的事件存储。
-func (s *Store) Events() *EventStore { return &EventStore{pool: s.pool} }
+func (s *Store) Events() *EventStore { return &EventStore{pool: s.pool, z: s.z} }
 
 var _ event.Store = (*EventStore)(nil)
 
@@ -28,7 +29,7 @@ func (s *EventStore) SaveEvent(ctx context.Context, e *event.Event) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO events (id, topic, payload, trust, source, occurred_at, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		e.ID, e.Topic, nullJSON(e.Payload), int16(e.Trust), e.Source, e.OccurredAt, e.CreatedAt)
+		e.ID, e.Topic, s.z.json("events.payload", e.Payload), int16(e.Trust), s.z.str("events.source", e.Source), e.OccurredAt, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入事件失败: %w", err)
 	}
@@ -42,7 +43,7 @@ func (s *EventStore) SaveForTask(ctx context.Context, e *event.Event, taskID str
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO events (id, topic, payload, trust, source, occurred_at, created_at, inbox_task_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		e.ID, e.Topic, nullJSON(e.Payload), int16(e.Trust), e.Source, e.OccurredAt, e.CreatedAt, taskID)
+		e.ID, e.Topic, s.z.json("events.payload", e.Payload), int16(e.Trust), s.z.str("events.source", e.Source), e.OccurredAt, e.CreatedAt, taskID)
 	if err != nil {
 		return fmt.Errorf("pg: 写入收件箱失败: %w", err)
 	}
@@ -68,6 +69,13 @@ func (s *EventStore) InboxOf(ctx context.Context, taskID string) ([]*event.Event
 			trust   int16
 		)
 		if err := rows.Scan(&e.ID, &e.Topic, &payload, &trust, &e.Source, &e.OccurredAt, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("pg: 解析收件箱失败: %w", err)
+		}
+		var err error
+		if payload, err = s.z.openJSON("events.payload", payload); err != nil {
+			return nil, fmt.Errorf("pg: 解析收件箱失败: %w", err)
+		}
+		if err := s.z.open("events.source", &e.Source); err != nil {
 			return nil, fmt.Errorf("pg: 解析收件箱失败: %w", err)
 		}
 		e.Payload = payload
@@ -96,7 +104,7 @@ func (s *EventStore) AddSubscription(ctx context.Context, sub *event.Subscriptio
 		INSERT INTO event_subscriptions
 		       (id, task_id, topic_prefix, expr, once, expires_at, active, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		sub.ID, sub.TaskID, sub.TopicPrefix, sub.Expr, sub.Once, sub.ExpiresAt, sub.Active, sub.CreatedAt)
+		sub.ID, sub.TaskID, sub.TopicPrefix, s.z.str("event_subscriptions.expr", sub.Expr), sub.Once, sub.ExpiresAt, sub.Active, sub.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入订阅失败: %w", err)
 	}
@@ -119,6 +127,9 @@ func (s *EventStore) ActiveSubscriptions(ctx context.Context, now time.Time) ([]
 		var sub event.Subscription
 		if err := rows.Scan(&sub.ID, &sub.TaskID, &sub.TopicPrefix, &sub.Expr,
 			&sub.Once, &sub.ExpiresAt, &sub.Active, &sub.CreatedAt); err != nil {
+			return nil, fmt.Errorf("pg: 解析订阅失败: %w", err)
+		}
+		if err := s.z.open("event_subscriptions.expr", &sub.Expr); err != nil {
 			return nil, fmt.Errorf("pg: 解析订阅失败: %w", err)
 		}
 		out = append(out, &sub)

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/store/storetest"
@@ -30,7 +31,7 @@ func TestPostgresStore契约(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		t.Cleanup(cancel)
 
-		s, err := pg.Open(ctx, dsn)
+		s, err := pg.Open(ctx, dsn, seal.TestBox())
 		if err != nil {
 			t.Fatalf("连接数据库失败: %v", err)
 		}

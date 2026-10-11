@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store"
 )
 
@@ -27,12 +28,19 @@ var migrationFS embed.FS
 // Store 用连接池访问 Postgres。
 type Store struct {
 	pool *pgxpool.Pool
+	// z 负责内容列的加解密，见 sealed.go。
+	z sealer
 }
 
 var _ store.TaskStore = (*Store)(nil)
 
 // Open 建立连接池并验证连通性。
-func Open(ctx context.Context, dsn string) (*Store, error) {
+//
+// box 是内容列加解密用的密钥，必须提供：没有它，写进去的就是明文。
+func Open(ctx context.Context, dsn string, box *seal.Box) (*Store, error) {
+	if box == nil {
+		return nil, fmt.Errorf("pg: 没有提供数据密钥，拒绝以明文方式打开数据库")
+	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("pg: 解析 DSN 失败: %w", err)
@@ -50,7 +58,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("pg: 数据库不可达: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, z: sealer{box: box}}, nil
 }
 
 // Close 关闭连接池。
@@ -113,7 +121,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("pg: 提交迁移 %s 失败: %w", name, err)
 		}
 	}
-	return nil
+	// 表结构就绪之后，确认库里的内容是用当前这把密钥加密的；升级前留下的明文在这里补加密。
+	return s.ensureSealed(ctx)
 }
 
 // ResetForTest 删除全部表与数据。
@@ -126,7 +135,8 @@ func (s *Store) ResetForTest(ctx context.Context) error {
 		DROP TABLE IF EXISTS audit_log, task_steps, tasks,
 			memory_pending, memory_revisions, memories,
 			event_subscriptions, events, vault_items, schedules, skills, mcp_installs,
-			style_samples, style_profiles, channel_chats, channel_notices, team_work, schema_migrations CASCADE`)
+			style_samples, style_profiles, channel_chats, channel_notices, team_work,
+			seal_state, settings, schema_migrations CASCADE`)
 	if err != nil {
 		return fmt.Errorf("pg: 重置数据库失败: %w", err)
 	}
@@ -143,7 +153,7 @@ const taskColumns = `
 	created_at, updated_at, usage_cost_micros`
 
 func (s *Store) CreateTask(ctx context.Context, t *core.Task) error {
-	return insertTask(ctx, s.pool, t)
+	return s.z.insertTask(ctx, s.pool, t)
 }
 
 // ListTasks 按创建时间倒序列出任务。activeOnly 为真时不含已结束的。
@@ -164,7 +174,7 @@ func (s *Store) ListTasks(ctx context.Context, activeOnly bool, limit int) ([]*c
 
 	out := make([]*core.Task, 0)
 	for rows.Next() {
-		t, err := scanTask(rows)
+		t, err := s.z.scanTask(rows)
 		if err != nil {
 			return nil, fmt.Errorf("pg: 解析任务失败: %w", err)
 		}
@@ -173,7 +183,7 @@ func (s *Store) ListTasks(ctx context.Context, activeOnly bool, limit int) ([]*c
 	return out, rows.Err()
 }
 
-func insertTask(ctx context.Context, db execer, t *core.Task) error {
+func (z sealer) insertTask(ctx context.Context, db execer, t *core.Task) error {
 	if err := t.Validate(); err != nil {
 		return err
 	}
@@ -182,15 +192,16 @@ func insertTask(ctx context.Context, db execer, t *core.Task) error {
 		return err
 	}
 	_, err = db.Exec(ctx, `
-		INSERT INTO tasks (`+taskColumns+`)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
-		t.ID, nullString(t.ParentID), t.Title, t.Goal, string(t.State), t.Reason,
-		string(t.Domain), string(t.Visibility), t.VisibilityTarget, int16(t.Origin),
-		t.Priority, nonNilTags(t.Tags),
+		INSERT INTO tasks (`+taskColumns+`, wake_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+		t.ID, nullString(t.ParentID), z.str("tasks.title", t.Title), z.str("tasks.goal", t.Goal),
+		string(t.State), z.str("tasks.reason", t.Reason),
+		string(t.Domain), string(t.Visibility), z.str("tasks.visibility_target", t.VisibilityTarget), int16(t.Origin),
+		t.Priority, z.eqs("tasks.tags", t.Tags),
 		t.Budget.MaxTokens, t.Budget.MaxCostCents, int64(t.Budget.MaxWallClock),
 		t.Usage.Tokens, t.Usage.CostCents, int64(t.Usage.WallClock),
-		t.Deadline, wake, t.NextSeq, t.LeaseOwner, t.LeaseExpiresAt,
-		t.CreatedAt, t.UpdatedAt, t.Usage.CostMicros)
+		t.Deadline, z.json("tasks.wake", wake), t.NextSeq, t.LeaseOwner, t.LeaseExpiresAt,
+		t.CreatedAt, t.UpdatedAt, t.Usage.CostMicros, wakeAt(t.Wake))
 	if err != nil {
 		return fmt.Errorf("pg: 创建任务失败: %w", err)
 	}
@@ -199,7 +210,7 @@ func insertTask(ctx context.Context, db execer, t *core.Task) error {
 
 func (s *Store) GetTask(ctx context.Context, id string) (*core.Task, error) {
 	row := s.pool.QueryRow(ctx, `SELECT `+taskColumns+` FROM tasks WHERE id = $1`, id)
-	t, err := scanTask(row)
+	t, err := s.z.scanTask(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -224,7 +235,7 @@ func (s *Store) Transition(ctx context.Context, id string, from, to core.TaskSta
 		       lease_owner = CASE WHEN $5 THEN '' ELSE lease_owner END,
 		       lease_expires_at = CASE WHEN $5 THEN NULL ELSE lease_expires_at END
 		 WHERE id = $1 AND state = $2`,
-		id, string(from), string(to), reason, releaseLease)
+		id, string(from), string(to), s.z.str("tasks.reason", reason), releaseLease)
 	if err != nil {
 		return fmt.Errorf("pg: 状态迁移失败: %w", err)
 	}
@@ -253,11 +264,11 @@ func (s *Store) UpdateTaskRuntime(ctx context.Context, t *core.Task) error {
 		UPDATE tasks
 		   SET usage_tokens = $2, usage_cost_cents = $3, usage_wall_ns = $4,
 		       next_seq = $5, wake = $6, deadline = $7, priority = $8,
-		       usage_cost_micros = $9,
+		       usage_cost_micros = $9, wake_at = $10,
 		       updated_at = now()
 		 WHERE id = $1`,
 		t.ID, t.Usage.Tokens, t.Usage.CostCents, int64(t.Usage.WallClock),
-		t.NextSeq, wake, t.Deadline, t.Priority, t.Usage.CostMicros)
+		t.NextSeq, s.z.json("tasks.wake", wake), t.Deadline, t.Priority, t.Usage.CostMicros, wakeAt(t.Wake))
 	if err != nil {
 		return fmt.Errorf("pg: 更新任务运行时失败: %w", err)
 	}
@@ -278,7 +289,7 @@ type execer interface {
 }
 
 func (s *Store) AppendStep(ctx context.Context, st *core.Step) error {
-	return insertStep(ctx, s.pool, st)
+	return s.z.insertStep(ctx, s.pool, st)
 }
 
 // WakeWithStep 在一个事务里完成唤醒与写步骤。
@@ -296,7 +307,7 @@ func (s *Store) WakeWithStep(ctx context.Context, taskID, reason string, st *cor
 		UPDATE tasks
 		   SET state = 'ready', reason = $2, updated_at = now(),
 		       lease_owner = '', lease_expires_at = NULL
-		 WHERE id = $1 AND state = 'waiting'`, taskID, reason)
+		 WHERE id = $1 AND state = 'waiting'`, taskID, s.z.str("tasks.reason", reason))
 	if err != nil {
 		return fmt.Errorf("pg: 唤醒任务失败: %w", err)
 	}
@@ -320,7 +331,7 @@ func (s *Store) WakeWithStep(ctx context.Context, taskID, reason string, st *cor
 	st.TaskID = taskID
 	st.Seq = seq
 	st.IdempotencyKey = core.IdempotencyKeyFor(taskID, seq)
-	if err := insertStep(ctx, tx, st); err != nil {
+	if err := s.z.insertStep(ctx, tx, st); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE tasks SET next_seq = $2 WHERE id = $1`, taskID, seq+1); err != nil {
@@ -332,7 +343,7 @@ func (s *Store) WakeWithStep(ctx context.Context, taskID, reason string, st *cor
 	return nil
 }
 
-func insertStep(ctx context.Context, db execer, st *core.Step) error {
+func (z sealer) insertStep(ctx context.Context, db execer, st *core.Step) error {
 	if err := st.Validate(); err != nil {
 		return err
 	}
@@ -340,9 +351,10 @@ func insertStep(ctx context.Context, db execer, st *core.Step) error {
 		INSERT INTO task_steps (`+stepColumns+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		st.ID, st.TaskID, st.Seq, string(st.Type), string(st.Status), st.ToolName,
-		string(st.SideEffect), st.InputHash, nullJSON(st.Input), nullJSON(st.Output),
+		string(st.SideEffect), z.str("task_steps.input_hash", st.InputHash),
+		z.json("task_steps.input", st.Input), z.json("task_steps.output", st.Output),
 		int16(st.OutputTrust), st.IdempotencyKey,
-		st.TokensIn, st.TokensOut, st.CostCents, st.Err, st.StartedAt, st.EndedAt)
+		st.TokensIn, st.TokensOut, st.CostCents, z.str("task_steps.err", st.Err), st.StartedAt, st.EndedAt)
 	if err != nil {
 		if isUniqueViolation(err, "task_steps_seq_unique") {
 			return fmt.Errorf("%w: 任务 %s seq=%d", store.ErrDuplicateSeq, st.TaskID, st.Seq)
@@ -362,8 +374,8 @@ func (s *Store) SaveStep(ctx context.Context, st *core.Step) error {
 		       tokens_in = $6, tokens_out = $7, cost_cents = $8,
 		       err = $9, ended_at = $10
 		 WHERE task_id = $1 AND seq = $2`,
-		st.TaskID, st.Seq, string(st.Status), nullJSON(st.Output), int16(st.OutputTrust),
-		st.TokensIn, st.TokensOut, st.CostCents, st.Err, st.EndedAt)
+		st.TaskID, st.Seq, string(st.Status), s.z.json("task_steps.output", st.Output), int16(st.OutputTrust),
+		st.TokensIn, st.TokensOut, st.CostCents, s.z.str("task_steps.err", st.Err), st.EndedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 更新步骤失败: %w", err)
 	}
@@ -383,7 +395,7 @@ func (s *Store) ListSteps(ctx context.Context, taskID string) ([]*core.Step, err
 
 	out := make([]*core.Step, 0)
 	for rows.Next() {
-		st, err := scanStep(rows)
+		st, err := s.z.scanStep(rows)
 		if err != nil {
 			return nil, fmt.Errorf("pg: 解析步骤失败: %w", err)
 		}
@@ -419,7 +431,7 @@ func (s *Store) ClaimReady(ctx context.Context, owner string, lease time.Duratio
 
 	out := make([]*core.Task, 0, limit)
 	for rows.Next() {
-		t, err := scanTask(rows)
+		t, err := s.z.scanTask(rows)
 		if err != nil {
 			return nil, fmt.Errorf("pg: 解析任务失败: %w", err)
 		}
@@ -450,13 +462,13 @@ func (s *Store) ReclaimExpired(ctx context.Context, now time.Time) (int, error) 
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE tasks
 		   SET state = 'ready',
-		       reason = '执行租约过期，重新入队',
+		       reason = $2,
 		       lease_owner = '',
 		       lease_expires_at = NULL,
 		       updated_at = now()
 		 WHERE state = 'running'
 		   AND lease_expires_at IS NOT NULL
-		   AND lease_expires_at <= $1`, now)
+		   AND lease_expires_at <= $1`, now, s.z.str("tasks.reason", "执行租约过期，重新入队"))
 	if err != nil {
 		return 0, fmt.Errorf("pg: 回收过期租约失败: %w", err)
 	}
@@ -468,9 +480,9 @@ func (s *Store) DueWaiting(ctx context.Context, now time.Time, limit int) ([]*co
 		SELECT `+taskColumns+`
 		  FROM tasks
 		 WHERE state = 'waiting'
-		   AND wake ->> 'at' IS NOT NULL
-		   AND (wake ->> 'at')::timestamptz <= $1
-		 ORDER BY (wake ->> 'at')::timestamptz
+		   AND wake_at IS NOT NULL
+		   AND wake_at <= $1
+		 ORDER BY wake_at
 		 LIMIT $2`, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("pg: 查询到期任务失败: %w", err)
@@ -479,7 +491,7 @@ func (s *Store) DueWaiting(ctx context.Context, now time.Time, limit int) ([]*co
 
 	out := make([]*core.Task, 0)
 	for rows.Next() {
-		t, err := scanTask(rows)
+		t, err := s.z.scanTask(rows)
 		if err != nil {
 			return nil, fmt.Errorf("pg: 解析任务失败: %w", err)
 		}
@@ -498,7 +510,7 @@ func (s *Store) Audit(ctx context.Context, e store.AuditEntry) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO audit_log (id, at, actor, action, task_id, detail, trust_at_op)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		e.ID, e.At, e.Actor, e.Action, e.TaskID, e.Detail, int16(e.TrustAtOp))
+		e.ID, e.At, e.Actor, e.Action, e.TaskID, s.z.str("audit_log.detail", e.Detail), int16(e.TrustAtOp))
 	if err != nil {
 		return fmt.Errorf("pg: 写入审计失败: %w", err)
 	}
@@ -510,7 +522,7 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func scanTask(sc scanner) (*core.Task, error) {
+func (z sealer) scanTask(sc scanner) (*core.Task, error) {
 	var (
 		t          core.Task
 		parentID   *string
@@ -542,6 +554,16 @@ func scanTask(sc scanner) (*core.Task, error) {
 	t.Origin = core.TrustLevel(origin)
 	t.Budget.MaxWallClock = time.Duration(maxWall)
 	t.Usage.WallClock = time.Duration(usedWall)
+	if err := z.opens("tasks.title", &t.Title, "tasks.goal", &t.Goal, "tasks.reason", &t.Reason,
+		"tasks.visibility_target", &t.VisibilityTarget); err != nil {
+		return nil, err
+	}
+	if err := z.openAll("tasks.tags", t.Tags); err != nil {
+		return nil, err
+	}
+	if wake, err = z.openJSON("tasks.wake", wake); err != nil {
+		return nil, err
+	}
 	if len(wake) > 0 {
 		var w core.WakeCondition
 		if err := json.Unmarshal(wake, &w); err != nil {
@@ -552,7 +574,7 @@ func scanTask(sc scanner) (*core.Task, error) {
 	return &t, nil
 }
 
-func scanStep(sc scanner) (*core.Step, error) {
+func (z sealer) scanStep(sc scanner) (*core.Step, error) {
 	var (
 		s          core.Step
 		typ        string
@@ -573,9 +595,26 @@ func scanStep(sc scanner) (*core.Step, error) {
 	s.Status = core.StepStatus(status)
 	s.SideEffect = core.SideEffect(sideEffect)
 	s.OutputTrust = core.TrustLevel(trust)
+	if err := z.opens("task_steps.input_hash", &s.InputHash, "task_steps.err", &s.Err); err != nil {
+		return nil, err
+	}
+	if input, err = z.openJSON("task_steps.input", input); err != nil {
+		return nil, err
+	}
+	if output, err = z.openJSON("task_steps.output", output); err != nil {
+		return nil, err
+	}
 	s.Input = json.RawMessage(input)
 	s.Output = json.RawMessage(output)
 	return &s, nil
+}
+
+// wakeAt 取出唤醒条件里的时间，单独存一列：调度按它找到点的任务，而 wake 本身是加密的。
+func wakeAt(w *core.WakeCondition) *time.Time {
+	if w == nil {
+		return nil
+	}
+	return w.At
 }
 
 func marshalWake(w *core.WakeCondition) ([]byte, error) {

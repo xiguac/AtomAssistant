@@ -5,3 +5,6 @@ config.yaml
 # 部署目标（服务器地址和密钥路径）与本机编译出的发布包
 deploy/deploy.env
 bin/
+
+# 数据密钥：与本机硬件绑定，任何时候都不该进版本库
+atomhelper.key

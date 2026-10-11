@@ -2,6 +2,7 @@ package pg
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -15,10 +16,11 @@ import (
 // StyleStore 是 style.Store 的 Postgres 实现。
 type StyleStore struct {
 	pool *pgxpool.Pool
+	z    sealer
 }
 
 // Style 返回基于同一连接池的风格存储。
-func (s *Store) Style() *StyleStore { return &StyleStore{pool: s.pool} }
+func (s *Store) Style() *StyleStore { return &StyleStore{pool: s.pool, z: s.z} }
 
 var _ style.Store = (*StyleStore)(nil)
 
@@ -27,7 +29,8 @@ func (s *StyleStore) AddSample(ctx context.Context, in *style.Sample) (bool, err
 		INSERT INTO style_samples (id, scene, text, digest, ref, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (digest) DO NOTHING`,
-		in.ID, in.Scene, in.Text, in.Digest(), in.Ref, in.CreatedAt)
+		in.ID, in.Scene, s.z.str("style_samples.text", in.Text), s.z.eq("style_samples.digest", in.Digest()),
+		s.z.str("style_samples.ref", in.Ref), in.CreatedAt)
 	if err != nil {
 		return false, fmt.Errorf("pg: 写入风格样本失败: %w", err)
 	}
@@ -46,6 +49,9 @@ func (s *StyleStore) RecentSamples(ctx context.Context, scene string, limit int)
 	for rows.Next() {
 		var x style.Sample
 		if err := rows.Scan(&x.ID, &x.Scene, &x.Text, &x.Ref, &x.CreatedAt); err != nil {
+			return nil, fmt.Errorf("pg: 读取风格样本失败: %w", err)
+		}
+		if err := s.z.opens("style_samples.text", &x.Text, "style_samples.ref", &x.Ref); err != nil {
 			return nil, fmt.Errorf("pg: 读取风格样本失败: %w", err)
 		}
 		out = append(out, x)
@@ -89,6 +95,9 @@ func (s *StyleStore) GetProfile(ctx context.Context, scene string) (*style.Profi
 	if err != nil {
 		return nil, fmt.Errorf("pg: 读取风格概述失败: %w", err)
 	}
+	if err := s.z.open("style_profiles.description", &p.Description); err != nil {
+		return nil, fmt.Errorf("pg: 读取风格概述失败: %w", err)
+	}
 	return &p, nil
 }
 
@@ -98,7 +107,7 @@ func (s *StyleStore) PutProfile(ctx context.Context, p *style.Profile) error {
 		VALUES ($1,$2,$3,$4)
 		ON CONFLICT (scene) DO UPDATE
 		   SET description = EXCLUDED.description, up_to = EXCLUDED.up_to, updated_at = EXCLUDED.updated_at`,
-		p.Scene, p.Description, p.UpTo, p.UpdatedAt)
+		p.Scene, s.z.str("style_profiles.description", p.Description), p.UpTo, p.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入风格概述失败: %w", err)
 	}
@@ -129,20 +138,30 @@ func (s *StyleStore) Clear(ctx context.Context) error {
 // 学习用户写邮件的口气时要靠它把助手代写的信剔出去：那些信在"已发送"里和用户亲手写的
 // 混在一起，不剔掉的话助手就是在跟自己学，越学越像它自己。
 func (s *Store) AssistantSentMail(ctx context.Context) (map[string]bool, error) {
+	// 步骤的输出是加密的，数据库没法从里面取字段：把发信步骤的输出读出来，解密后自己取。
 	rows, err := s.pool.Query(ctx, `
-		SELECT output->>'message_id' FROM task_steps
-		 WHERE tool_name = 'mail.send' AND status = 'done' AND output->>'message_id' <> ''`)
+		SELECT output FROM task_steps
+		 WHERE tool_name = 'mail.send' AND status = 'done' AND output IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)
 	}
 	defer rows.Close()
 	out := make(map[string]bool)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
 			return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)
 		}
-		out[id] = true
+		if raw, err = s.z.openJSON("task_steps.output", raw); err != nil {
+			return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)
+		}
+		var sent struct {
+			MessageID string `json:"message_id"`
+		}
+		// 输出不是对象（比如只是一句话）就没有编号可取，跳过。
+		if json.Unmarshal(raw, &sent) == nil && sent.MessageID != "" {
+			out[sent.MessageID] = true
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("pg: 读取助手发出的邮件失败: %w", err)

@@ -20,10 +20,11 @@ import (
 // 不该为了分层整洁多开一套连接。
 type MemoryStore struct {
 	pool *pgxpool.Pool
+	z    sealer
 }
 
 // Memories 返回基于同一连接池的记忆存储。
-func (s *Store) Memories() *MemoryStore { return &MemoryStore{pool: s.pool} }
+func (s *Store) Memories() *MemoryStore { return &MemoryStore{pool: s.pool, z: s.z} }
 
 var _ memory.Store = (*MemoryStore)(nil)
 
@@ -40,12 +41,12 @@ func (s *MemoryStore) Get(ctx context.Context, id string) (*memory.Memory, error
 
 func (s *MemoryStore) FindByKey(ctx context.Context, key string) (*memory.Memory, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT `+memoryColumns+` FROM memories WHERE identity_key = $1`, key)
+		`SELECT `+memoryColumns+` FROM memories WHERE identity_key = $1`, s.z.eq("memories.identity_key", key))
 	return s.scanAndLoad(ctx, row)
 }
 
 func (s *MemoryStore) scanAndLoad(ctx context.Context, row pgx.Row) (*memory.Memory, error) {
-	m, currentID, err := scanMemory(row)
+	m, currentID, err := s.z.scanMemory(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, memory.ErrNotFound
 	}
@@ -69,6 +70,11 @@ func (s *MemoryStore) Put(ctx context.Context, m *memory.Memory) error {
 	if err != nil {
 		return fmt.Errorf("pg: 序列化偏好条件失败: %w", err)
 	}
+	// 没有条件时存一个空对象：这一列不允许为空，而导出导入分不出 JSON 的 null 和数据库的 NULL。
+	if string(cond) == "null" {
+		cond = []byte("{}")
+	}
+	z := s.z
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -95,16 +101,17 @@ func (s *MemoryStore) Put(ctx context.Context, m *memory.Memory) error {
 			tags = EXCLUDED.tags,
 			current_revision_id = EXCLUDED.current_revision_id,
 			updated_at = EXCLUDED.updated_at`,
-		m.ID, string(m.Kind), m.Subject, m.Domain, m.Attribute, cond, m.Key(),
+		m.ID, string(m.Kind), z.eq("memories.subject", m.Subject), z.eq("memories.domain", m.Domain),
+		z.str("memories.attribute", m.Attribute), z.json("memories.condition", cond), z.eq("memories.identity_key", m.Key()),
 		string(m.Status), string(m.Temporality), m.ValidFrom, m.ValidUntil,
-		m.Confidence, m.HitCount, m.LastHitAt, m.SafetyCritical, nonNilTags(m.Tags),
+		m.Confidence, m.HitCount, m.LastHitAt, m.SafetyCritical, z.eqs("memories.tags", m.Tags),
 		m.Current.ID, m.CreatedAt, m.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入记忆失败: %w", err)
 	}
 
 	for _, r := range append(append([]memory.Revision{}, m.History...), m.Current) {
-		if err := putRevision(ctx, tx, m.ID, r); err != nil {
+		if err := z.putRevision(ctx, tx, m.ID, r); err != nil {
 			return err
 		}
 	}
@@ -114,7 +121,7 @@ func (s *MemoryStore) Put(ctx context.Context, m *memory.Memory) error {
 	return nil
 }
 
-func putRevision(ctx context.Context, tx pgx.Tx, memoryID string, r memory.Revision) error {
+func (z sealer) putRevision(ctx context.Context, tx pgx.Tx, memoryID string, r memory.Revision) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO memory_revisions
 			(id, memory_id, value, source_kind, source_ref, source_trust,
@@ -125,9 +132,10 @@ func putRevision(ctx context.Context, tx pgx.Tx, memoryID string, r memory.Revis
 			override_reason = EXCLUDED.override_reason,
 			evidence = EXCLUDED.evidence,
 			confidence = EXCLUDED.confidence`,
-		r.ID, memoryID, r.Value, string(r.Source.Kind), r.Source.Ref, int16(r.Source.Trust),
-		nonNilTags(r.Evidence), r.Confidence, r.CreatedAt,
-		nullString(r.SupersededBy), r.OverrideReason)
+		r.ID, memoryID, z.str("memory_revisions.value", r.Value), string(r.Source.Kind),
+		z.str("memory_revisions.source_ref", r.Source.Ref), int16(r.Source.Trust),
+		z.strs("memory_revisions.evidence", r.Evidence), r.Confidence, r.CreatedAt,
+		nullString(r.SupersededBy), z.str("memory_revisions.override_reason", r.OverrideReason))
 	if err != nil {
 		return fmt.Errorf("pg: 写入记忆版本失败: %w", err)
 	}
@@ -143,10 +151,10 @@ func (s *MemoryStore) List(ctx context.Context, q memory.Query) ([]*memory.Memor
 		sql += fmt.Sprintf(clause, len(args))
 	}
 	if q.Subject != "" {
-		add(" AND subject = $%d", q.Subject)
+		add(" AND subject = $%d", s.z.eq("memories.subject", q.Subject))
 	}
 	if q.Domain != "" {
-		add(" AND domain = $%d", q.Domain)
+		add(" AND domain = $%d", s.z.eq("memories.domain", q.Domain))
 	}
 	if q.SafetyOnly {
 		sql += " AND safety_critical"
@@ -162,7 +170,7 @@ func (s *MemoryStore) List(ctx context.Context, q memory.Query) ([]*memory.Memor
 		add(" AND kind = ANY($%d)", kinds)
 	}
 	if len(q.Tags) > 0 {
-		add(" AND tags @> $%d", q.Tags)
+		add(" AND tags @> $%d", s.z.eqs("memories.tags", q.Tags))
 	}
 	sql += " ORDER BY updated_at DESC, id"
 	if q.Limit > 0 {
@@ -178,7 +186,7 @@ func (s *MemoryStore) List(ctx context.Context, q memory.Query) ([]*memory.Memor
 	out := make([]*memory.Memory, 0)
 	currents := make([]string, 0)
 	for rows.Next() {
-		m, currentID, err := scanMemory(rows)
+		m, currentID, err := s.z.scanMemory(rows)
 		if err != nil {
 			return nil, fmt.Errorf("pg: 解析记忆失败: %w", err)
 		}
@@ -218,6 +226,13 @@ func (s *MemoryStore) loadRevisions(ctx context.Context, m *memory.Memory, curre
 			&r.Evidence, &r.Confidence, &r.CreatedAt, &superseded, &r.OverrideReason); err != nil {
 			return fmt.Errorf("pg: 解析记忆版本失败: %w", err)
 		}
+		if err := s.z.opens("memory_revisions.value", &r.Value, "memory_revisions.source_ref", &r.Source.Ref,
+			"memory_revisions.override_reason", &r.OverrideReason); err != nil {
+			return fmt.Errorf("pg: 解析记忆版本失败: %w", err)
+		}
+		if err := s.z.openAll("memory_revisions.evidence", r.Evidence); err != nil {
+			return fmt.Errorf("pg: 解析记忆版本失败: %w", err)
+		}
 		r.MemoryID = m.ID
 		r.Source.Kind = memory.SourceKind(kind)
 		r.Source.Trust = core.TrustLevel(trust)
@@ -251,7 +266,8 @@ func (s *MemoryStore) PutPending(ctx context.Context, p memory.Pending) error {
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO memory_pending (id, memory_id, subject, candidate, arbitration, created_at)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
-		p.ID, nullString(p.MemoryID), p.Candidate.Subject, cand, arb, p.CreatedAt)
+		p.ID, nullString(p.MemoryID), s.z.eq("memory_pending.subject", p.Candidate.Subject),
+		s.z.json("memory_pending.candidate", cand), s.z.json("memory_pending.arbitration", arb), p.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入待裁决候选失败: %w", err)
 	}
@@ -263,7 +279,7 @@ func (s *MemoryStore) ListPending(ctx context.Context, subject string) ([]memory
 	          FROM memory_pending WHERE resolved_at IS NULL`
 	args := make([]any, 0, 1)
 	if subject != "" {
-		args = append(args, subject)
+		args = append(args, s.z.eq("memory_pending.subject", subject))
 		sql += " AND subject = $1"
 	}
 	sql += " ORDER BY created_at"
@@ -287,6 +303,13 @@ func (s *MemoryStore) ListPending(ctx context.Context, subject string) ([]memory
 		if memoryID != nil {
 			p.MemoryID = *memoryID
 		}
+		var err error
+		if cand, err = s.z.openJSON("memory_pending.candidate", cand); err != nil {
+			return nil, fmt.Errorf("pg: 解析候选内容失败: %w", err)
+		}
+		if arb, err = s.z.openJSON("memory_pending.arbitration", arb); err != nil {
+			return nil, fmt.Errorf("pg: 解析仲裁结论失败: %w", err)
+		}
 		if err := json.Unmarshal(cand, &p.Candidate); err != nil {
 			return nil, fmt.Errorf("pg: 解析候选内容失败: %w", err)
 		}
@@ -308,7 +331,7 @@ func (s *MemoryStore) ResolvePending(ctx context.Context, id string, at time.Tim
 	return nil
 }
 
-func scanMemory(sc scanner) (*memory.Memory, string, error) {
+func (z sealer) scanMemory(sc scanner) (*memory.Memory, string, error) {
 	var (
 		m           memory.Memory
 		kind        string
@@ -329,7 +352,18 @@ func scanMemory(sc scanner) (*memory.Memory, string, error) {
 	m.Kind = memory.Kind(kind)
 	m.Status = memory.Status(status)
 	m.Temporality = memory.Temporality(temporality)
-	if len(cond) > 0 {
+	if err := z.opens("memories.subject", &m.Subject, "memories.domain", &m.Domain,
+		"memories.attribute", &m.Attribute); err != nil {
+		return nil, "", err
+	}
+	if err := z.openAll("memories.tags", m.Tags); err != nil {
+		return nil, "", err
+	}
+	if cond, err = z.openJSON("memories.condition", cond); err != nil {
+		return nil, "", err
+	}
+	// 空对象就是"没有条件"，读回来保持为空。
+	if len(cond) > 0 && string(cond) != "{}" {
 		if err := json.Unmarshal(cond, &m.Condition); err != nil {
 			return nil, "", fmt.Errorf("解析偏好条件失败: %w", err)
 		}

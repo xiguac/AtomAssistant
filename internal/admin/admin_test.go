@@ -25,6 +25,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
@@ -68,7 +69,7 @@ func setup(t *testing.T) *env {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	st, err := pg.Open(ctx, dsn)
+	st, err := pg.Open(ctx, dsn, seal.TestBox())
 	if err != nil {
 		t.Fatalf("连接失败: %v", err)
 	}

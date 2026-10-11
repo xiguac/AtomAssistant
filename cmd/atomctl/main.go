@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 )
 
@@ -81,9 +83,15 @@ const usage = `用法:
   atomctl vault rm <名字>        删除一条
 
   atomctl export <板块> <文件>   导出数据用于迁移。板块: memory / tasks / events / vault / skills / all
-  atomctl import <文件>          导入。已存在的数据不会被覆盖
+                                 导出的文件用你当场设的口令加密，口令从标准输入读取
+  atomctl import <文件>          导入，要输入导出时设的口令。已存在的数据不会被覆盖
 
-环境变量: ATOM_DSN（必填）；用到保险库的命令还要 ATOM_VAULT_KEY，connector 还要 ATOM_CONFIG
+  atomctl key backup <文件>      把数据密钥备份成一个用口令加密的文件。数据密钥与这台机器绑定，
+                                 机器的硬件标识意外变了，就靠这份备份找回数据
+  atomctl key restore <文件>     用备份在这台机器上重建密钥文件（已有密钥文件时不会覆盖）
+
+环境变量: ATOM_DSN（必填）；用到保险库的命令还要 ATOM_VAULT_KEY，connector 还要 ATOM_CONFIG；
+          数据密钥文件默认与配置文件同目录，可用 ATOM_KEY_FILE 指定
 `
 
 func main() {
@@ -108,7 +116,26 @@ func run(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	st, err := pg.Open(ctx, cfg.DSN)
+	// 这几条命令不碰数据库，也就不需要数据密钥：设口令、生成保险库密钥发生在服务第一次启动之前，
+	// 恢复密钥则正是因为密钥文件用不了。
+	switch {
+	case args[0] == "admin" && len(args) > 1 && args[1] == "passwd":
+		return adminCmd(args[1:])
+	case args[0] == "vault" && len(args) > 1 && args[1] == "keygen":
+		return vaultCmd(ctx, nil, cfg.VaultKey, args[1:])
+	case args[0] == "key":
+		return keyCmd(cfg, args[1:])
+	}
+
+	// 密钥文件只由常驻服务生成：这里常常是以 root 身份运行的，由它生成的文件服务账号读不到。
+	box, _, err := seal.LoadKey(cfg.KeyFile, false)
+	if errors.Is(err, seal.ErrKeyMissing) {
+		return fmt.Errorf("%w。它在 atomd 第一次启动时生成，先启动一次服务；路径不对的话设置 ATOM_KEY_FILE", err)
+	}
+	if err != nil {
+		return err
+	}
+	st, err := pg.Open(ctx, cfg.DSN, box)
 	if err != nil {
 		return err
 	}
@@ -193,12 +220,12 @@ func run(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("export 需要板块（memory / tasks / events / vault / skills / all）和文件路径")
 		}
-		return exportCmd(ctx, st, args[1], args[2])
+		return exportCmd(st, args[1], args[2])
 	case "import":
 		if len(args) < 2 {
 			return fmt.Errorf("import 需要一个导出文件的路径")
 		}
-		return importCmd(ctx, st, args[1])
+		return importCmd(st, args[1])
 	case "emit":
 		if len(args) < 2 {
 			return fmt.Errorf("emit 需要一个事件主题")

@@ -99,7 +99,7 @@ func TestPlanner_基础约束始终排在系统提示最前面(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := m.lastReq.Messages[0]
-	if first.Role != "system" ||!strings.HasPrefix(first.Content, baseRules) {
+	if first.Role != "system" || !strings.HasPrefix(first.Content, baseRules) {
 		t.Fatal("基础约束应当在系统提示的最前面")
 	}
 	if !strings.Contains(first.Content, plannerSystemPrompt) {

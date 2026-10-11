@@ -1,18 +1,25 @@
 package pg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
 	"time"
+
+	"github.com/xiguac/atomhelper/internal/seal"
 )
 
 // 导出导入用于迁移服务器：在旧机器上按板块导出成文件，到新机器上导入。
 //
 // 行数据直接用 Postgres 的 to_jsonb / jsonb_populate_recordset 往返，
 // 所以这里不需要随表结构变化而改——加了新列，导出导入自动带上。
+//
+// 库里的内容是用这台机器的密钥加密的，那把密钥和硬件绑在一起，带不走。所以：
+// 导出时先解密成明文，再整个用用户设的口令加密成文件；
+// 导入时用口令解开，再用新机器自己的密钥加密后存进去。
 
 // Section 是可以单独导出导入的一个数据板块。
 type Section string
@@ -24,7 +31,7 @@ const (
 	SectionTasks Section = "tasks"
 	// SectionEvents 事件：事件与订阅。它们引用任务，导入前任务板块必须已经在库里。
 	SectionEvents Section = "events"
-	// SectionVault 保险库。导出的是密文，密钥不在其中——迁移时要把 ATOM_VAULT_KEY 一起带过去。
+	// SectionVault 保险库。条目的值仍是保险库自己的密文，密钥不在其中——迁移时要把 ATOM_VAULT_KEY 一起带过去。
 	SectionVault Section = "vault"
 	// SectionSkills 已安装的 Skill 与助手安装的 MCP server，连同安装时的原文与扫描报告。
 	SectionSkills Section = "skills"
@@ -66,11 +73,15 @@ type exportFile struct {
 	Sections map[Section]map[string]json.RawMessage `json:"sections"`
 }
 
-// Export 把指定板块导出到 w。
+// Export 把指定板块导出到 w，整个文件用 passphrase 加密。
 //
 // 所有表在同一个快照里读，导出的数据彼此一致——
 // 不会出现步骤在、它所属的任务却不在的情况。
-func (s *Store) Export(ctx context.Context, sections []Section, w io.Writer) error {
+func (s *Store) Export(ctx context.Context, sections []Section, w io.Writer, passphrase string) error {
+	// 口令不合格要在读库之前就报出来。
+	if len([]rune(passphrase)) < seal.MinPassphrase {
+		return fmt.Errorf("pg: 导出文件的口令至少要 %d 个字符", seal.MinPassphrase)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pg: 开启事务失败: %w", err)
@@ -115,15 +126,42 @@ func (s *Store) Export(ctx context.Context, sections []Section, w io.Writer) err
 			if err != nil {
 				return fmt.Errorf("pg: 导出表 %s 失败: %w", table, err)
 			}
+			if data, err = s.z.mapRows(table, data, false); err != nil {
+				return fmt.Errorf("pg: 导出表 %s 失败: %w", table, err)
+			}
 			out.Sections[sec][table] = data
 		}
 	}
 
-	enc := json.NewEncoder(w)
-	if err := enc.Encode(out); err != nil {
+	plain, err := json.Marshal(out)
+	if err != nil {
+		return fmt.Errorf("pg: 生成导出文件失败: %w", err)
+	}
+	sealed, err := seal.SealWithPassphrase(passphrase, plain)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(sealed); err != nil {
 		return fmt.Errorf("pg: 写出导出文件失败: %w", err)
 	}
 	return nil
+}
+
+// mapRows 把一张表的全部行（JSON 数组）里的内容列解密或加密。
+func (z sealer) mapRows(table string, data []byte, sealing bool) ([]byte, error) {
+	if len(sealedColumns[table]) == 0 {
+		return data, nil
+	}
+	var rows []map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, fmt.Errorf("行数据无法解析: %w", err)
+	}
+	for _, row := range rows {
+		if err := z.mapRow(table, row, sealing); err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(rows)
 }
 
 // ImportReport 是一次导入的结果：每张表新写入了多少行。
@@ -131,15 +169,26 @@ type ImportReport struct {
 	Inserted map[string]int64
 }
 
-// Import 从 r 读入导出文件并写入数据库。
+// Import 从 r 读入导出文件并写入数据库，passphrase 是导出时设的口令。
 //
 // 整个导入在一个事务里，失败就什么都不留下。已存在的行（主键相同）跳过不覆盖，
 // 所以同一个文件导两次是安全的，也可以把板块分几次导。
-func (s *Store) Import(ctx context.Context, r io.Reader) (ImportReport, error) {
+//
+// 加密功能上线之前导出的文件是没有加密的，仍然可以导入，这时不需要口令。
+func (s *Store) Import(ctx context.Context, r io.Reader, passphrase string) (ImportReport, error) {
 	rep := ImportReport{Inserted: make(map[string]int64)}
 
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return rep, fmt.Errorf("pg: 读取导出文件失败: %w", err)
+	}
+	if seal.IsPassphraseSealed(raw) {
+		if raw, err = seal.OpenWithPassphrase(passphrase, raw); err != nil {
+			return rep, err
+		}
+	}
 	var in exportFile
-	if err := json.NewDecoder(r).Decode(&in); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(raw)).Decode(&in); err != nil {
 		return rep, fmt.Errorf("pg: 解析导出文件失败: %w", err)
 	}
 	if in.Format != exportFormat {
@@ -191,6 +240,11 @@ func (s *Store) Import(ctx context.Context, r io.Reader) (ImportReport, error) {
 			if !ok {
 				continue
 			}
+			sealed, err := s.z.mapRows(table, data, true)
+			if err != nil {
+				return rep, fmt.Errorf("pg: 导入表 %s 失败: %w", table, err)
+			}
+			data = sealed
 			tag, err := tx.Exec(ctx,
 				`INSERT INTO `+table+` SELECT * FROM jsonb_populate_recordset(NULL::`+table+`, $1::jsonb)
 				 ON CONFLICT DO NOTHING`, []byte(data))

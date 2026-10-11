@@ -12,22 +12,26 @@ import (
 // MCPInstallStore 是 market.ServerStore 的 Postgres 实现。
 type MCPInstallStore struct {
 	pool *pgxpool.Pool
+	z    sealer
 }
 
 // MCPInstalls 返回基于同一连接池的、助手安装的 MCP server 的存储。
-func (s *Store) MCPInstalls() *MCPInstallStore { return &MCPInstallStore{pool: s.pool} }
+func (s *Store) MCPInstalls() *MCPInstallStore { return &MCPInstallStore{pool: s.pool, z: s.z} }
 
 var _ market.ServerStore = (*MCPInstallStore)(nil)
 
 // PutServer 写入一个 server，同名则整条替换。
 func (s *MCPInstallStore) PutServer(ctx context.Context, srv *market.Server) error {
+	z := s.z
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO mcp_installs (name, url, registry_name, description, payload, scan_report, installed_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (name) DO UPDATE
 		   SET url = EXCLUDED.url, registry_name = EXCLUDED.registry_name, description = EXCLUDED.description,
 		       payload = EXCLUDED.payload, scan_report = EXCLUDED.scan_report, installed_at = EXCLUDED.installed_at`,
-		srv.Name, srv.URL, srv.RegistryName, srv.Description, srv.Payload, srv.ScanReport, srv.InstalledAt)
+		srv.Name, z.str("mcp_installs.url", srv.URL), z.str("mcp_installs.registry_name", srv.RegistryName),
+		z.str("mcp_installs.description", srv.Description), z.str("mcp_installs.payload", srv.Payload),
+		z.str("mcp_installs.scan_report", srv.ScanReport), srv.InstalledAt)
 	if err != nil {
 		return fmt.Errorf("pg: 写入 MCP server 失败: %w", err)
 	}
@@ -48,6 +52,11 @@ func (s *MCPInstallStore) ListServers(ctx context.Context) ([]*market.Server, er
 		var srv market.Server
 		if err := rows.Scan(&srv.Name, &srv.URL, &srv.RegistryName, &srv.Description,
 			&srv.Payload, &srv.ScanReport, &srv.InstalledAt); err != nil {
+			return nil, fmt.Errorf("pg: 解析 MCP server 失败: %w", err)
+		}
+		if err := s.z.opens("mcp_installs.url", &srv.URL, "mcp_installs.registry_name", &srv.RegistryName,
+			"mcp_installs.description", &srv.Description, "mcp_installs.payload", &srv.Payload,
+			"mcp_installs.scan_report", &srv.ScanReport); err != nil {
 			return nil, fmt.Errorf("pg: 解析 MCP server 失败: %w", err)
 		}
 		out = append(out, &srv)

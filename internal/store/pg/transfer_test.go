@@ -12,8 +12,11 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 )
+
+const testPass = "export passphrase 口令"
 
 // TestExportImport 模拟迁移服务器：导出、清库、导入，数据应原样回来。
 // 需要真实数据库，设置 ATOM_TEST_DSN 后运行。
@@ -25,7 +28,7 @@ func TestExportImport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	s, err := pg.Open(ctx, dsn)
+	s, err := pg.Open(ctx, dsn, seal.TestBox())
 	if err != nil {
 		t.Fatalf("连接失败: %v", err)
 	}
@@ -71,20 +74,42 @@ func TestExportImport(t *testing.T) {
 	export := func(sections ...pg.Section) []byte {
 		t.Helper()
 		var buf bytes.Buffer
-		if err := s.Export(ctx, sections, &buf); err != nil {
+		if err := s.Export(ctx, sections, &buf, testPass); err != nil {
 			t.Fatalf("导出失败: %v", err)
 		}
 		return buf.Bytes()
 	}
 	memFile := export(pg.SectionMemory)
 	allFile := export(pg.Sections()...)
-	if strings.Contains(string(memFile), task.ID) {
+	// 导出文件是用口令加密的：里面找不到任何明文，口令不对也解不开。
+	if strings.Contains(string(allFile), "优先高铁") || strings.Contains(string(allFile), task.ID) {
+		t.Fatal("导出文件里出现了明文")
+	}
+	plainOf := func(file []byte) string {
+		t.Helper()
+		plain, err := seal.OpenWithPassphrase(testPass, file)
+		if err != nil {
+			t.Fatalf("导出文件解不开: %v", err)
+		}
+		return string(plain)
+	}
+	// 解开之后是明文，不是这台机器的密文：新机器的密钥不一样，带着旧密文过去是解不开的。
+	if all := plainOf(allFile); !strings.Contains(all, "优先高铁") || !strings.Contains(all, "收集签证材料") || !strings.Contains(all, "户口本稍后给你") {
+		t.Fatal("导出文件解开后应当是明文内容")
+	}
+	if strings.Contains(plainOf(memFile), task.ID) {
 		t.Fatal("只导出记忆板块时不应带出任务数据")
+	}
+	if err := s.Export(ctx, pg.Sections(), &bytes.Buffer{}, "短"); err == nil {
+		t.Fatal("口令太短时应拒绝导出")
 	}
 
 	// ---- 新服务器：空库，只导入记忆板块 ----
 	reset()
-	rep, err := s.Import(ctx, bytes.NewReader(memFile))
+	if _, err := s.Import(ctx, bytes.NewReader(memFile), "wrong passphrase"); err == nil {
+		t.Fatal("口令不对时应拒绝导入")
+	}
+	rep, err := s.Import(ctx, bytes.NewReader(memFile), testPass)
 	if err != nil {
 		t.Fatalf("导入记忆失败: %v", err)
 	}
@@ -100,7 +125,7 @@ func TestExportImport(t *testing.T) {
 	}
 
 	// ---- 再导入全部：已有的记忆跳过，其余补齐 ----
-	rep, err = s.Import(ctx, bytes.NewReader(allFile))
+	rep, err = s.Import(ctx, bytes.NewReader(allFile), testPass)
 	if err != nil {
 		t.Fatalf("导入全部失败: %v", err)
 	}
@@ -125,7 +150,7 @@ func TestExportImport(t *testing.T) {
 	}
 
 	// 同一个文件导两次是安全的。
-	rep, err = s.Import(ctx, bytes.NewReader(allFile))
+	rep, err = s.Import(ctx, bytes.NewReader(allFile), testPass)
 	if err != nil {
 		t.Fatalf("重复导入失败: %v", err)
 	}
@@ -136,11 +161,11 @@ func TestExportImport(t *testing.T) {
 	}
 
 	// 不是我们的文件，或者目标库比导出时旧，都必须拒绝。
-	if _, err := s.Import(ctx, strings.NewReader(`{"format":"别的东西"}`)); err == nil {
+	if _, err := s.Import(ctx, strings.NewReader(`{"format":"别的东西"}`), testPass); err == nil {
 		t.Fatal("格式不对的文件应被拒绝")
 	}
-	newer := strings.Replace(string(allFile), `"migrations":[`, `"migrations":["9999_future.sql",`, 1)
-	if _, err := s.Import(ctx, strings.NewReader(newer)); err == nil || !strings.Contains(err.Error(), "9999_future.sql") {
+	newer := strings.Replace(plainOf(allFile), `"migrations":[`, `"migrations":["9999_future.sql",`, 1)
+	if _, err := s.Import(ctx, strings.NewReader(newer), ""); err == nil || !strings.Contains(err.Error(), "9999_future.sql") {
 		t.Fatalf("目标库缺迁移时应拒绝导入并指出缺哪个: %v", err)
 	}
 }

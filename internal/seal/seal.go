@@ -178,3 +178,13 @@ func (b *Box) OpenFile(data []byte) ([]byte, error) {
 	}
 	return plain, nil
 }
+
+// TestBox 返回一把固定密钥的 Box。**仅供测试使用**：密钥就写在源码里。
+// 放在非 _test.go 文件里，是因为别的包的测试也要用它打开数据库。
+func TestBox() *Box {
+	b, err := NewBox([]byte("atomhelper-test-key-0123456789ab"))
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
