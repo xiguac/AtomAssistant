@@ -22,6 +22,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/pay"
 	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomhelper/internal/seal"
 )
 
 // File 是 atomd 的 YAML 配置。
@@ -54,17 +55,26 @@ type File struct {
 type FilesConfig struct {
 	// Dir 是工作区目录：助手只能读写这个目录里的文件。把要处理的文件放进来，生成的文件也在这里。
 	Dir string `yaml:"dir"`
+	// Encrypt 为真时，写进工作区的文件落盘即加密，读它、把它发给用户时再解开。
+	// 默认不开：文件可能很大，是否值得为它多做一遍加解密由用户决定。
+	Encrypt bool `yaml:"encrypt"`
 }
 
 // Workspace 按配置打开文件工作区。没有配置时返回 nil。
-func (f *File) Workspace() (*files.Workspace, error) {
+//
+// box 是这台机器的数据密钥。不管开没开加密都要给：加密中途关掉之后，之前加密的文件还得读得出来。
+func (f *File) Workspace(box *seal.Box) (*files.Workspace, error) {
 	if f.Files == nil {
 		return nil, nil
 	}
 	if strings.TrimSpace(f.Files.Dir) == "" {
 		return nil, fmt.Errorf("config: files.dir 不能为空")
 	}
-	return files.Open(f.Files.Dir)
+	ws, err := files.Open(f.Files.Dir)
+	if err != nil {
+		return nil, err
+	}
+	return ws.WithSeal(box, f.Files.Encrypt), nil
 }
 
 // ChannelConfig 是一个消息渠道。

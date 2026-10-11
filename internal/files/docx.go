@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -286,32 +285,23 @@ type zipPart struct {
 	name, body string
 }
 
-// writeZip 把若干部件写成一个压缩包。
-func writeZip(dest string, parts []zipPart) error {
-	file, err := os.Create(dest)
-	if err != nil {
-		return fmt.Errorf("files: 创建文件失败: %w", err)
-	}
-	zw := zip.NewWriter(file)
+// writeZip 把若干部件打成一个压缩包，返回它的内容。
+func writeZip(parts []zipPart) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
 	for _, p := range parts {
 		w, err := zw.Create(p.name)
 		if err != nil {
-			_ = file.Close()
-			return fmt.Errorf("files: 写入文件失败: %w", err)
+			return nil, fmt.Errorf("files: 生成文件失败: %w", err)
 		}
 		if _, err := w.Write([]byte(p.body)); err != nil {
-			_ = file.Close()
-			return fmt.Errorf("files: 写入文件失败: %w", err)
+			return nil, fmt.Errorf("files: 生成文件失败: %w", err)
 		}
 	}
 	if err := zw.Close(); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("files: 写入文件失败: %w", err)
+		return nil, fmt.Errorf("files: 生成文件失败: %w", err)
 	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("files: 写入文件失败: %w", err)
-	}
-	return nil
+	return buf.Bytes(), nil
 }
 
 // DocWrite 把一段 Markdown 排成 Word 文档。
@@ -331,8 +321,8 @@ func (w *Workspace) DocWrite(rel, markdown string) (Saved, error) {
 			lists = b.list
 		}
 	}
-	return w.save(rel, func(tmp string) error {
-		return writeZip(tmp, []zipPart{
+	return w.save(rel, func() ([]byte, error) {
+		return writeZip([]zipPart{
 			{"[Content_Types].xml", docxContentTypes},
 			{"_rels/.rels", docxRootRels},
 			{"word/document.xml", documentXML(blocks)},

@@ -194,7 +194,7 @@ func run(args []string) error {
 	case "connector":
 		return connectorCmd(st, cfg, args[1:])
 	case "file":
-		return fileCmd(cfg, args[1:])
+		return fileCmd(cfg, box, args[1:])
 	case "admin":
 		return adminCmd(args[1:])
 	case "style":

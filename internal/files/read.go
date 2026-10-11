@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"sort"
 	"strconv"
@@ -52,29 +51,33 @@ func (w *Workspace) Read(rel string, offset int) (Excerpt, error) {
 	if err != nil {
 		return Excerpt{}, err
 	}
+	raw, err := w.content(abs)
+	if err != nil {
+		return Excerpt{}, err
+	}
 	out := Excerpt{Path: norm}
 	var text string
 	switch e := ext(norm); e {
 	case "docx":
 		out.Kind = "docx"
-		text, err = readDocx(abs)
+		text, err = readDocx(raw)
 	case "pptx":
 		out.Kind = "pptx"
-		text, err = readPptx(abs)
+		text, err = readPptx(raw)
 	case "xlsx", "xlsm":
 		out.Kind = "xlsx"
-		text, err = readXlsx(abs)
+		text, err = readXlsx(raw)
 		out.Note = "这是通读用的预览，每个工作表只列了开头一部分。要看具体的单元格或公式，用表格读取工具指明范围。"
 	case "pdf":
 		out.Kind = "pdf"
-		text, err = readPDF(abs)
+		text, err = readPDF(raw)
 	case "doc", "xls", "ppt":
 		return out, fmt.Errorf("%w: .%s 是老版本的 Office 格式。请先在 Office 或 WPS 里另存为 .%sx 再放进来", ErrUnsupported, e, e)
 	case "png", "jpg", "jpeg", "gif", "webp", "bmp", "zip", "rar", "7z", "tar", "gz", "exe", "dll", "mp3", "mp4", "mov":
 		return out, fmt.Errorf("%w: .%s 文件读不成文字", ErrUnsupported, e)
 	default:
 		out.Kind = "text"
-		text, err = readText(abs)
+		text, err = decodeText(raw)
 	}
 	if err != nil {
 		return out, err
@@ -102,18 +105,10 @@ func slice(text string, offset, size int) (part string, next int) {
 	return text[offset:end], end
 }
 
-// readText 读取纯文本，认得 UTF-8、UTF-16 和 GBK。
+// decodeText 把纯文本的字节读成文字，认得 UTF-8、UTF-16 和 GBK。
 //
 // 国内的 CSV 和文本文件大量是 GBK 编码的（Excel 另存为 CSV 默认就是），
 // 当成 UTF-8 读出来是一屏乱码。
-func readText(abs string) (string, error) {
-	raw, err := os.ReadFile(abs)
-	if err != nil {
-		return "", fmt.Errorf("files: 读取文件失败: %w", err)
-	}
-	return decodeText(raw)
-}
-
 func decodeText(raw []byte) (string, error) {
 	switch {
 	case bytes.HasPrefix(raw, []byte{0xEF, 0xBB, 0xBF}):
@@ -167,8 +162,8 @@ func part(zr *zip.Reader, name string) ([]byte, error) {
 	return nil, fmt.Errorf("%w: 文件里没有 %s，它可能不是一个正常的 Office 文件", ErrUnsupported, name)
 }
 
-func openZip(abs string) (*zip.ReadCloser, error) {
-	zr, err := zip.OpenReader(abs)
+func openZip(raw []byte) (*zip.Reader, error) {
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 文件打不开，可能已损坏或者加了密码", ErrUnsupported)
 	}
@@ -186,13 +181,12 @@ func attr(se xml.StartElement, local string) string {
 }
 
 // readDocx 把 Word 文档读成带一点结构的文字：标题前加 #，列表项前加 -，表格按行用 | 隔开。
-func readDocx(abs string) (string, error) {
-	zr, err := openZip(abs)
+func readDocx(file []byte) (string, error) {
+	zr, err := openZip(file)
 	if err != nil {
 		return "", err
 	}
-	defer zr.Close()
-	raw, err := part(&zr.Reader, "word/document.xml")
+	raw, err := part(zr, "word/document.xml")
 	if err != nil {
 		return "", err
 	}
@@ -302,13 +296,12 @@ func headingLevel(style string) int {
 }
 
 // readPptx 把演示文稿读成文字：每页一节，页内每个段落一行。
-func readPptx(abs string) (string, error) {
-	zr, err := openZip(abs)
+func readPptx(file []byte) (string, error) {
+	zr, err := openZip(file)
 	if err != nil {
 		return "", err
 	}
-	defer zr.Close()
-	names := slideOrder(&zr.Reader)
+	names := slideOrder(zr)
 	if len(names) == 0 {
 		return "", fmt.Errorf("%w: 文件里没有幻灯片，它可能不是一个正常的 PowerPoint 文件", ErrUnsupported)
 	}
@@ -317,7 +310,7 @@ func readPptx(abs string) (string, error) {
 	}
 	var out strings.Builder
 	for i, name := range names {
-		raw, err := part(&zr.Reader, name)
+		raw, err := part(zr, name)
 		if err != nil {
 			return "", err
 		}
@@ -448,8 +441,8 @@ func drawingText(raw []byte) []string {
 }
 
 // openXlsx 打开一个表格文件，带上解压大小的限制。
-func openXlsx(abs string) (*excelize.File, error) {
-	f, err := excelize.OpenFile(abs, excelize.Options{UnzipSizeLimit: 512 << 20, UnzipXMLSizeLimit: maxXMLBytes})
+func openXlsx(raw []byte) (*excelize.File, error) {
+	f, err := excelize.OpenReader(bytes.NewReader(raw), excelize.Options{UnzipSizeLimit: 512 << 20, UnzipXMLSizeLimit: maxXMLBytes})
 	if err != nil {
 		return nil, fmt.Errorf("%w: 表格打不开，可能已损坏或者加了密码: %v", ErrUnsupported, err)
 	}
@@ -457,8 +450,8 @@ func openXlsx(abs string) (*excelize.File, error) {
 }
 
 // readXlsx 给出表格的通读预览：每个工作表的范围和开头若干行。
-func readXlsx(abs string) (string, error) {
-	f, err := openXlsx(abs)
+func readXlsx(raw []byte) (string, error) {
+	f, err := openXlsx(raw)
 	if err != nil {
 		return "", err
 	}
@@ -491,18 +484,17 @@ func readXlsx(abs string) (string, error) {
 }
 
 // readPDF 取出 PDF 里的文字。扫描件（整页是图片）取不出文字，会如实说明。
-func readPDF(abs string) (text string, err error) {
+func readPDF(raw []byte) (text string, err error) {
 	// 这个库遇到不规范的 PDF 会 panic 而不是返回错误。
 	defer func() {
 		if r := recover(); r != nil {
 			text, err = "", fmt.Errorf("%w: 这个 PDF 解析不了: %v", ErrUnsupported, r)
 		}
 	}()
-	file, reader, err := pdf.Open(abs)
+	reader, err := pdf.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		return "", fmt.Errorf("%w: PDF 打不开，可能已损坏或者加了密码", ErrUnsupported)
 	}
-	defer file.Close()
 	pages := reader.NumPage()
 	if pages > maxPages {
 		pages = maxPages

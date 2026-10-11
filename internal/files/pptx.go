@@ -255,5 +255,5 @@ func (w *Workspace) SlidesWrite(rel string, slides []Slide) (Saved, error) {
 		{"ppt/slideLayouts/_rels/slideLayout2.xml.rels", rels([2]string{"slideMaster", "../slideMasters/slideMaster1.xml"})},
 		{"ppt/theme/theme1.xml", themeXML()},
 	}, parts...)
-	return w.save(rel, func(tmp string) error { return writeZip(tmp, all) })
+	return w.save(rel, func() ([]byte, error) { return writeZip(all) })
 }

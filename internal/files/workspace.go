@@ -9,6 +9,9 @@
 //  1. **出不了工作区。** 路径一律相对工作区解析，带 .. 的、绝对的、经符号链接绕出去的，全部拒绝。
 //  2. **不会悄悄覆盖。** 写一个已经存在的文件时，旧的那份先挪进 .versions 留底，随时能找回。
 //  3. **文件内容不是指令。** 文件是别人写的也好、用户自己写的也好，读出来的文字都只是材料。
+//
+// 工作区里的文件可以加密存放（由用户在配置里打开）。打开之后写进工作区的文件落盘就是密文，
+// 读它、把它发给用户的时候在内存里解开——明文不经过磁盘。
 package files
 
 import (
@@ -21,6 +24,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/xiguac/atomhelper/internal/seal"
 )
 
 var (
@@ -44,6 +49,38 @@ const (
 // Workspace 是助手可以读写的那个目录。
 type Workspace struct {
 	Root string
+	// box 用来解开加密存放的文件；encrypt 为真时新写入的文件也加密。
+	box     *seal.Box
+	encrypt bool
+}
+
+// WithSeal 接入文件加密。
+//
+// 给了 box 就能读加密存放的文件；encrypt 为真时，之后写进工作区的文件落盘即加密。
+// 两者分开，是因为加密可以中途打开或关掉：关掉之后，之前加密的文件仍然要读得出来；
+// 打开之前放进来的明文文件也照常能读，下次被改写时才变成密文。
+func (w *Workspace) WithSeal(box *seal.Box, encrypt bool) *Workspace {
+	w.box, w.encrypt = box, encrypt
+	return w
+}
+
+// content 读出一个文件的明文内容。加密存放的在内存里解开。
+func (w *Workspace) content(abs string) ([]byte, error) {
+	raw, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, fmt.Errorf("files: 读取文件失败: %w", err)
+	}
+	if !seal.IsSealedFile(raw) {
+		return raw, nil
+	}
+	if w.box == nil {
+		return nil, fmt.Errorf("files: 这个文件是加密存放的，当前没有可用的数据密钥")
+	}
+	plain, err := w.box.OpenFile(raw)
+	if err != nil {
+		return nil, fmt.Errorf("files: 解密文件失败（数据密钥不对，或者文件已损坏）: %w", err)
+	}
+	return plain, nil
 }
 
 // Open 打开（必要时创建）一个工作区。
@@ -190,17 +227,14 @@ func (w *Workspace) existing(rel string) (abs, norm string, err error) {
 	return abs, norm, nil
 }
 
-// Bytes 读出一个文件的原始内容，供作为邮件附件发出。
+// Bytes 读出一个文件的原始内容，供下载、作为邮件附件或者发到聊天窗口。
+// 加密存放的文件在这里解开：交到用户手上的是明文。
 func (w *Workspace) Bytes(rel string) ([]byte, error) {
 	abs, _, err := w.existing(rel)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(abs)
-	if err != nil {
-		return nil, fmt.Errorf("files: 读取文件失败: %w", err)
-	}
-	return raw, nil
+	return w.content(abs)
 }
 
 // Saved 是一次写文件的结果。
@@ -210,11 +244,12 @@ type Saved struct {
 	Replaced string `json:"previous_version,omitempty"`
 }
 
-// save 把一个文件写进工作区。write 负责把内容写到给它的临时路径上。
+// save 把一个文件写进工作区。produce 给出文件的完整内容。
 //
+// 内容先在内存里备齐，开了加密就先加密，然后才落盘——明文不会出现在磁盘上。
 // 先写临时文件再改名：写到一半出错或者进程被杀，原来的文件完好无损，
 // 不会留下一个打不开的半截文件。目标已经存在时，旧的那份先挪去留底。
-func (w *Workspace) save(rel string, write func(tmp string) error) (Saved, error) {
+func (w *Workspace) save(rel string, produce func() ([]byte, error)) (Saved, error) {
 	abs, norm, err := w.resolve(rel, true)
 	if err != nil {
 		return Saved{}, err
@@ -222,11 +257,20 @@ func (w *Workspace) save(rel string, write func(tmp string) error) (Saved, error
 	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
 		return Saved{}, fmt.Errorf("files: 创建目录失败: %w", err)
 	}
-	// 临时文件保留原来的扩展名：有的库按扩展名决定写成什么格式。
-	tmp := filepath.Join(filepath.Dir(abs), ".tmp-"+fmt.Sprint(time.Now().UnixNano())+filepath.Ext(abs))
-	defer func() { _ = os.Remove(tmp) }()
-	if err := write(tmp); err != nil {
+	data, err := produce()
+	if err != nil {
 		return Saved{}, err
+	}
+	if w.encrypt {
+		if w.box == nil {
+			return Saved{}, fmt.Errorf("files: 配置要求文件加密存放，但当前没有可用的数据密钥")
+		}
+		data = w.box.SealFile(data)
+	}
+	tmp := filepath.Join(filepath.Dir(abs), ".tmp-"+fmt.Sprint(time.Now().UnixNano()))
+	defer func() { _ = os.Remove(tmp) }()
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return Saved{}, fmt.Errorf("files: 写入文件失败: %w", err)
 	}
 	out := Saved{Path: norm}
 	if info, err := os.Stat(abs); err == nil {
@@ -269,14 +313,11 @@ func (w *Workspace) Import(src, rel string) (Saved, error) {
 	if strings.TrimSpace(rel) == "" {
 		rel = filepath.Base(src)
 	}
-	return w.save(rel, func(tmp string) error {
+	return w.save(rel, func() ([]byte, error) {
 		raw, err := os.ReadFile(src)
 		if err != nil {
-			return fmt.Errorf("files: 读取 %s 失败: %w", src, err)
+			return nil, fmt.Errorf("files: 读取 %s 失败: %w", src, err)
 		}
-		if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-			return fmt.Errorf("files: 写入文件失败: %w", err)
-		}
-		return nil
+		return raw, nil
 	})
 }

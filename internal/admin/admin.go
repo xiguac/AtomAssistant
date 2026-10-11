@@ -46,6 +46,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
@@ -75,6 +76,8 @@ const (
 type Options struct {
 	Store *pg.Store
 	Vault *vault.Vault
+	// Box 是这台机器的数据密钥，读写工作区里加密存放的文件要用。
+	Box *seal.Box
 	// Tasks 用来新建任务、回话、批准和拒绝，与消息渠道走的是同一套入口。
 	Tasks *channel.Kernel
 	// ConfigPath 是 YAML 配置文件的路径，后台可以编辑它。
@@ -916,7 +919,7 @@ func (s *Server) workspace() (*files.Workspace, error) {
 	if file == nil {
 		return nil, errors.New("配置文件不存在")
 	}
-	ws, err := file.Workspace()
+	ws, err := file.Workspace(s.opts.Box)
 	if err != nil {
 		return nil, err
 	}

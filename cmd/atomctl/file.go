@@ -6,10 +6,11 @@ import (
 	"text/tabwriter"
 
 	"github.com/xiguac/atomhelper/internal/config"
+	"github.com/xiguac/atomhelper/internal/seal"
 )
 
 // fileCmd 处理 atomctl file 的子命令：往助手的工作区里放文件、看里面有什么。
-func fileCmd(cfg *config.Config, args []string) error {
+func fileCmd(cfg *config.Config, box *seal.Box, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("file 需要子命令: add / list / dir")
 	}
@@ -20,7 +21,7 @@ func fileCmd(cfg *config.Config, args []string) error {
 	if file == nil {
 		return fmt.Errorf("未设置 ATOM_CONFIG，不知道工作区在哪")
 	}
-	ws, err := file.Workspace()
+	ws, err := file.Workspace(box)
 	if err != nil {
 		return err
 	}

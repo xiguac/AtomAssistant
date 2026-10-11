@@ -104,7 +104,11 @@ func (w *Workspace) SheetWrite(rel string, edits []SheetEdit) (SheetResult, erro
 		if _, _, err := w.existing(rel); err != nil {
 			return SheetResult{}, err
 		}
-		if f, err = openXlsx(abs); err != nil {
+		raw, err := w.content(abs)
+		if err != nil {
+			return SheetResult{}, err
+		}
+		if f, err = openXlsx(raw); err != nil {
 			return SheetResult{}, err
 		}
 	}
@@ -201,11 +205,12 @@ func (w *Workspace) SheetWrite(rel string, edits []SheetEdit) (SheetResult, erro
 	if err := f.UpdateLinkedValue(); err != nil {
 		return SheetResult{}, fmt.Errorf("files: 标记重算失败: %w", err)
 	}
-	saved, err := w.save(rel, func(tmp string) error {
-		if err := f.SaveAs(tmp); err != nil {
-			return fmt.Errorf("files: 保存表格失败: %w", err)
+	saved, err := w.save(rel, func() ([]byte, error) {
+		buf, err := f.WriteToBuffer()
+		if err != nil {
+			return nil, fmt.Errorf("files: 保存表格失败: %w", err)
 		}
-		return nil
+		return buf.Bytes(), nil
 	})
 	if err != nil {
 		return SheetResult{}, err
@@ -284,7 +289,11 @@ func (w *Workspace) SheetRead(rel, sheet, rng string) (SheetRange, error) {
 	if e := ext(norm); e != "xlsx" && e != "xlsm" {
 		return SheetRange{}, fmt.Errorf("%w: 这个工具只读 .xlsx，其他文件用通读工具", ErrInvalid)
 	}
-	f, err := openXlsx(abs)
+	raw, err := w.content(abs)
+	if err != nil {
+		return SheetRange{}, err
+	}
+	f, err := openXlsx(raw)
 	if err != nil {
 		return SheetRange{}, err
 	}

@@ -99,12 +99,12 @@ func run(migrateOnly, checkOnly bool) error {
 	problem.Store("")
 	adminOn := cfg.AdminAddr != "" && !checkOnly
 	if adminOn {
-		if err := startAdmin(ctx, cfg, st, bus, stop, func() string { return problem.Load().(string) }, log); err != nil {
+		if err := startAdmin(ctx, cfg, st, box, bus, stop, func() string { return problem.Load().(string) }, log); err != nil {
 			return err
 		}
 	}
 
-	parts, err := assemble(initCtx, cfg, st, log)
+	parts, err := assemble(initCtx, cfg, st, box, log)
 	if err != nil {
 		if !adminOn {
 			return err
@@ -171,16 +171,16 @@ func run(migrateOnly, checkOnly bool) error {
 }
 
 // assemble 读取配置文件并装出各个部件。
-func assemble(ctx context.Context, cfg *config.Config, st *pg.Store, log *slog.Logger) (*parts, error) {
+func assemble(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal.Box, log *slog.Logger) (*parts, error) {
 	file, err := config.LoadFile(cfg.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	return build(ctx, cfg, file, st, log)
+	return build(ctx, cfg, file, st, box, log)
 }
 
 // startAdmin 启动网页管理后台。
-func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, bus *event.Bus,
+func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal.Box, bus *event.Bus,
 	restart func(), status func() string, log *slog.Logger) error {
 	tls := cfg.AdminTLSCert != "" && cfg.AdminTLSKey != ""
 	if err := admin.CheckAddr(cfg.AdminAddr, tls); err != nil {
@@ -191,7 +191,7 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, bus *even
 		return err
 	}
 	srv, err := admin.New(admin.Options{
-		Store: st, Vault: safe,
+		Store: st, Vault: safe, Box: box,
 		Tasks:        &channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()},
 		ConfigPath:   cfg.ConfigPath,
 		PasswordHash: cfg.AdminPasswordHash,
@@ -267,7 +267,7 @@ type parts struct {
 }
 
 // build 按配置装出各个部件。
-func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.Store, log *slog.Logger) (*parts, error) {
+func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.Store, key *seal.Box, log *slog.Logger) (*parts, error) {
 	if file == nil {
 		log.Warn("未设置 ATOM_CONFIG，运行在 demo 模式，不会产生任何真实副作用")
 		return &parts{planner: demo.Planner{}, actuator: demo.Actuator{}, close: func() {}}, nil
@@ -346,7 +346,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		agent.CalendarDefaults(approval)
 	}
 	// 写进本机工作区的文件同理：覆盖时旧的会留底，不必逐个确认。
-	workspace, err := file.Workspace()
+	workspace, err := file.Workspace(key)
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +450,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if workspace != nil {
 		planner = planner.WithFiles(true)
 		actuator = actuator.WithFiles(workspace)
-		log.Info("已启用文件处理", "工作区", workspace.Root)
+		log.Info("已启用文件处理", "工作区", workspace.Root, "加密存放", file.Files.Encrypt)
 	}
 	feed, err := file.Holidays()
 	if err != nil {
