@@ -459,8 +459,9 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 			segs = append(segs[:1], append([]llm.Segment{voiceSegment(v)}, segs[1:]...)...)
 		}
 	}
+	// 基础约束永远排在最前面，后面才是这一步具体怎么做。
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	system := plannerSystemPrompt
+	system := baseRules + "\n\n" + plannerSystemPrompt
 	if p.hasWeb && p.permits(ToolWebSearch) {
 		system += "\n\n" + webRule
 	}
