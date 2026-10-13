@@ -292,12 +292,16 @@ func TestActuator_查找安装与读取(t *testing.T) {
 	}
 }
 
-func (f *fakeCapabilities) InstallUserServerAwaitingKey(_ context.Context, name, rawURL, keyParam string) (*market.Server, error) {
+func (f *fakeCapabilities) InstallUserServerAwaitingKey(_ context.Context, name, rawURL string, params []string) (*market.Server, error) {
 	if f.installErr != nil {
 		return nil, f.installErr
 	}
-	f.installed = append(f.installed, "awaiting:"+name+"|"+rawURL+"|"+keyParam)
-	return &market.Server{Name: name, ByUser: true, SecretName: keyParam, Secret: "vault://mcp." + name}, nil
+	f.installed = append(f.installed, "awaiting:"+name+"|"+rawURL+"|"+strings.Join(params, ","))
+	srv := &market.Server{Name: name, ByUser: true, SecretName: params[0], Secret: "vault://mcp." + name}
+	for _, p := range params[1:] {
+		srv.Secrets = append(srv.Secrets, market.ServerSecret{Name: p, Secret: "vault://mcp." + name + "." + p})
+	}
+	return srv, nil
 }
 
 func (f *fakeCapabilities) InstallUserServer(_ context.Context, name, rawURL string) (*market.Server, []string, error) {
@@ -417,9 +421,9 @@ func TestVaultRequest_助手登记输入框而不索要密钥(t *testing.T) {
 	// 装一个要密钥而地址里没带的 MCP server：只记下来，不连接，回执里让用户去后台填。
 	caps := &fakeCapabilities{}
 	a = NewActuator(&fakeTools{}, &fakeModel{}).WithCapabilities(caps, nil)
-	res, err = a.Execute(ctx, task, capStep(ToolCapabilityInstall, `{"kind":"mcp","url":"https://mcp.flight.example.com/mcp","name":"flight","key_param":"key"}`))
-	if err != nil || len(caps.installed) != 1 || caps.installed[0] != "awaiting:flight|https://mcp.flight.example.com/mcp|key" ||
-		!strings.Contains(string(res.Output), `"awaiting_key":true`) {
+	res, err = a.Execute(ctx, task, capStep(ToolCapabilityInstall, `{"kind":"mcp","url":"https://mcp.flight.example.com/mcp","name":"flight","key_params":["app_id","app_secret"]}`))
+	if err != nil || len(caps.installed) != 1 || caps.installed[0] != "awaiting:flight|https://mcp.flight.example.com/mcp|app_id,app_secret" ||
+		!strings.Contains(string(res.Output), `"awaiting_key":true`) || !strings.Contains(string(res.Output), "vault://mcp.flight.app_secret") {
 		t.Fatalf("密钥待填的安装不对: %v %v %s", err, caps.installed, res.Output)
 	}
 }

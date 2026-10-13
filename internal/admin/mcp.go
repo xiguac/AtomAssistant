@@ -138,6 +138,8 @@ type mcpServerView struct {
 	KeyOK bool
 	// NoKey 为真表示它是不需要密钥的预置服务，页面上不显示填写密钥的那一行。
 	NoKey bool
+	// Keys 是它声明的各项密钥，页面上每一项一个输入框。
+	Keys  []mcpKeyView
 	Tools []mcpToolView
 }
 
@@ -146,6 +148,12 @@ type mcpPresetView struct {
 	mcpPreset
 	// On 为真表示已经接入。
 	On bool
+}
+
+// mcpKeyView 是页面上的一项密钥：参数名，以及保险库里有没有它的值。
+type mcpKeyView struct {
+	Param string
+	OK    bool
 }
 
 type mcpData struct {
@@ -201,7 +209,12 @@ func (s *Server) mcpPage(w http.ResponseWriter, r *http.Request, v *view) {
 	}
 	for _, m := range t.MCP {
 		preset := presetOf(m)
-		sv := mcpServerView{MCPConfig: m, NoKey: preset != nil && preset.KeyLabel == "", KeyOK: m.Secret == "" || stored[strings.TrimPrefix(m.Secret, vault.HandlePrefix)]}
+		sv := mcpServerView{MCPConfig: m, NoKey: preset != nil && preset.KeyLabel == "", KeyOK: true}
+		for _, sec := range m.AllSecrets() {
+			ok := stored[strings.TrimPrefix(sec.Secret, vault.HandlePrefix)]
+			sv.Keys = append(sv.Keys, mcpKeyView{Param: sec.Name, OK: ok})
+			sv.KeyOK = sv.KeyOK && ok
+		}
 		for _, tool := range t.Tools {
 			if short, ok := strings.CutPrefix(tool.Name, m.Name+"."); ok {
 				side := tool.SideEffect
@@ -297,7 +310,7 @@ func (s *Server) saveMCP(ctx context.Context, m config.MCPConfig, key string) (s
 	for _, old := range cur.MCP {
 		if old.Name == m.Name {
 			// 修改时页面上没有的设置（环境变量）与原来的密钥保留。
-			m.Env, m.Secret = old.Env, old.Secret
+			m.Env, m.Secret, m.Secrets = old.Env, old.Secret, old.Secrets
 		}
 	}
 	switch {
@@ -447,10 +460,16 @@ func (s *Server) mcpKey(w http.ResponseWriter, r *http.Request, _ *view) {
 			if m.Name != name {
 				continue
 			}
-			if secretName := strings.TrimSpace(r.PostFormValue("secret_name")); secretName != "" {
-				m.SecretName = secretName
+			// 一个 server 可以要好几项密钥。参数名和第一项相同（或还一项都没有）走原来的路；
+			// 是别的名字，就是在填写或新增另一项。
+			param := strings.TrimSpace(r.PostFormValue("secret_name"))
+			if param == "" || m.SecretName == "" || param == m.SecretName {
+				if param != "" {
+					m.SecretName = param
+				}
+				return s.saveMCP(r.Context(), m, key)
 			}
-			return s.saveMCP(r.Context(), m, key)
+			return s.saveExtraSecret(r.Context(), m, param, key)
 		}
 		return "", errors.New("MCP server 不存在")
 	}()
@@ -458,6 +477,39 @@ func (s *Server) mcpKey(w http.ResponseWriter, r *http.Request, _ *view) {
 		s.opts.Log.Info("MCP server 的密钥已在后台更换", "server", name, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/mcp", notice, err)
+}
+
+// saveExtraSecret 填写或新增一个 server 的第一项之外的某一项密钥。
+func (s *Server) saveExtraSecret(ctx context.Context, m config.MCPConfig, param, key string) (string, error) {
+	if !vault.ValidLabel(param) || strings.ContainsAny(param, " /.") {
+		return "", errors.New("密钥参数名仅支持字母、数字及 _ -")
+	}
+	label := m.SecretLabel(param)
+	if err := s.opts.Vault.Seal(ctx, label, key, "MCP server "+m.Name+" 的密钥，参数名 "+param, []string{m.VaultUser()}); err != nil {
+		return "", err
+	}
+	known := false
+	for _, sec := range m.Secrets {
+		known = known || sec.Name == param
+	}
+	if !known {
+		m.Secrets = append(m.Secrets, config.MCPSecret{Name: param, Secret: vault.HandlePrefix + label})
+		if err := s.editToolset(func(t *config.Toolset) error {
+			for i := range t.MCP {
+				if t.MCP[i].Name == m.Name {
+					t.MCP[i] = m
+				}
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	}
+	added, total, err := s.syncTools(ctx, m)
+	if err != nil {
+		return fmt.Sprintf("密钥「%s」已保存，但读取工具列表失败：%v。排除问题后请点击「读取工具」。", param, err), nil
+	}
+	return fmt.Sprintf("密钥「%s」已保存，共 %d 个工具，新登记 %d 个。重启服务后生效。", param, total, added), nil
 }
 
 // mcpTest 用表单里当前填写的内容连接一次，列出它提供的工具。测试不保存任何东西。
@@ -486,8 +538,17 @@ func (s *Server) mcpTest(w http.ResponseWriter, r *http.Request, _ *view) {
 			if m.SecretName == "" {
 				return "", errors.New("填写了密钥，还需填写密钥参数名")
 			}
-			spec.SecretName = m.SecretName
-			spec.Secret = func(context.Context) (string, error) { return typed, nil }
+			// 填了的这一项用填的值，别的各项照旧用已保存的。
+			take := func(context.Context) (string, error) { return typed, nil }
+			replaced := false
+			for i := range spec.Secrets {
+				if spec.Secrets[i].Name == m.SecretName {
+					spec.Secrets[i].Take, replaced = take, true
+				}
+			}
+			if !replaced {
+				spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: m.SecretName, Take: take})
+			}
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
@@ -594,7 +655,9 @@ func (s *Server) mcpDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 		return nil
 	})
 	if err == nil {
-		s.dropCredential(r.Context(), gone.Secret, gone.VaultUser())
+		for _, sec := range gone.AllSecrets() {
+			s.dropCredential(r.Context(), sec.Secret, gone.VaultUser())
+		}
 		s.opts.Log.Info("MCP server 已在后台移除", "server", name, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/mcp", "MCP server「"+name+"」及其密钥已移除，重启服务后生效。", err)
@@ -603,17 +666,25 @@ func (s *Server) mcpDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 // mcpInstalledDelete 移除一个在对话里装上的 server。用户给的地址里带的密钥一并从保险库删除。
 func (s *Server) mcpInstalledDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	name := r.PostFormValue("name")
-	handle := ""
+	var handles []string
 	if list, err := s.opts.Store.MCPInstalls().ListServers(r.Context()); err == nil {
 		for _, srv := range list {
 			if srv.Name == name {
-				handle = srv.Secret
+				for _, sec := range srv.AllSecrets() {
+					handles = append(handles, sec.Secret)
+				}
 			}
 		}
 	}
 	err := s.opts.Store.MCPInstalls().RemoveServer(r.Context(), name)
 	if err == nil {
-		s.dropCredential(r.Context(), handle, "mcp."+name)
+		for _, handle := range handles {
+			s.dropCredential(r.Context(), handle, "mcp."+name)
+			// 还没填的那几项不必再等用户填了。
+			if rerr := s.requests().Remove(r.Context(), strings.TrimPrefix(handle, vault.HandlePrefix)); rerr != nil {
+				s.opts.Log.Error("清理待填写的条目失败", "条目", handle, "err", rerr)
+			}
+		}
 		s.opts.Log.Info("助手安装的 MCP server 已在后台移除", "server", name, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/mcp", "MCP server「"+name+"」已移除，重启服务后断开连接。", err)

@@ -70,10 +70,10 @@ func (i *Installer) InstallUserServer(ctx context.Context, name, rawURL string) 
 
 // InstallUserServerAwaitingKey 记下用户亲口给出地址、但密钥还没给的一个远程 MCP server。
 //
-// 密钥不经过对话：这里只记下 server 和密钥的参数名（keyParam，网址里的查询参数名），
-// 同时登记一条待填写的条目，由用户在管理后台亲手填。填好并重启之后它才会连上——
+// 密钥不经过对话：这里只记下 server 和它要的各项密钥的参数名（params，网址里的查询参数名，可以不止一个），
+// 同时为每一项登记一条待填写的条目，由用户在管理后台亲手填。全部填好并重启之后它才会连上——
 // 所以这一步不连接，也就读不出工具。
-func (i *Installer) InstallUserServerAwaitingKey(ctx context.Context, name, rawURL, keyParam string) (*Server, error) {
+func (i *Installer) InstallUserServerAwaitingKey(ctx context.Context, name, rawURL string, params []string) (*Server, error) {
 	if i.AskKey == nil || i.Servers == nil {
 		return nil, fmt.Errorf("market: 未启用密钥待填的 MCP server 安装")
 	}
@@ -87,25 +87,45 @@ func (i *Installer) InstallUserServerAwaitingKey(ctx context.Context, name, rawU
 	if u.User != nil || u.RawQuery != "" {
 		return nil, fmt.Errorf("%w: 密钥待填的地址里不能带账号密码和参数", ErrBadAddress)
 	}
-	keyParam = strings.TrimSpace(keyParam)
-	if !reSegment.MatchString(keyParam) {
-		return nil, fmt.Errorf("%w: 密钥的参数名 %q 不合规矩", ErrBadAddress, keyParam)
+	if len(params) == 0 || len(params) > maxKeyParams {
+		return nil, fmt.Errorf("%w: 要写明密钥的参数名（1 到 %d 个）", ErrBadAddress, maxKeyParams)
 	}
 	name = userServerName(name, u.Hostname())
-	label := "mcp." + name
 	u.Fragment = ""
 	srv := &Server{
 		Name: name, ByUser: true, URL: u.String(), Description: "用户在对话里给出的地址，密钥待填", Payload: "{}",
-		SecretName: keyParam, Secret: vaultHandlePrefix + label, InstalledAt: time.Now().UTC(),
+		InstalledAt: time.Now().UTC(),
 	}
-	if err := i.AskKey(ctx, label, "MCP server "+name+"（"+u.Hostname()+"）的密钥"); err != nil {
-		return nil, err
+	seen := map[string]bool{}
+	for n, p := range params {
+		p = strings.TrimSpace(p)
+		if !reSegment.MatchString(p) || seen[p] {
+			return nil, fmt.Errorf("%w: 密钥的参数名 %q 不合规矩或重复", ErrBadAddress, p)
+		}
+		seen[p] = true
+		// 第一项沿用 mcp.<名字> 这个名字，其余的在后面加上参数名。
+		label := "mcp." + name
+		if n == 0 {
+			srv.SecretName, srv.Secret = p, vaultHandlePrefix+label
+		} else {
+			label += "." + p
+			srv.Secrets = append(srv.Secrets, ServerSecret{Name: p, Secret: vaultHandlePrefix + label})
+		}
+	}
+	for _, sec := range srv.AllSecrets() {
+		note := "MCP server " + name + "（" + u.Hostname() + "）的密钥，参数名 " + sec.Name
+		if err := i.AskKey(ctx, strings.TrimPrefix(sec.Secret, vaultHandlePrefix), "mcp."+name, note); err != nil {
+			return nil, err
+		}
 	}
 	if err := i.Servers.PutServer(ctx, srv); err != nil {
 		return nil, err
 	}
 	return srv, nil
 }
+
+// maxKeyParams 是一个 server 能声明的密钥参数的个数上限。
+const maxKeyParams = 6
 
 // userServerName 定出本机的 server 名：用助手起的，起得不合规矩就从域名里取。
 //

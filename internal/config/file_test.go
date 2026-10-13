@@ -234,7 +234,7 @@ func TestMCPServers_密钥只能是保险库句柄(t *testing.T) {
 		t.Fatalf("借用身份不对: %v", lender.asked)
 	}
 	s := servers[0]
-	if s.SecretName != "key" || s.Secret == nil || s.URL != "https://mcp.amap.com/mcp" {
+	if len(s.Secrets) != 1 || s.Secrets[0].Name != "key" || s.Secrets[0].Take == nil || s.URL != "https://mcp.amap.com/mcp" {
 		t.Fatalf("连接参数不对: %+v", s)
 	}
 }

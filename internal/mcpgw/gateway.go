@@ -70,6 +70,8 @@ type ServerSpec struct {
 	// 密钥不写进 URL 和 Env：那两样会出现在配置文件和报错信息里。
 	SecretName string
 	Secret     func(ctx context.Context) (string, error)
+	// Secrets 是除上面那一项之外它还要的密钥：有的 server 要两三样（如 ID 加密钥）。交给它的办法相同。
+	Secrets []NamedSecret
 
 	// Unreviewed 为真表示这个 server 不是用户亲手批准的，而是助手自己找来装上的。
 	// 它的工具没有用户定的授权边界，连接时按固定的保守边界登记，见 unreviewedGrant。
@@ -77,6 +79,12 @@ type ServerSpec struct {
 	// UserAdded 为真表示这个 server 是用户在对话里给出地址、让助手装上的。
 	// 它和用户在配置里亲手加的一样是用户的决定，只是工具的授权没有人逐个定过，连接时按默认的登记，见 userGrant。
 	UserAdded bool
+}
+
+// NamedSecret 是 server 要的一项密钥：交给它时用的名字，以及向保险库取值的办法。
+type NamedSecret struct {
+	Name string
+	Take func(ctx context.Context) (string, error)
 }
 
 // ToolInfo 是目录里的一个工具，供 Planner 选择使用。
@@ -550,15 +558,21 @@ func decodeArgs(raw json.RawMessage) (any, error) {
 }
 
 func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error) {
-	secret := ""
+	wanted := spec.Secrets
 	if spec.Secret != nil {
-		if spec.SecretName == "" {
+		wanted = append([]NamedSecret{{Name: spec.SecretName, Take: spec.Secret}}, wanted...)
+	}
+	// secrets 是取出来的各项密钥，按声明的次序。
+	var secrets [][2]string
+	for _, w := range wanted {
+		if w.Name == "" || w.Take == nil {
 			return nil, fmt.Errorf("mcpgw: %s 配了密钥，却没有说明它的参数名", spec.Name)
 		}
-		var err error
-		if secret, err = spec.Secret(ctx); err != nil {
-			return nil, fmt.Errorf("mcpgw: 从保险库取 %s 的密钥失败: %w", spec.Name, err)
+		value, err := w.Take(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("mcpgw: 从保险库取 %s 的密钥 %s 失败: %w", spec.Name, w.Name, err)
 		}
+		secrets = append(secrets, [2]string{w.Name, value})
 	}
 	switch spec.Transport {
 	case TransportCommand:
@@ -575,8 +589,8 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 			}
 		}
 		cmd.Env = append(cmd.Env, spec.Env...)
-		if secret != "" {
-			cmd.Env = append(cmd.Env, spec.SecretName+"="+secret)
+		for _, kv := range secrets {
+			cmd.Env = append(cmd.Env, kv[0]+"="+kv[1])
 		}
 		return &mcp.CommandTransport{Command: cmd, TerminateDuration: 5 * time.Second}, nil
 	case TransportHTTP:
@@ -584,8 +598,8 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 			return nil, fmt.Errorf("mcpgw: %s 缺少 URL", spec.Name)
 		}
 		t := &mcp.StreamableClientTransport{Endpoint: spec.URL}
-		if secret != "" {
-			t.HTTPClient = &http.Client{Transport: keyedTransport{name: spec.SecretName, value: secret}}
+		if len(secrets) > 0 {
+			t.HTTPClient = &http.Client{Transport: keyedTransport{params: secrets}}
 		}
 		return t, nil
 	default:
@@ -606,14 +620,17 @@ var passthroughEnv = []string{
 // 加在这里而不是直接拼进 Endpoint：请求失败时报错信息里带的是原来的网址，
 // 拼进去的话密钥会跟着报错进日志。
 type keyedTransport struct {
-	name, value string
+	// params 是要加上的查询参数：名字与值。
+	params [][2]string
 }
 
 func (k keyedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// 不能改传进来的请求，改的是它的副本。
 	out := req.Clone(req.Context())
 	q := out.URL.Query()
-	q.Set(k.name, k.value)
+	for _, kv := range k.params {
+		q.Set(kv[0], kv[1])
+	}
 	out.URL.RawQuery = q.Encode()
 	return http.DefaultTransport.RoundTrip(out)
 }

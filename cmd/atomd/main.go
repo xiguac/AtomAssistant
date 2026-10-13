@@ -361,8 +361,8 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	// 待填写的环境变量：助手登记名字和用途，值由用户在后台填。
 	requests := &vault.Requests{Store: st, Vault: safe}
 	installer := &market.Installer{
-		AskKey: func(ctx context.Context, label, note string) error {
-			return requests.Add(ctx, vault.Request{Label: label, Note: note, Tools: []string{label}})
+		AskKey: func(ctx context.Context, label, user, note string) error {
+			return requests.Add(ctx, vault.Request{Label: label, Note: note, Tools: []string{user}})
 		},
 		Client:  &market.Client{},
 		Scanner: skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
@@ -558,11 +558,16 @@ func unreviewedSpec(srv *market.Server) mcpgw.ServerSpec {
 		return spec
 	}
 	spec.UserAdded = true
-	if srv.Secret != "" && secretLender != nil {
-		// 句柄不合规矩时留空：连接会因为缺密钥失败并报出来，不会带着错的东西连出去。
-		if take, err := secretLender.Lend(srv.Secret, "mcp."+srv.Name); err == nil {
-			spec.SecretName, spec.Secret = srv.SecretName, take
+	for _, sec := range srv.AllSecrets() {
+		if secretLender == nil {
+			break
 		}
+		// 句柄不合规矩时这一项取值会失败：连接因为缺密钥失败并报出来，不会带着错的东西连出去。
+		take, err := secretLender.Lend(sec.Secret, "mcp."+srv.Name)
+		if err != nil {
+			take = func(context.Context) (string, error) { return "", err }
+		}
+		spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: sec.Name, Take: take})
 	}
 	return spec
 }

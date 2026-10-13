@@ -333,6 +333,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /vault", auth(s.vaultPage))
 	mux.HandleFunc("POST /vault", auth(s.vaultPut))
 	mux.HandleFunc("POST /vault/delete", auth(s.vaultDelete))
+	mux.HandleFunc("POST /vault/replace", auth(s.vaultReplace))
 	mux.HandleFunc("POST /vault/request", auth(s.vaultRequestFill))
 	mux.HandleFunc("POST /vault/request/dismiss", auth(s.vaultRequestDismiss))
 	mux.HandleFunc("GET /memory", auth(s.memoryPage))
@@ -842,6 +843,31 @@ func (s *Server) vaultRequestFill(w http.ResponseWriter, r *http.Request, _ *vie
 		s.opts.Log.Info("待填写的环境变量已由用户填写", "名字", label, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/vault", "条目「"+label+"」已保存。保存后不可查看；供 MCP server 使用的密钥需重启服务后生效。", err)
+}
+
+// vaultReplace 更换一个已有条目的值。用途和授权对象不变。
+func (s *Server) vaultReplace(w http.ResponseWriter, r *http.Request, _ *view) {
+	label := r.PostFormValue("label")
+	value := strings.TrimRight(r.PostFormValue("value"), "\r\n")
+	err := func() error {
+		if value == "" {
+			return errors.New("请填写新值")
+		}
+		metas, err := s.opts.Vault.List(r.Context())
+		if err != nil {
+			return err
+		}
+		for _, m := range metas {
+			if m.Label == label {
+				return s.opts.Vault.Seal(r.Context(), m.Label, value, m.Note, m.AllowedTools)
+			}
+		}
+		return errors.New("条目不存在")
+	}()
+	if err == nil {
+		s.opts.Log.Info("环境变量条目的值已更换", "名字", label, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/vault", "条目「"+label+"」的值已更换。供模型服务、消息源、连接器、MCP server 使用的需重启服务后生效。", err)
 }
 
 // vaultRequestDismiss 忽略一条待填写的条目。

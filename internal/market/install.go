@@ -33,6 +33,23 @@ type Server struct {
 	// SecretName 与 Secret 是它要的密钥：参数名，以及密钥在保险库里的句柄。只有用户给的才可能有。
 	SecretName string
 	Secret     string
+	// Secrets 是除上面那一项之外它还要的密钥。
+	Secrets []ServerSecret
+}
+
+// ServerSecret 是 server 要的一项密钥：参数名，以及保险库句柄。
+type ServerSecret struct {
+	Name   string `json:"name"`
+	Secret string `json:"secret"`
+}
+
+// AllSecrets 返回它要的全部密钥，SecretName / Secret 那一项在最前。
+func (s *Server) AllSecrets() []ServerSecret {
+	var out []ServerSecret
+	if s.Secret != "" {
+		out = append(out, ServerSecret{Name: s.SecretName, Secret: s.Secret})
+	}
+	return append(out, s.Secrets...)
 }
 
 // ServerStore 是助手安装的 MCP server 的持久化接口。
@@ -76,7 +93,8 @@ type Installer struct {
 	// Secrets 用来存用户给的地址里带的密钥。为空时带密钥的地址装不了。
 	Secrets SecretKeeper
 	// AskKey 登记一条待用户填写的密钥（label 是保险库里的名字）。为空时装不了"密钥待填"的 server。
-	AskKey func(ctx context.Context, label, note string) error
+	// user 是可以使用它的对象（mcp.<server 名>）。
+	AskKey func(ctx context.Context, label, user, note string) error
 	// Probe 连上一个 server 看它有哪些工具，看完就断开，什么都不登记。
 	Probe func(ctx context.Context, s *Server) ([]ToolBrief, error)
 	// Connect 连接一个 server 并登记它的工具，返回工具全名。连不上就不算装上。

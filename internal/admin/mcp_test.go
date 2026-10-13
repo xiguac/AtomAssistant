@@ -101,7 +101,10 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 	if err != nil || len(servers) != 1 {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if got, err := servers[0].Secret(context.Background()); err != nil || got != key {
+	if len(servers[0].Secrets) != 1 || servers[0].Secrets[0].Name != "key" {
+		t.Fatalf("密钥参数不对: %+v", servers[0].Secrets)
+	}
+	if got, err := servers[0].Secrets[0].Take(context.Background()); err != nil || got != key {
 		t.Fatalf("密钥应能从环境变量取出: %v", err)
 	}
 	// 自称只读的按只读登记，其余按不可撤销。
@@ -157,7 +160,43 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 		!strings.Contains(services, "vault://mcp.maps") || !strings.Contains(services, `href="/mcp">MCP server maps</a>`) {
 		t.Fatal("环境变量页应把个人信息和服务凭据分开列，服务凭据链接到它的管理页面")
 	}
-	// 在 server 自己的卡片上换密钥：换的是保险库里的同一条。
+	// 一个 server 可以要好几项密钥：在卡片上再加一项，页面上每一项各有一个输入框；它只授权给这个 server。
+	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "secret_name": {"app id"}, "key": {"x"}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("不合规矩的参数名应被拒绝: %s", loc)
+	}
+	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "secret_name": {"app_id"}, "key": {"id-001"}}); !strings.Contains(loc, "密钥「app_id」已保存") {
+		t.Fatalf("新增一项密钥失败: %s", loc)
+	}
+	if file, err = config.LoadFile(e.cfg); err != nil || len(file.MCP[0].Secrets) != 1 || file.MCP[0].Secrets[0].Secret != "vault://mcp.maps.app_id" {
+		t.Fatalf("新增的密钥应写进配置，配置里留的是句柄: %v %+v", err, file.MCP)
+	}
+	if spec, err := file.MCP[0].Spec(e.vault); err != nil || len(spec.Secrets) != 2 {
+		t.Fatalf("连接时应带上两项密钥: %v %+v", err, spec.Secrets)
+	} else if got, err := spec.Secrets[1].Take(context.Background()); err != nil || got != "id-001" {
+		t.Fatalf("第二项密钥应能从环境变量取出: %v", err)
+	}
+	if _, body = e.get("/mcp"); strings.Count(body, `name="secret_name" value="`) != 2 || !strings.Contains(body, `value="app_id"`) || strings.Contains(body, "id-001") {
+		t.Fatal("MCP 页应为每一项密钥各显示一个输入框，不显示值")
+	}
+	// 已填的值可以更换：在卡片上按参数名换，或在环境变量页换，用途和授权对象不变。
+	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "secret_name": {"app_id"}, "key": {"id-002"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("更换第二项密钥失败: %s", loc)
+	}
+	if loc := post("/vault/replace", url.Values{"label": {"mcp.maps.app_id"}, "value": {"id-003"}}); !strings.Contains(loc, "已更换") {
+		t.Fatalf("在环境变量页更换值失败: %s", loc)
+	}
+	if loc := post("/vault/replace", url.Values{"label": {"没有这一条"}, "value": {"x"}}); !strings.Contains(loc, "不存在") {
+		t.Fatalf("更换不存在的条目应被拒绝: %s", loc)
+	}
+	if take, err := e.vault.Lend("vault://mcp.maps.app_id", "mcp.maps"); err != nil {
+		t.Fatal(err)
+	} else if got, err := take(context.Background()); err != nil || got != "id-003" {
+		t.Fatalf("更换后的值不对: %v", err)
+	}
+	if file, _ = config.LoadFile(e.cfg); len(file.MCP[0].Secrets) != 1 {
+		t.Fatalf("更换值不应多出一项密钥: %+v", file.MCP[0].Secrets)
+	}
+	// 在 server 自己的卡片上换密钥：换的是环境变量里的同一条。
 	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "key": {"wrong-key"}}); !strings.Contains(loc, "读取工具列表失败") {
 		t.Fatalf("换成错的密钥后应连不上: %s", loc)
 	}

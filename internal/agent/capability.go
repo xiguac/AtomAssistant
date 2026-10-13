@@ -28,7 +28,7 @@ type CapabilityService interface {
 	// InstallUserServer 装上用户亲口给出地址的 MCP server：不扫描、不搁置，按用户接入的对待。
 	InstallUserServer(ctx context.Context, name, rawURL string) (*market.Server, []string, error)
 	// InstallUserServerAwaitingKey 记下一个要密钥、而密钥还没填的 server，并在后台登记待填写的密钥。
-	InstallUserServerAwaitingKey(ctx context.Context, name, rawURL, keyParam string) (*market.Server, error)
+	InstallUserServerAwaitingKey(ctx context.Context, name, rawURL string, params []string) (*market.Server, error)
 }
 
 // SkillLibrary 读取已安装的 Skill，由 skill.Store 提供。
@@ -58,8 +58,9 @@ var capabilityToolset = []mcpgw.ToolInfo{
 			`"accept_risk":{"type":"boolean","description":"只有上一次安装它返回了 needs_approval 之后才填 true，填了会请用户审批"},`+
 			`"url":{"type":"string","description":"用户亲口给出的 MCP server 地址，一字不改地照抄（连同地址里的参数）。填了它就不用填 id"},`+
 			`"name":{"type":"string","description":"配合 url：给这个 server 起一个简短的英文名，如 amap"},`+
-			`"key_param":{"type":"string","description":"配合 url：这个 server 要密钥、而用户给的地址里没带时，填密钥在网址里的参数名（看它的文档，如 key）。`+
-			`填了之后不会立即连接：后台的「环境变量」页会出现一个待填写的输入框，由用户亲手填密钥，重启后生效。不要向用户索要密钥"}},`+
+			`"key_params":{"type":"array","items":{"type":"string"},"description":"配合 url：这个 server 要密钥、而用户给的地址里没带时，`+
+			`填密钥在网址里的参数名（看它的文档，如 [\"key\"]；要好几样就都列出来，如 [\"app_id\",\"app_secret\"]）。`+
+			`填了之后不会立即连接：后台的「环境变量」页会为每一项出现一个待填写的输入框，由用户亲手填，重启后生效。不要向用户索要密钥"}},`+
 			`"required":["kind"]}`,
 		core.SideEffectReversible),
 	builtin(ToolSkillRead,
@@ -144,8 +145,8 @@ type capabilityInput struct {
 	// URL 与 Name 用于装一个用户亲口给出地址的 MCP server。
 	URL  string `json:"url"`
 	Name string `json:"name"`
-	// KeyParam 非空表示这个 server 要密钥而地址里没带：只记下来，密钥由用户在后台填。
-	KeyParam string `json:"key_param"`
+	// KeyParams 非空表示这个 server 要密钥而地址里没带：只记下来，各项密钥由用户在后台填。
+	KeyParams []string `json:"key_params"`
 }
 
 const (
@@ -216,14 +217,18 @@ func (a *Actuator) installCapability(ctx context.Context, in capabilityInput) (j
 	if in.Kind == "mcp" && strings.TrimSpace(in.URL) != "" {
 		// 地址是不是用户给的，审批环节已经核对过（见 Approver.CheckAction）：
 		// 是的直接到这里，不是的要用户点了确认才到这里。
-		if strings.TrimSpace(in.KeyParam) != "" && !strings.Contains(in.URL, "?") {
-			srv, err := a.capabilities.InstallUserServerAwaitingKey(ctx, in.Name, in.URL, in.KeyParam)
+		if len(in.KeyParams) > 0 && !strings.Contains(in.URL, "?") {
+			srv, err := a.capabilities.InstallUserServerAwaitingKey(ctx, in.Name, in.URL, in.KeyParams)
 			if err != nil {
 				return nil, err
 			}
+			var handles []string
+			for _, sec := range srv.AllSecrets() {
+				handles = append(handles, sec.Secret)
+			}
 			return json.Marshal(map[string]any{
 				"recorded": "mcp", "server": srv.Name, "source": "用户给的地址", "awaiting_key": true,
-				"next": "还没有连接。请告诉用户到管理后台的「环境变量」页填写 " + srv.Secret + " 的值，然后重启服务；之后它的工具才可用",
+				"next": "还没有连接。请告诉用户到管理后台的「环境变量」页填写 " + strings.Join(handles, "、") + " 的值，然后重启服务；之后它的工具才可用",
 			})
 		}
 		srv, tools, err := a.capabilities.InstallUserServer(ctx, in.Name, in.URL)

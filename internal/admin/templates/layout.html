@@ -145,6 +145,12 @@ textarea { min-height:96px; resize:vertical; display:block; }
 textarea.bare { border:0; box-shadow:none; padding:0; min-height:84px; font-size:14px; }
 textarea.code { font:12px/18px var(--mono); min-height:480px; border:0; border-radius:0; background:var(--canvas); padding:14px 20px; white-space:pre; overflow-wrap:normal; overflow-x:auto; box-shadow:none; tab-size:2; }
 input[type=file] { font:13px var(--sans); color:var(--text-2); }
+/* 密钥一行：参数名、值、按钮底边对齐；一个 server 有几项密钥就有几行。 */
+.keyrow { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+.keyrow .keyname { width:200px; }
+.keyrow .keyparam { height:36px; display:flex; align-items:center; padding:0 10px; border:1px solid var(--line); border-radius:8px; background:var(--canvas); color:var(--text); font-size:13px; }
+.keyrow label .pill { margin-left:6px; }
+.keyrow .btn { min-width:88px; }
 .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px 20px; }
 .grid2 .full { grid-column:1 / -1; }
 .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:36px; padding:0 14px; border-radius:8px; border:1px solid var(--primary); background:var(--primary); color:#fff; font:500 13px/16px var(--sans); cursor:pointer; white-space:nowrap; }

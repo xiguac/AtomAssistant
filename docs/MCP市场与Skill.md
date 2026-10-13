@@ -257,11 +257,17 @@ vault.request（名字、用途、哪些工具可以用它）——只有键，�
 - 不是用户发起的任务登记不了；绑定了 Skill 的任务要 Skill 声明了这个工具才能用；同时挂着的最多 20 条。
 
 **要密钥的 MCP server** 走的是同一条路：用户在对话里给了地址但没给密钥时，助手在 `capability.install` 里
-填 `key_param`（密钥在网址里的参数名）。这时只把 server 记下来，不连接，同时登记一条名为 `mcp.<server 名>` 的待填写条目；
-用户在后台填好、重启服务之后才连上。助手自己从登记处找来的、要密钥的 server 仍然不装。
+填 `key_params`（密钥在网址里的参数名，可以不止一个）。这时只把 server 记下来，不连接，同时为每一项登记一条待填写条目；
+用户在后台全部填好、重启服务之后才连上。助手自己从登记处找来的、要密钥的 server 仍然不装。
+
+**一个 server 可以要好几项密钥**（如 ID 加密钥）。第一项在保险库里叫 `mcp.<server 名>`，其余的叫 `mcp.<server 名>.<参数名>`，
+都只授权给这个 server。配置文件里写在 `secrets` 一节（`[{name, secret}]`，与 `secret_name` / `secret` 并列）；
+后台「MCP」页的卡片上每一项各有一个输入框，还可以再加。连接时逐项取值：远程 server 都加到网址的查询参数里，本机 server 都作为环境变量。
+
+**填过的值可以改**：「环境变量」页每一条都有"更换值"一栏，只换值，用途和授权对象不变；MCP 的密钥也可以在它的卡片上按参数名更换。
 
 代码落点：`vault.Requests`（存在设置表里），`agent/vaultreq.go`，`market.InstallUserServerAwaitingKey`，
-`admin.vaultRequestFill`。
+`admin.vaultRequestFill` / `vaultReplace` / `saveExtraSecret`，`mcpgw.ServerSpec.Secrets`。
 
 ---
 

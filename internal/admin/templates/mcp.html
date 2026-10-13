@@ -18,11 +18,17 @@
         <button class="btn danger sm">移除</button></form>
     </div>
   </div>
-  {{if not .NoKey}}<form method="post" action="/mcp/key" autocomplete="off" class="pad" style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line)">
-    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
-    <div style="width:200px"><label for="key-name-{{.Name}}">密钥参数名</label><input id="key-name-{{.Name}}" type="text" name="secret_name" value="{{.SecretName}}" placeholder="key"></div>
-    <div class="grow"><label for="key-{{.Name}}">密钥</label><input id="key-{{.Name}}" type="password" name="key" autocomplete="new-password" placeholder="{{if .KeyOK}}{{if .Secret}}已保存，填写后将替换{{end}}{{end}}"></div>
+  {{if not .NoKey}}{{$srv := .Name}}{{range .Keys}}<form method="post" action="/mcp/key" autocomplete="off" class="pad keyrow">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{$srv}}"><input type="hidden" name="secret_name" value="{{.Param}}">
+    <div class="keyname"><label>密钥参数名</label><div class="mono keyparam">{{.Param}}</div></div>
+    <div class="grow"><label for="key-{{$srv}}-{{.Param}}">密钥 {{if .OK}}<span class="pill ok plain">已保存</span>{{else}}<span class="pill bad plain">未填写</span>{{end}}</label><input id="key-{{$srv}}-{{.Param}}" type="password" name="key" autocomplete="new-password" placeholder="{{if .OK}}填写后将替换原值{{end}}"></div>
     <button class="btn sec">保存密钥</button>
+  </form>{{end}}
+  <form method="post" action="/mcp/key" autocomplete="off" class="pad keyrow">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+    <div class="keyname"><label for="key-name-{{.Name}}">{{if .Keys}}新增密钥参数{{else}}密钥参数名{{end}}</label><input id="key-name-{{.Name}}" type="text" name="secret_name" placeholder="key"></div>
+    <div class="grow"><label for="key-{{.Name}}">密钥</label><input id="key-{{.Name}}" type="password" name="key" autocomplete="new-password"></div>
+    <button class="btn sec">{{if .Keys}}添加{{else}}保存密钥{{end}}</button>
   </form>{{end}}
   {{if .Tools}}<details class="fold"><summary><span>工具 <span class="count">{{len .Tools}}</span></span></summary>
   <form method="post" action="/mcp/tools">
@@ -47,7 +53,7 @@
     <thead><tr><th>名称</th><th>来源</th><th>地址</th><th>说明</th><th>安装时间</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Installed}}<tr>
       <td><b style="font-weight:500">{{.Name}}</b><div class="note muted">{{.RegistryName}}</div></td>
-      <td>{{if .ByUser}}<span class="pill ok plain">用户提供地址</span>{{if .Secret}}<div class="note muted" style="margin-top:4px">密钥已存入环境变量</div>{{end}}{{else}}<span class="pill plain">助手自行查找</span>{{end}}</td>
+      <td>{{if .ByUser}}<span class="pill ok plain">用户提供地址</span>{{if .Secret}}<div class="note muted" style="margin-top:4px">密钥在<a href="/vault">环境变量</a>页填写与更换：{{range .AllSecrets}}<span class="chip">{{.Name}}</span>{{end}}</div>{{end}}{{else}}<span class="pill plain">助手自行查找</span>{{end}}</td>
       <td><span class="mono" style="word-break:break-all">{{.URL}}</span></td>
       <td>{{short .Description 80}}</td>
       <td class="time">{{when .InstalledAt}}</td>

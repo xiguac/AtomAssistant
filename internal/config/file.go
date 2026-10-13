@@ -422,6 +422,26 @@ type MCPConfig struct {
 	// （高德是 key），本地 server 是环境变量名（高德是 AMAP_MAPS_API_KEY）。
 	SecretName string `yaml:"secret_name,omitempty"`
 	Secret     string `yaml:"secret,omitempty"`
+	// Secrets 是除上面那一项之外它还要的密钥：有的 server 要两三样（如 ID 加密钥）。写法相同。
+	Secrets []MCPSecret `yaml:"secrets,omitempty"`
+}
+
+// MCPSecret 是 MCP server 要的一项密钥：交给它时用的名字，以及保险库句柄。
+type MCPSecret struct {
+	Name   string `yaml:"name"`
+	Secret string `yaml:"secret"`
+}
+
+// SecretLabel 定出这个 server 名为 param 的那项密钥在保险库里该叫什么。
+func (m MCPConfig) SecretLabel(param string) string { return m.VaultUser() + "." + param }
+
+// AllSecrets 返回它要的全部密钥，secret_name / secret 那一项在最前。
+func (m MCPConfig) AllSecrets() []MCPSecret {
+	var out []MCPSecret
+	if m.Secret != "" {
+		out = append(out, MCPSecret{Name: m.SecretName, Secret: m.Secret})
+	}
+	return append(out, m.Secrets...)
 }
 
 // VaultUser 返回这个 MCP server 在保险库授权名单里的名字。
@@ -712,14 +732,21 @@ func (f *File) BuildApprovalPolicy() *policy.Policy {
 // validateMCP 校验 MCP server 的密钥写法。在加载时就查，理由同 validateChannels。
 func (f *File) validateMCP() error {
 	for _, m := range f.MCP {
-		if m.Secret == "" && m.SecretName == "" {
-			continue
-		}
-		if !strings.HasPrefix(m.Secret, "vault://") {
+		if m.SecretName != "" && m.Secret == "" {
 			return fmt.Errorf("config: MCP server %s 的 secret 只能写保险库句柄（vault://名字），不能直接写密钥", m.Name)
 		}
-		if m.SecretName == "" {
-			return fmt.Errorf("config: MCP server %s 配了 secret，还要写 secret_name（查询参数名或环境变量名）", m.Name)
+		seen := map[string]bool{}
+		for _, sec := range m.AllSecrets() {
+			if !strings.HasPrefix(sec.Secret, "vault://") {
+				return fmt.Errorf("config: MCP server %s 的 secret 只能写保险库句柄（vault://名字），不能直接写密钥", m.Name)
+			}
+			if sec.Name == "" {
+				return fmt.Errorf("config: MCP server %s 配了 secret，还要写 secret_name（查询参数名或环境变量名）", m.Name)
+			}
+			if seen[sec.Name] {
+				return fmt.Errorf("config: MCP server %s 的密钥参数名 %s 重复", m.Name, sec.Name)
+			}
+			seen[sec.Name] = true
 		}
 	}
 	return nil
@@ -749,15 +776,15 @@ func (m MCPConfig) Spec(secrets SecretLender) (mcpgw.ServerSpec, error) {
 		Name: m.Name, Transport: kind,
 		Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL,
 	}
-	if m.Secret != "" {
+	for _, sec := range m.AllSecrets() {
 		if secrets == nil {
 			return mcpgw.ServerSpec{}, fmt.Errorf("config: MCP server %s 的密钥在保险库里，但保险库不可用", m.Name)
 		}
-		take, err := secrets.Lend(m.Secret, m.VaultUser())
+		take, err := secrets.Lend(sec.Secret, m.VaultUser())
 		if err != nil {
 			return mcpgw.ServerSpec{}, fmt.Errorf("config: MCP server %s 的 secret: %w", m.Name, err)
 		}
-		spec.SecretName, spec.Secret = m.SecretName, take
+		spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: sec.Name, Take: take})
 	}
 	return spec, nil
 }

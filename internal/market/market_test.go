@@ -474,10 +474,13 @@ func TestInstallUserServerAwaitingKey_密钥不经过对话由用户在后台填
 	asked := map[string]string{}
 	connects := 0
 	in := &Installer{Servers: servers,
-		AskKey:  func(_ context.Context, label, note string) error { asked[label] = note; return nil },
+		AskKey: func(_ context.Context, label, user, note string) error {
+			asked[label] = user + "|" + note
+			return nil
+		},
 		Connect: func(context.Context, *Server) ([]string, error) { connects++; return nil, nil }}
 
-	srv, err := in.InstallUserServerAwaitingKey(ctx, "Flight", "https://mcp.flight.example.com/mcp", "key")
+	srv, err := in.InstallUserServerAwaitingKey(ctx, "Flight", "https://mcp.flight.example.com/mcp", []string{"key"})
 	if err != nil {
 		t.Fatalf("记录失败: %v", err)
 	}
@@ -486,22 +489,40 @@ func TestInstallUserServerAwaitingKey_密钥不经过对话由用户在后台填
 		servers["flight"] == nil || connects != 0 {
 		t.Fatalf("记录的内容不对: %+v 连接了 %d 次", srv, connects)
 	}
-	if note := asked["mcp.flight"]; !strings.Contains(note, "mcp.flight.example.com") {
+	if note := asked["mcp.flight"]; !strings.HasPrefix(note, "mcp.flight|") || !strings.Contains(note, "mcp.flight.example.com") {
 		t.Fatalf("应登记一条待填写的密钥并写明是哪个服务: %v", asked)
 	}
-	for _, bad := range []struct{ url, param string }{
-		{"http://mcp.example.com/mcp", "key"},
-		{"https://mcp.example.com/mcp?key=k", "key"},
-		{"https://u:p@mcp.example.com/mcp", "key"},
-		{"https://mcp.example.com/mcp", "k=v&x"},
-		{"https://mcp.example.com/mcp", ""},
+
+	// 要好几样的：每一项各登记一条，都只授权给这个 server。
+	srv, err = in.InstallUserServerAwaitingKey(ctx, "crm", "https://crm.example.com/mcp", []string{"app_id", "app_secret"})
+	if err != nil {
+		t.Fatalf("记录失败: %v", err)
+	}
+	all := srv.AllSecrets()
+	if len(all) != 2 || all[0] != (ServerSecret{"app_id", "vault://mcp.crm"}) || all[1] != (ServerSecret{"app_secret", "vault://mcp.crm.app_secret"}) {
+		t.Fatalf("各项密钥不对: %+v", all)
+	}
+	if !strings.HasPrefix(asked["mcp.crm"], "mcp.crm|") || !strings.HasPrefix(asked["mcp.crm.app_secret"], "mcp.crm|") {
+		t.Fatalf("每一项都应登记待填写，授权给这个 server: %v", asked)
+	}
+
+	for _, bad := range []struct {
+		url    string
+		params []string
+	}{
+		{"http://mcp.example.com/mcp", []string{"key"}},
+		{"https://mcp.example.com/mcp?key=k", []string{"key"}},
+		{"https://u:p@mcp.example.com/mcp", []string{"key"}},
+		{"https://mcp.example.com/mcp", []string{"k=v&x"}},
+		{"https://mcp.example.com/mcp", []string{"key", "key"}},
+		{"https://mcp.example.com/mcp", nil},
 	} {
-		if _, err := in.InstallUserServerAwaitingKey(ctx, "x", bad.url, bad.param); !errors.Is(err, ErrBadAddress) {
+		if _, err := in.InstallUserServerAwaitingKey(ctx, "x", bad.url, bad.params); !errors.Is(err, ErrBadAddress) {
 			t.Fatalf("%+v 应被拒绝: %v", bad, err)
 		}
 	}
 	// 没接上登记待填写条目的能力时装不了，不会留下一个永远连不上的 server。
-	if _, err := (&Installer{Servers: memServers{}}).InstallUserServerAwaitingKey(ctx, "y", "https://y.example.com/mcp", "key"); err == nil {
+	if _, err := (&Installer{Servers: memServers{}}).InstallUserServerAwaitingKey(ctx, "y", "https://y.example.com/mcp", []string{"key"}); err == nil {
 		t.Fatal("没有 AskKey 时应报错")
 	}
 }
