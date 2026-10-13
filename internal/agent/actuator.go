@@ -45,6 +45,7 @@ type Actuator struct {
 	calendar  CalendarService
 	mail      MailService
 	holidays  HolidayService
+	weather   WeatherService
 	files     FileService
 	// team 与 workers 非空时可以把活派给协作模型。
 	team    Dispatcher
@@ -81,6 +82,12 @@ func (a *Actuator) WithFiles(f FileService) *Actuator {
 // WithHolidays 接入节假日数据。
 func (a *Actuator) WithHolidays(h HolidayService) *Actuator {
 	a.holidays = h
+	return a
+}
+
+// WithWeather 接入天气数据。
+func (a *Actuator) WithWeather(w WeatherService) *Actuator {
+	a.weather = w
 	return a
 }
 
@@ -258,6 +265,15 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 节假日安排来自用户指定的订阅，是日期和种类这样的结构化事实，名称在取回时已经截短。
 		// 按权威数据对待：查一下哪天调休，不该让后面记日程的动作变成"由外部内容引出"。
 		return kernel.Result{Output: out, Trust: core.TrustConnector}, nil
+	}
+	if s.ToolName == ToolWeather {
+		out, err := a.runWeather(ctx, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 天气来自用户自己接入的气象服务。数值是结构化的，但预警的标题和正文是气象台写的文字，
+		// 所以不按权威数据对待，和普通工具的输出一个等级。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
 	if isConnectorTool(s.ToolName) {
 		var out json.RawMessage

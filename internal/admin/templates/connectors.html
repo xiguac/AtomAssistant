@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>连接器</h1>
-<div class="sub">配置日历（CalDAV）与邮件（IMAP / SMTP）的账号，以及节假日订阅。密码保存至保险库，保存后不可查看。修改后需重启服务方可生效。</div>
+<div class="sub">配置日历（CalDAV）与邮件（IMAP / SMTP）的账号、节假日订阅，以及天气数据（和风天气）。密码与密钥保存至保险库，保存后不可查看。修改后需重启服务方可生效。</div>
 
 {{with .Data}}
 <div class="cols even">
@@ -66,6 +66,25 @@
       <button class="btn" style="order:9">保存</button>
       {{if .Mail}}<button class="btn danger" formaction="/connectors/disable" name="which" value="mail">停用</button>{{end}}
       <button class="btn sec" formaction="/connectors/test" name="which" value="mail" data-async>连接测试</button>
+    </div>
+  </div>
+</form>
+
+<h2>天气 {{if .Weather}}{{if .WeatherKey}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">密钥未配置</span>{{end}}{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+<form method="post" action="/connectors/weather" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad grid2">
+    <div><label for="qw-host">API Host</label><input id="qw-host" type="text" name="host" value="{{if .Weather}}{{.Weather.Host}}{{end}}" placeholder="abcxyz.qweatherapi.com">
+      <div class="help">和风天气（QWeather）为每个开发者分配的独立地址，在控制台（console.qweather.com）的「设置」中查看</div></div>
+    <div><label for="qw-key">API KEY</label><input id="qw-key" type="password" name="key" autocomplete="new-password">
+      <div class="help">在控制台的「项目管理」中创建凭据，身份认证方式选择 API KEY。已配置时留空表示沿用原密钥</div></div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">提供实时天气、10 天内逐日预报与气象预警查询。查询时仅发送城市或区县名称。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Weather}}<button class="btn danger" formaction="/connectors/disable" name="which" value="weather">停用</button>{{end}}
+      <button class="btn sec" formaction="/connectors/test" name="which" value="weather" data-async>连接测试</button>
     </div>
   </div>
 </form>

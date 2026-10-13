@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -55,6 +56,7 @@ type ServerSpec struct {
 	// Command / Args / Env 用于 TransportCommand。
 	// Env 只包含显式声明的变量——绝不能把主进程的环境整个传下去，
 	// 那会把数据库密码和模型密钥一并交给第三方工具。
+	// 例外是 passthroughEnv 里那几个找解释器、放缓存用的变量，它们不是密钥。
 	Command string
 	Args    []string
 	Env     []string
@@ -564,9 +566,15 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 			return nil, fmt.Errorf("mcpgw: %s 缺少启动命令", spec.Name)
 		}
 		cmd := exec.Command(spec.Command, spec.Args...)
-		// 只传显式声明的环境变量。把主进程环境整个继承下去，
-		// 等于把数据库密码、模型密钥交给第三方工具。
-		cmd.Env = append([]string{}, spec.Env...)
+		// 只传 passthroughEnv 里的几个和显式声明的环境变量。把主进程环境整个继承下去，
+		// 等于把数据库密码、模型密钥交给第三方工具。显式声明的排在后面，同名时以它为准。
+		cmd.Env = make([]string, 0, len(passthroughEnv)+len(spec.Env)+1)
+		for _, k := range passthroughEnv {
+			if v, ok := os.LookupEnv(k); ok {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+		}
+		cmd.Env = append(cmd.Env, spec.Env...)
 		if secret != "" {
 			cmd.Env = append(cmd.Env, spec.SecretName+"="+secret)
 		}
@@ -583,6 +591,14 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 	default:
 		return nil, fmt.Errorf("mcpgw: 未知的传输方式 %q", spec.Transport)
 	}
+}
+
+// passthroughEnv 是本地 MCP server 能从主进程继承的环境变量。
+//
+// 只有找得到解释器、有地方放缓存所必需的这几个，都不是密钥。
+// 少了它们，npx、uvx 这类启动器起不来：找不到 node，也没有地方放下载的包。
+var passthroughEnv = []string{
+	"PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot",
 }
 
 // keyedTransport 在请求发出去的那一刻把密钥加到网址的查询参数里。

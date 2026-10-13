@@ -152,6 +152,14 @@ reply:
 #   # 节假日与调休安排：一个公开的日历订阅，不需要账号。助手靠它知道哪天放假、哪个周末补班
 #   holidays:
 #     url: https://calendars.icloud.com/holidays/cn_zh.ics
+#   # 天气：和风天气（https://dev.qweather.com/docs/）。接上之后助手多一个 weather.forecast 工具，
+#   # 查实时天气、10 天内的逐日预报和正在生效的气象预警。
+#   # host 是你自己的 API Host（控制台的「设置」里看），key 是 API KEY，只能写保险库句柄：
+#   #   atomctl vault put connector.weather "和风天气 API KEY" connector.weather
+#   # 也可以在管理后台的「连接器」页里填。
+#   weather:
+#     host: abcxyz.qweatherapi.com
+#     key: vault://connector.weather
 
 # ---------------------------------------------------------------
 # 付款。不写这一节，助手没有任何付款工具。
@@ -175,6 +183,7 @@ reply:
 #
 # env 里只列出这个 server 确实需要的变量。主进程的环境不会被继承——
 # 否则数据库密码和模型密钥会一并交给第三方工具。
+# 例外是 PATH、HOME 这几个找解释器、放缓存用的变量：没有它们 npx、uvx 起不来。
 # ---------------------------------------------------------------
 mcp_servers: []
 # mcp_servers:
@@ -194,6 +203,19 @@ mcp_servers: []
 #     url: https://mcp.amap.com/mcp
 #     secret_name: key
 #     secret: vault://mcp.amap
+#   # 滴滴出行（https://mcp.didichuxing.com/api）同样是预置的，填一个 MCP Key 即可。
+#   # 价格预估、路线规划这些查询按只读登记；创建订单、取消订单按不可撤销登记，每次都要你确认。
+#   - name: didi
+#     transport: http
+#     url: https://mcp.didichuxing.com/mcp-servers
+#     secret_name: key
+#     secret: vault://mcp.didi
+#   # 12306（https://github.com/Joooook/12306-mcp）也是预置的：查余票、中转、经停站，不能购票。
+#   # 它在本机以子进程运行，机器上要有 Node.js 18 以上。版本是固定的，要升级就改这里的版本号。
+#   - name: "12306"
+#     transport: command
+#     command: npx
+#     args: ["-y", "12306-mcp@0.3.10"]
 
 # ---------------------------------------------------------------
 # 工具授权边界。对应用户在 App 上批准某个工具时的选择。

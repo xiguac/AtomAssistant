@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/connector/holiday"
+	"github.com/xiguac/atomhelper/internal/connector/weather"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/policy"
@@ -209,5 +210,52 @@ func TestHolidays_查调休不算读外部内容(t *testing.T) {
 	}
 	if out, reason, _ := approver.CheckAction(context.Background(), task, d); out != kernel.ApprovalAuto {
 		t.Fatalf("查过调休之后记日程应直接执行: %s（%s）", out, reason)
+	}
+}
+
+type fakeWeather struct {
+	city, adm string
+	days      int
+}
+
+func (f *fakeWeather) Forecast(_ context.Context, city, adm string, days int) (weather.Report, error) {
+	f.city, f.adm, f.days = city, adm, days
+	return weather.Report{Place: weather.Place{Name: city}, Now: weather.Now{Text: "晴"}, Days: []weather.Day{{Date: "2026-10-14"}}}, nil
+}
+
+func TestWeather_接入了才有只读直接执行(t *testing.T) {
+	bare := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	if strings.Contains(bare.toolList(), ToolWeather) {
+		t.Fatal("没接入天气数据时不应出现这个工具")
+	}
+	p := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithWeather(true)
+	d, err := p.toolDecision(ToolWeather, json.RawMessage(`{"city":"杭州"}`), "")
+	if err != nil || d.SideEffect != core.SideEffectReadOnly {
+		t.Fatalf("天气查询应是只读的: %+v %v", d, err)
+	}
+	task := core.NewTask("t", "g", core.TrustUser)
+	approver := NewApprover(&policy.Policy{Autonomous: true}, policy.NewClassifier(), NewMemoryUsageTracker())
+	if out, reason, _ := approver.CheckAction(context.Background(), task, d); out != kernel.ApprovalAuto {
+		t.Fatalf("查天气应直接执行: %s（%s）", out, reason)
+	}
+
+	if _, err := NewActuator(&fakeTools{}, &fakeModel{}).Execute(context.Background(), task, connStep(task, 1, ToolWeather, `{"city":"杭州"}`)); err == nil {
+		t.Fatal("没接入天气数据时调用应报错")
+	}
+	qw := &fakeWeather{}
+	a := NewActuator(&fakeTools{}, &fakeModel{}).WithWeather(qw)
+	res, err := a.Execute(context.Background(), task, connStep(task, 1, ToolWeather, `{"city":"朝阳","adm":"北京","days":7}`))
+	if err != nil || qw.city != "朝阳" || qw.adm != "北京" || qw.days != 7 || !strings.Contains(string(res.Output), `"date":"2026-10-14"`) {
+		t.Fatalf("查询参数或结果不对: %v %+v %s", err, qw, res.Output)
+	}
+	// 不写天数查 3 天；预警是气象台写的文字，结果不按权威数据对待，也不算外部内容。
+	if _, err := a.Execute(context.Background(), task, connStep(task, 2, ToolWeather, `{"city":"杭州"}`)); err != nil || qw.days != defaultWeatherDays {
+		t.Fatalf("默认应查 %d 天: %v %d", defaultWeatherDays, err, qw.days)
+	}
+	if res.Trust != core.TrustToolOutput {
+		t.Fatalf("天气结果的信任等级不对: %s", res.Trust)
+	}
+	if _, err := a.Execute(context.Background(), task, connStep(task, 3, ToolWeather, `{"city":" "}`)); err == nil {
+		t.Fatal("没写城市应报错")
 	}
 }

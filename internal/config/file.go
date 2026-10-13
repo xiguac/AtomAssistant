@@ -19,6 +19,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
 	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
+	"github.com/xiguac/atomhelper/internal/connector/weather"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/llm"
@@ -200,6 +201,32 @@ type ConnectorsConfig struct {
 	Calendar *CalendarConfig `yaml:"calendar,omitempty"`
 	Mail     *MailConfig     `yaml:"mail,omitempty"`
 	Holidays *HolidaysConfig `yaml:"holidays,omitempty"`
+	Weather  *WeatherConfig  `yaml:"weather,omitempty"`
+}
+
+// WeatherConfig 是天气数据的来源：和风天气（QWeather）的开发服务。
+type WeatherConfig struct {
+	// Host 是开发者自己的 API Host，在和风天气控制台的「设置」里看，如 abcxyz.qweatherapi.com。
+	Host string `yaml:"host"`
+	// Key 是 API KEY 在保险库里的句柄（vault://名字），不接受明文。
+	// 保险库里那一条的授权名单要有 connector.weather。
+	Key string `yaml:"key"`
+}
+
+// Weather 按配置构造天气客户端。没有配置时返回 nil。
+func (f *File) Weather(secrets SecretLender) (*weather.Client, error) {
+	c := f.Connectors.Weather
+	if c == nil {
+		return nil, nil
+	}
+	if err := weather.CheckHost(c.Host); err != nil {
+		return nil, fmt.Errorf("config: connectors.weather.host: %w", err)
+	}
+	secret, err := secrets.Lend(c.Key, VaultUserWeather)
+	if err != nil {
+		return nil, fmt.Errorf("config: connectors.weather.key: %w", err)
+	}
+	return &weather.Client{Host: c.Host, Secret: secret}, nil
 }
 
 // HolidaysConfig 是节假日数据的来源：一个公开的日历订阅（.ics）。
@@ -245,6 +272,14 @@ func (f *File) validateConnectors() error {
 			return fmt.Errorf("config: connectors.holidays.url: %w", err)
 		}
 	}
+	if c := f.Connectors.Weather; c != nil {
+		if err := weather.CheckHost(c.Host); err != nil {
+			return fmt.Errorf("config: connectors.weather.host: %w", err)
+		}
+		if !strings.HasPrefix(c.Key, "vault://") {
+			return fmt.Errorf("config: connectors.weather.key 只能写保险库句柄（vault://名字），不能直接写密钥")
+		}
+	}
 	return nil
 }
 
@@ -252,6 +287,7 @@ func (f *File) validateConnectors() error {
 const (
 	VaultUserCalendar = "connector.calendar"
 	VaultUserMail     = "connector.mail"
+	VaultUserWeather  = "connector.weather"
 )
 
 // CalendarConfig 是日历连接器（CalDAV）的配置。

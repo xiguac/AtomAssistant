@@ -106,6 +106,8 @@ type Planner struct {
 	hasCalendar, hasMail, canSend bool
 	// hasHolidays 为真表示接入了节假日数据。
 	hasHolidays bool
+	// hasWeather 为真表示接入了天气数据。
+	hasWeather bool
 	// hasFiles 为真表示启用了文件处理。
 	hasFiles bool
 	// hasTeam 为真表示配置了协作模型，可以派活。
@@ -230,6 +232,12 @@ func (p *Planner) WithHolidays(enabled bool) *Planner {
 	return p
 }
 
+// WithWeather 向模型开放天气查询。
+func (p *Planner) WithWeather(enabled bool) *Planner {
+	p.hasWeather = enabled
+	return p
+}
+
 // WithMail 向模型开放邮件工具。canSend 为假时只能读和整理，不能发信。
 func (p *Planner) WithMail(enabled, canSend bool) *Planner {
 	p.hasMail, p.canSend = enabled, canSend
@@ -247,6 +255,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 节假日是公开信息，不涉及用户的任何数据，绑定了 Skill 的任务也能查。
 	if p.hasHolidays {
 		tools = append(tools, holidayTool)
+	}
+	// 天气同理：带出去的只有一个地名。
+	if p.hasWeather {
+		tools = append(tools, weatherTool)
 	}
 	gated := append(payTools(p.pay), resourceTools(p.pay && p.paidResources)...)
 	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)

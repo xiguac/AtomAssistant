@@ -723,8 +723,22 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 		t.Fatalf("保存节假日订阅失败: %s", loc)
 	}
 
+	if loc := post("/connectors/weather", url.Values{"host": {"qweather"}, "key": {"qw-key-42"}}); !strings.Contains(loc, "请填写 API Host") {
+		t.Fatalf("不是主机名的 API Host 应被拒绝: %s", loc)
+	}
+	if loc := post("/connectors/weather", url.Values{"host": {"abcxyz.qweatherapi.com"}}); !strings.Contains(loc, "必须填写") {
+		t.Fatalf("首次配置没有 API KEY 应被拒绝: %s", loc)
+	}
+	// 从控制台粘贴来的地址带着协议和斜杠也认。
+	if loc := post("/connectors/weather", url.Values{"host": {"https://abcxyz.qweatherapi.com/"}, "key": {"qw-key-42"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存天气失败: %s", loc)
+	}
+
 	raw, _ := os.ReadFile(e.cfg)
 	text := string(raw)
+	if strings.Contains(text, "qw-key-42") || !strings.Contains(text, "host: abcxyz.qweatherapi.com") || !strings.Contains(text, "key: vault://connector.weather") {
+		t.Fatalf("天气的 API KEY 不能出现在配置里，配置里留的是句柄:\n%s", text)
+	}
 	if strings.Contains(text, "cal pass word") || strings.Contains(text, "mail-secret-9") || !strings.HasPrefix(text, string(before)) {
 		t.Fatalf("密码不能出现在配置里，其余内容不动:\n%s", text)
 	}
@@ -748,9 +762,16 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 	if got, err := box.Secret(ctx); err != nil || got != "mail-secret-9" {
 		t.Fatalf("邮件密码应能从保险库取出: %v", err)
 	}
+	qw, err := file.Weather(e.vault)
+	if err != nil || qw.Host != "abcxyz.qweatherapi.com" {
+		t.Fatalf("天气连接器不对: %+v %v", qw, err)
+	}
+	if got, err := qw.Secret(ctx); err != nil || got != "qw-key-42" {
+		t.Fatalf("天气的 API KEY 应能从保险库取出: %v", err)
+	}
 	_, body := e.get("/connectors")
-	if strings.Contains(body, "cal pass word") || strings.Contains(body, "mail-secret-9") ||
-		!strings.Contains(body, `value="me@example.com"`) || strings.Count(body, "已配置") < 3 {
+	if strings.Contains(body, "cal pass word") || strings.Contains(body, "mail-secret-9") || strings.Contains(body, "qw-key-42") ||
+		!strings.Contains(body, `value="me@example.com"`) || !strings.Contains(body, `value="abcxyz.qweatherapi.com"`) || strings.Count(body, "已配置") < 4 {
 		t.Fatal("连接器页应显示账号与状态，不显示密码")
 	}
 
@@ -765,7 +786,7 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 	}
 
 	// 逐个停用，全部停用后配置回到原样。
-	for _, which := range []string{"calendar", "mail", "holidays"} {
+	for _, which := range []string{"calendar", "mail", "holidays", "weather"} {
 		if loc := post("/connectors/disable", url.Values{"which": {which}}); !strings.Contains(loc, "已停用") {
 			t.Fatalf("停用 %s 失败: %s", which, loc)
 		}
@@ -779,6 +800,8 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 		{"which": {"calendar"}, "url": {"http://caldav.example.com"}, "username": {"me"}, "password": {"p"}}: "https://",
 		{"which": {"calendar"}, "url": {"https://caldav.example.com"}, "username": {"me"}}:                   "请填写密码",
 		{"which": {"mail"}, "imap": {"imap.example.com:993"}, "username": {"me"}}:                            "请填写密码",
+		{"which": {"weather"}}: "API",
+		{"which": {"weather"}, "host": {"abcxyz.qweatherapi.com"}}: "KEY",
 		{"which": {"ftp"}}: "连接器类型无效",
 	} {
 		if loc := post("/connectors/test", *form); !strings.Contains(loc, want) {
@@ -991,8 +1014,8 @@ func TestAdmin_连接测试在后台提交不刷新页面(t *testing.T) {
 	if code, js := e.get("/static/app.js"); code != http.StatusOK || !strings.Contains(js, "data-async") {
 		t.Fatalf("脚本应能取到: %d", code)
 	}
-	if _, body := e.get("/connectors"); strings.Count(body, "data-async") != 2 {
-		t.Fatal("日历和邮件的连接测试都应在后台提交，且未配置时也能测")
+	if _, body := e.get("/connectors"); strings.Count(body, "data-async") != 3 {
+		t.Fatal("日历、邮件和天气的连接测试都应在后台提交，且未配置时也能测")
 	}
 }
 

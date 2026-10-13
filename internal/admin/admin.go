@@ -352,10 +352,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /connectors/calendar", auth(s.calendarSave))
 	mux.HandleFunc("POST /connectors/mail", auth(s.mailSave))
 	mux.HandleFunc("POST /connectors/holidays", auth(s.holidaysSave))
+	mux.HandleFunc("POST /connectors/weather", auth(s.weatherSave))
 	mux.HandleFunc("POST /connectors/disable", auth(s.connectorDisable))
 	mux.HandleFunc("POST /connectors/test", auth(s.connectorTest))
 	mux.HandleFunc("GET /mcp", auth(s.mcpPage))
-	mux.HandleFunc("POST /mcp/amap", auth(s.mcpAmap))
+	for i, p := range mcpPresets {
+		mux.HandleFunc("POST /mcp/"+p.ID, auth(s.mcpPresetSave(i)))
+	}
 	mux.HandleFunc("POST /mcp/server", auth(s.mcpSave))
 	mux.HandleFunc("POST /mcp/server/delete", auth(s.mcpDelete))
 	mux.HandleFunc("POST /mcp/key", auth(s.mcpKey))
@@ -791,6 +794,9 @@ func owners(users []string) []owner {
 		case config.VaultUserMail:
 			out = append(out, owner{"连接器", "邮件", "/connectors"})
 			continue
+		case config.VaultUserWeather:
+			out = append(out, owner{"连接器", "天气", "/connectors"})
+			continue
 		}
 		for _, k := range kinds {
 			if name, ok := strings.CutPrefix(u, k.prefix); ok {
@@ -824,8 +830,9 @@ func (s *Server) toolOptions(metas []vault.Meta) []toolOption {
 	out := []toolOption{
 		{config.VaultUserCalendar, "日历连接器"},
 		{config.VaultUserMail, "邮件连接器"},
+		{config.VaultUserWeather, "天气连接器"},
 	}
-	seen := map[string]bool{config.VaultUserCalendar: true, config.VaultUserMail: true}
+	seen := map[string]bool{config.VaultUserCalendar: true, config.VaultUserMail: true, config.VaultUserWeather: true}
 	add := func(value, label string) {
 		if value != "" && !seen[value] {
 			seen[value] = true

@@ -12,20 +12,22 @@ import (
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
+	"github.com/xiguac/atomhelper/internal/connector/weather"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
 
-// 「连接器」页：日历（CalDAV）、邮件（IMAP/SMTP）的账号与密码，以及节假日订阅。
+// 「连接器」页：日历（CalDAV）、邮件（IMAP/SMTP）的账号与密码，节假日订阅，以及天气（和风天气）。
 //
 // 这一页改的是配置文件里 connectors 一节。密码照旧只进保险库，配置里留的是句柄；
-// 日历和邮件各存一条、各自授权，停用其中一个不影响另一个。
+// 各存一条、各自授权，停用其中一个不影响另一个。
 
 type connectorsData struct {
 	Calendar *config.CalendarConfig
 	Mail     *config.MailConfig
 	Holidays *config.HolidaysConfig
-	// CalendarKey 与 MailKey 表示保险库里有没有对应的密码。
-	CalendarKey, MailKey bool
+	Weather  *config.WeatherConfig
+	// CalendarKey、MailKey 与 WeatherKey 表示保险库里有没有对应的密码或密钥。
+	CalendarKey, MailKey, WeatherKey bool
 }
 
 func (s *Server) readConnectors() ([]byte, config.ConnectorsConfig, error) {
@@ -61,7 +63,7 @@ func (s *Server) connectorsPage(w http.ResponseWriter, r *http.Request, v *view)
 	if err != nil {
 		v.Error = err.Error()
 	}
-	d := connectorsData{Calendar: c.Calendar, Mail: c.Mail, Holidays: c.Holidays}
+	d := connectorsData{Calendar: c.Calendar, Mail: c.Mail, Holidays: c.Holidays, Weather: c.Weather}
 	if metas, err := s.opts.Vault.List(r.Context()); err != nil {
 		v.Error = err.Error()
 	} else {
@@ -71,6 +73,9 @@ func (s *Server) connectorsPage(w http.ResponseWriter, r *http.Request, v *view)
 			}
 			if c.Mail != nil && vault.HandlePrefix+meta.Label == c.Mail.Password {
 				d.MailKey = true
+			}
+			if c.Weather != nil && vault.HandlePrefix+meta.Label == c.Weather.Key {
+				d.WeatherKey = true
 			}
 		}
 	}
@@ -197,6 +202,40 @@ func (s *Server) holidaysSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/connectors", "节假日订阅已保存，重启服务后生效。", err)
 }
 
+// weatherSave 保存和风天气的 API Host 与 API KEY。
+func (s *Server) weatherSave(w http.ResponseWriter, r *http.Request, _ *view) {
+	key := strings.TrimSpace(r.PostFormValue("key"))
+	err := func() error {
+		_, cur, err := s.readConnectors()
+		if err != nil {
+			return err
+		}
+		c := config.WeatherConfig{}
+		if cur.Weather != nil {
+			c = *cur.Weather
+		}
+		c.Host = weather.NormalizeHost(r.PostFormValue("host"))
+		if err := weather.CheckHost(c.Host); err != nil {
+			return errors.New("请填写 API Host，格式为主机名，如 abcxyz.qweatherapi.com")
+		}
+		if key != "" {
+			if c.Key, err = s.sealConnectorPassword(r.Context(), c.Key, config.VaultUserWeather, key, "和风天气的 API KEY"); err != nil {
+				return err
+			}
+		} else if c.Key == "" {
+			return errors.New("首次配置天气时必须填写 API KEY")
+		}
+		return s.editConnectors(func(all *config.ConnectorsConfig) error {
+			all.Weather = &c
+			return nil
+		})
+	}()
+	if err == nil {
+		s.opts.Log.Info("天气连接器已在后台修改", "更换密钥", key != "", "来自", r.RemoteAddr)
+	}
+	back(w, r, "/connectors", "天气配置已保存，重启服务后生效。", err)
+}
+
 // dropCredential 删掉一个配置对象独占的凭据：对象没了，它的密钥不该留在保险库里没人管。
 //
 // 只删"只授权给了这一个对象"的条目。用户另外把它授权给了别的对象或工具的，说明它还有别的用处，不动。
@@ -225,7 +264,7 @@ func (s *Server) dropCredential(ctx context.Context, handle, user string) {
 // connectorDisable 停用一个连接器，它的密码一并从保险库里删除。
 func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
-	names := map[string]string{"calendar": "日历", "mail": "邮件", "holidays": "节假日订阅"}
+	names := map[string]string{"calendar": "日历", "mail": "邮件", "holidays": "节假日订阅", "weather": "天气"}
 	var handle, user string
 	err := s.editConnectors(func(all *config.ConnectorsConfig) error {
 		switch which {
@@ -241,6 +280,11 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 			all.Mail = nil
 		case "holidays":
 			all.Holidays = nil
+		case "weather":
+			if all.Weather != nil {
+				handle, user = all.Weather.Key, config.VaultUserWeather
+			}
+			all.Weather = nil
 		default:
 			return errors.New("连接器类型无效")
 		}
@@ -260,6 +304,9 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
 	typed := strings.TrimRight(r.PostFormValue("password"), "\r\n")
+	if which == "weather" {
+		typed = strings.TrimSpace(r.PostFormValue("key"))
+	}
 	result, err := func() (string, error) {
 		_, saved, err := s.readConnectors()
 		if err != nil {
@@ -271,6 +318,9 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 				return func(context.Context) (string, error) { return typed, nil }, nil
 			}
 			if handle == "" {
+				if which == "weather" {
+					return nil, errors.New("请填写 API KEY")
+				}
 				return nil, errors.New("请填写密码")
 			}
 			return s.opts.Vault.Lend(handle, user)
@@ -326,6 +376,24 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 				return "", err
 			}
 			return fmt.Sprintf("邮件连接成功，共 %d 个文件夹。", len(folders)), nil
+		case "weather":
+			host := weather.NormalizeHost(r.PostFormValue("host"))
+			if err := weather.CheckHost(host); err != nil {
+				return "", errors.New("请填写 API Host，格式为主机名，如 abcxyz.qweatherapi.com")
+			}
+			handle := ""
+			if saved.Weather != nil {
+				handle = saved.Weather.Key
+			}
+			take, err := secret(handle, config.VaultUserWeather)
+			if err != nil {
+				return "", err
+			}
+			rep, err := (&weather.Client{Host: host, Secret: take}).Forecast(ctx, "北京", "", 1)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("天气连接成功：%s当前%s，%s。", rep.Place.Name, rep.Now.Text, rep.Now.Temp), nil
 		}
 		return "", errors.New("连接器类型无效")
 	}()

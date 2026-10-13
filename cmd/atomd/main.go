@@ -473,6 +473,15 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		actuator = actuator.WithHolidays(feed)
 		log.Info("已接入节假日数据", "订阅", feed.URL)
 	}
+	qw, err := file.Weather(safe)
+	if err != nil {
+		return nil, err
+	}
+	if qw != nil {
+		planner = planner.WithWeather(true)
+		actuator = actuator.WithWeather(qw)
+		log.Info("已接入天气数据", "来源", "和风天气", "API Host", qw.Host)
+	}
 	box, err := file.Mail(safe)
 	if err != nil {
 		return nil, err

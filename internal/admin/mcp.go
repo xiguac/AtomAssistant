@@ -24,12 +24,87 @@ import (
 // 助手自己找来装上的那些存在数据库里，边界是固定的，这一页只列出它们、允许移除。
 // server 要的密钥照旧只进保险库，配置里留的是句柄。
 
-// 高德地图 MCP server 的接入参数，见 https://developer.amap.com/api/mcp-server/gettingstarted 。
-const (
-	amapName       = "amap"
-	amapURL        = "https://mcp.amap.com/mcp"
-	amapSecretName = "key"
-)
+// mcpPreset 是页面上预置的一个 MCP server：接入参数是固定的，用户至多填一个密钥。
+type mcpPreset struct {
+	// ID 用在路由里（/mcp/<ID>）。Title 是页面上的名字。
+	ID, Title string
+	// Server 是固定的接入参数。Name 同时是工具名的前缀。
+	Server config.MCPConfig
+	// Intro 是这个服务提供什么；KeyLabel 为空表示它不需要密钥；KeyHelp 说明密钥从哪里来；Foot 说明工具怎么登记。
+	Intro, KeyLabel, KeyHelp, Foot string
+	// Privacy 是它的工具默认的参数隐私上限。
+	Privacy string
+	// ReadOnly 报告它的某个工具（不带前缀的名字）是否按只读登记，其余按不可撤销。
+	// 这里不采信 server 的自报：预置的服务有哪些工具、各自做什么是查过文档的。
+	ReadOnly func(tool string) bool
+}
+
+func oneOf(names ...string) func(string) bool {
+	return func(tool string) bool {
+		for _, n := range names {
+			if n == tool {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// mcpPresets 是页面上预置的 MCP server。
+var mcpPresets = []mcpPreset{
+	{
+		// 见 https://developer.amap.com/api/mcp-server/gettingstarted 。
+		// 它的工具都是查询，或者生成一个由用户自己点开的链接，所以全部按只读；
+		// 地图服务的入参就是地址，而地址属于敏感级别，不放开到敏感的话地理编码、路径规划都调不动。
+		ID: "amap", Title: "高德地图",
+		Server:   config.MCPConfig{Name: "amap", Transport: string(mcpgw.TransportHTTP), URL: "https://mcp.amap.com/mcp", SecretName: "key"},
+		Intro:    "提供地理编码、天气查询、路径规划（驾车、公交、步行、骑行）、距离测量与地点搜索，供助手在出行类任务的规划中使用。",
+		KeyLabel: "Key",
+		KeyHelp:  "在高德开放平台（lbs.amap.com）创建应用后获取。",
+		Foot:     "工具均按只读登记，参数隐私上限为敏感（地图查询需传入地址），可在左侧逐项调整。",
+		Privacy:  "sensitive",
+		ReadOnly: func(string) bool { return true },
+	},
+	{
+		// 见 https://mcp.didichuxing.com/api 。
+		// 预估、路线规划、地点搜索、查订单与司机位置是查询，生成打车链接只是给出一个由用户自己点开的链接，按只读；
+		// 创建订单会立即产生真实订单与费用，取消订单也改动订单，按不可撤销——每次都要用户确认。
+		// 名单之外的工具（它以后新增的）同样按不可撤销。
+		ID: "didi", Title: "滴滴出行",
+		Server:   config.MCPConfig{Name: "didi", Transport: string(mcpgw.TransportHTTP), URL: "https://mcp.didichuxing.com/mcp-servers", SecretName: "key"},
+		Intro:    "提供打车价格预估、路线规划（驾车、公交、步行、骑行）与地点搜索，供助手在出行类任务的规划中使用；亦可创建与取消打车订单，须经确认。",
+		KeyLabel: "MCP Key",
+		KeyHelp:  "以滴滴个人账号登录 DiDi MCP 开发者控制台（mcp.didichuxing.com）后激活获取。",
+		Foot:     "价格预估、路线规划等查询类工具按只读登记；创建订单与取消订单按不可撤销登记，每次调用均需经确认。参数隐私上限为敏感（需传入地址），可在左侧逐项调整。",
+		Privacy:  "sensitive",
+		ReadOnly: oneOf("taxi_estimate", "taxi_generate_ride_app_link", "taxi_query_order", "taxi_get_driver_location",
+			"maps_textsearch", "maps_regeocode", "maps_place_around",
+			"maps_direction_driving", "maps_direction_transit", "maps_direction_walking", "maps_direction_bicycling"),
+	},
+	{
+		// 见 https://github.com/Joooook/12306-mcp 。它是一个 npm 包，在本机以子进程运行，不需要密钥。
+		// 版本是固定的：不固定的话每次启动拿到的都是当时最新的那一版，换了什么无从知道。
+		// 它的工具都是查询（余票、中转、经停站、车站代码），只访问 12306，按只读。
+		ID: "12306", Title: "12306",
+		Server:  config.MCPConfig{Name: "12306", Transport: string(mcpgw.TransportCommand), Command: "npx", Args: []string{"-y", "12306-mcp@0.3.10"}},
+		Intro:   "提供火车票余票、中转方案、列车经停站与车站代码查询，供助手在出行类任务的规划中使用。不提供购票功能。",
+		Foot:    "以本机进程运行社区维护的 npm 包 12306-mcp（固定版本 0.3.10），运行服务的主机需安装 Node.js 18 及以上版本。工具均按只读登记。",
+		Privacy: "normal",
+		ReadOnly: oneOf("get-current-date", "get-stations-code-in-city", "get-station-code-of-citys", "get-station-code-by-names",
+			"get-station-by-telecode", "get-tickets", "get-interline-tickets", "get-train-route-stations"),
+	},
+}
+
+// presetOf 找出一个 server 对应的预置项。接入参数被改过的不算：那已经不是查过文档的那个服务了。
+func presetOf(m config.MCPConfig) *mcpPreset {
+	for i := range mcpPresets {
+		p := &mcpPresets[i].Server
+		if p.Name == m.Name && p.Transport == m.Transport && p.URL == m.URL && p.Command == m.Command {
+			return &mcpPresets[i]
+		}
+	}
+	return nil
+}
 
 // maxToolDescRunes 是存下来展示用的工具说明的长度上限。
 const maxToolDescRunes = 400
@@ -64,12 +139,18 @@ type mcpServerView struct {
 	Tools []mcpToolView
 }
 
+// mcpPresetView 是页面上的一个预置项。
+type mcpPresetView struct {
+	mcpPreset
+	// On 为真表示已经接入。
+	On bool
+}
+
 type mcpData struct {
 	Servers []mcpServerView
 	// Installed 是助手自己装上的 server。
-	Installed []*market.Server
-	// Amap 为真表示已经接入了高德地图。
-	Amap          bool
+	Installed     []*market.Server
+	Presets       []mcpPresetView
 	SideEffects   []toolOption
 	PrivacyLevels []toolOption
 }
@@ -134,9 +215,13 @@ func (s *Server) mcpPage(w http.ResponseWriter, r *http.Request, v *view) {
 			}
 		}
 		d.Servers = append(d.Servers, sv)
-		if m.Name == amapName {
-			d.Amap = true
+	}
+	for _, p := range mcpPresets {
+		pv := mcpPresetView{mcpPreset: p}
+		for _, m := range t.MCP {
+			pv.On = pv.On || m.Name == p.Server.Name
 		}
+		d.Presets = append(d.Presets, pv)
 	}
 	if d.Installed, err = s.opts.Store.MCPInstalls().ListServers(r.Context()); err != nil {
 		v.Error = err.Error()
@@ -248,11 +333,10 @@ func (s *Server) saveMCP(ctx context.Context, m config.MCPConfig, key string) (s
 // syncTools 连上一个 server 读出它的工具，把配置里还没有授权的登记进去。已有的授权不动。
 //
 // 新登记的工具的默认授权：自称只读的按只读，其余按不可撤销；参数最高到普通级别。
-// 高德是例外：它的工具都是查询，或者生成一个由用户自己点开的链接，所以全部按只读；
-// 地图服务的入参就是地址，而地址属于敏感级别，不放开到敏感的话地理编码、路径规划都调不动。
+// 预置的服务是例外：哪些工具只读、参数放开到哪一级，按 mcpPresets 里写定的来。
 // 两样都可以由用户在页面上逐个调整。
 func (s *Server) syncTools(ctx context.Context, m config.MCPConfig) (added, total int, err error) {
-	amap := m.Name == amapName && m.URL == amapURL
+	preset := presetOf(m)
 	spec, err := m.Spec(s.opts.Vault)
 	if err != nil {
 		return 0, 0, err
@@ -285,11 +369,12 @@ func (s *Server) syncTools(ctx context.Context, m config.MCPConfig) (added, tota
 				continue
 			}
 			side, privacy := core.SideEffectIrreversible, "normal"
-			if amap || tool.ReadOnly {
-				side = core.SideEffectReadOnly
+			readOnly := tool.ReadOnly
+			if preset != nil {
+				readOnly, privacy = preset.ReadOnly(strings.TrimPrefix(tool.Name, m.Name+".")), preset.Privacy
 			}
-			if amap {
-				privacy = "sensitive"
+			if readOnly {
+				side = core.SideEffectReadOnly
 			}
 			t.Tools = append(t.Tools, config.ToolConfig{
 				Name: tool.Name, Description: desc, MaxPrivacy: privacy, Trust: "tool_output",
@@ -302,29 +387,33 @@ func (s *Server) syncTools(ctx context.Context, m config.MCPConfig) (added, tota
 	return added, len(tools), err
 }
 
-// mcpAmap 接入高德地图：只要一个 key，其余是固定的。
-func (s *Server) mcpAmap(w http.ResponseWriter, r *http.Request, _ *view) {
-	key := strings.TrimSpace(r.PostFormValue("key"))
-	notice, err := func() (string, error) {
-		_, cur, err := s.readToolset()
-		if err != nil {
-			return "", err
+// mcpPresetSave 接入第 i 个预置的 server：至多填一个密钥，其余是固定的。
+func (s *Server) mcpPresetSave(i int) func(http.ResponseWriter, *http.Request, *view) {
+	return func(w http.ResponseWriter, r *http.Request, _ *view) {
+		p := mcpPresets[i]
+		key := strings.TrimSpace(r.PostFormValue("key"))
+		notice, err := func() (string, error) {
+			if p.KeyLabel == "" {
+				return s.saveMCP(r.Context(), p.Server, "")
+			}
+			_, cur, err := s.readToolset()
+			if err != nil {
+				return "", err
+			}
+			exists := false
+			for _, m := range cur.MCP {
+				exists = exists || m.Name == p.Server.Name
+			}
+			if key == "" && !exists {
+				return "", errors.New("请填写" + p.Title + "的 " + p.KeyLabel)
+			}
+			return s.saveMCP(r.Context(), p.Server, key)
+		}()
+		if err == nil {
+			s.opts.Log.Info("预置的 MCP server 已在后台配置", "server", p.Server.Name, "更换密钥", key != "", "来自", r.RemoteAddr)
 		}
-		exists := false
-		for _, m := range cur.MCP {
-			exists = exists || m.Name == amapName
-		}
-		if key == "" && !exists {
-			return "", errors.New("请填写高德开放平台的 Key")
-		}
-		return s.saveMCP(r.Context(), config.MCPConfig{
-			Name: amapName, Transport: string(mcpgw.TransportHTTP), URL: amapURL, SecretName: amapSecretName,
-		}, key)
-	}()
-	if err == nil {
-		s.opts.Log.Info("高德地图 MCP 已在后台配置", "更换密钥", key != "", "来自", r.RemoteAddr)
+		back(w, r, "/mcp", notice, err)
 	}
-	back(w, r, "/mcp", notice, err)
 }
 
 // mcpSave 新增或修改一个 server。

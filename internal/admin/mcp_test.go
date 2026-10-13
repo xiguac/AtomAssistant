@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/team"
 	"io"
 	"log/slog"
@@ -180,6 +182,146 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 }
 
 // fakeScanner 按内容里有没有"恶意"二字放行或拒绝。
+// presetMCP 起一个要在网址里带 key 的远程 MCP server，提供给定名字的工具。
+// 每个工具都自称只读：预置的服务不采信自报，按写定的名单登记。
+func presetMCP(t *testing.T, key string, tools ...string) *httptest.Server {
+	t.Helper()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "preset", Version: "v1"}, nil)
+	type args struct {
+		Q string `json:"q"`
+	}
+	for _, name := range tools {
+		mcp.AddTool(srv, &mcp.Tool{Name: name, Description: name, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+			func(context.Context, *mcp.CallToolRequest, args) (*mcp.CallToolResult, any, error) {
+				return nil, nil, nil
+			})
+	}
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("key") != key {
+			http.Error(w, "Missing KEY parameter", http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func TestAdmin_MCP页预置的滴滴与12306按写定的名单登记(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	// 预置项的地址是写死的公网地址，测试里换成本地的假 server。12306 本来是本机进程，这里同样换成远程的。
+	saved := append([]mcpPreset{}, mcpPresets...)
+	t.Cleanup(func() { copy(mcpPresets, saved) })
+	const key = "didi-key-5566"
+	didi := presetMCP(t, key, "taxi_estimate", "maps_direction_driving", "taxi_create_order", "taxi_cancel_order", "taxi_new_thing")
+	rail := presetMCP(t, "", "get-tickets", "get-train-route-stations")
+	for i := range mcpPresets {
+		switch mcpPresets[i].ID {
+		case "didi":
+			mcpPresets[i].Server.URL = didi.URL
+		case "12306":
+			mcpPresets[i].Server = config.MCPConfig{Name: "12306", Transport: "http", URL: rail.URL}
+		}
+	}
+	before, _ := os.ReadFile(e.cfg)
+
+	_, body := e.get("/mcp")
+	for _, want := range []string{"高德地图", "滴滴出行", "12306", `action="/mcp/didi"`, `action="/mcp/12306"`, `id="didi-key"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("MCP 页应列出预置的服务，缺少 %q", want)
+		}
+	}
+	if strings.Contains(body, `id="12306-key"`) {
+		t.Fatal("12306 不需要密钥，不应有密钥一栏")
+	}
+
+	if loc := post("/mcp/didi", url.Values{}); !strings.Contains(loc, "e=") {
+		t.Fatalf("没填 MCP Key 应被拒绝: %s", loc)
+	}
+	if loc := post("/mcp/didi", url.Values{"key": {key}}); !strings.Contains(loc, "共 5 个工具，新登记 5 个") {
+		t.Fatalf("接入滴滴失败: %s", loc)
+	}
+	if loc := post("/mcp/12306", url.Values{}); !strings.Contains(loc, "共 2 个工具，新登记 2 个") {
+		t.Fatalf("接入 12306 失败: %s", loc)
+	}
+
+	raw, _ := os.ReadFile(e.cfg)
+	if strings.Contains(string(raw), key) || !strings.HasPrefix(string(raw), string(before)) || !strings.Contains(string(raw), "secret: vault://mcp.didi") {
+		t.Fatalf("密钥不能出现在配置里，其余内容不动:\n%s", raw)
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil {
+		t.Fatalf("保存出来的配置应能加载: %v\n%s", err, raw)
+	}
+	if len(file.MCP) != 2 || file.MCP[1].Name != "12306" || file.MCP[1].Secret != "" {
+		t.Fatalf("server 不对: %+v", file.MCP)
+	}
+	got := map[string]config.ToolConfig{}
+	for _, tool := range file.Tools {
+		got[tool.Name] = tool
+	}
+	// 预估与路线规划可直接调用；下单、取消和名单之外的工具每次都要确认——哪怕它们自称只读。
+	for name, side := range map[string]string{
+		"didi.taxi_estimate": "read_only", "didi.maps_direction_driving": "read_only",
+		"didi.taxi_create_order": "irreversible", "didi.taxi_cancel_order": "irreversible", "didi.taxi_new_thing": "irreversible",
+		"12306.get-tickets": "read_only", "12306.get-train-route-stations": "read_only",
+	} {
+		if got[name].SideEffect != side {
+			t.Fatalf("%s 的副作用等级应为 %s: %+v", name, side, got[name])
+		}
+	}
+	if got["didi.taxi_estimate"].MaxPrivacy != "sensitive" || got["12306.get-tickets"].MaxPrivacy != "normal" {
+		t.Fatalf("参数隐私上限不对: %+v", got)
+	}
+
+	// 审批：自主模式下预估直接执行，下单必须由用户确认。
+	approver := agent.NewApprover(file.BuildApprovalPolicy(), policy.NewClassifier(), agent.NewMemoryUsageTracker())
+	task := core.NewTask("t", "打车去机场", core.TrustUser)
+	check := func(tool string, input string) kernel.ApprovalOutcome {
+		t.Helper()
+		out, _, err := approver.CheckAction(context.Background(), task, kernel.Decision{
+			ToolName: tool, SideEffect: core.SideEffect(got[tool].SideEffect), Input: json.RawMessage(input)})
+		if err != nil {
+			t.Fatalf("审批 %s 出错: %v", tool, err)
+		}
+		return out
+	}
+	if out := check("didi.taxi_estimate", `{"from_name":"望京SOHO","to_name":"首都机场"}`); out != kernel.ApprovalAuto {
+		t.Fatalf("价格预估应直接执行: %s", out)
+	}
+	if out := check("didi.taxi_create_order", `{"product_category":"1","estimate_trace_id":"x"}`); out != kernel.ApprovalManual {
+		t.Fatalf("创建订单必须由用户确认: %s", out)
+	}
+	if out := check("didi.taxi_cancel_order", `{"order_id":"x"}`); out != kernel.ApprovalManual {
+		t.Fatalf("取消订单必须由用户确认: %s", out)
+	}
+
+	_, body = e.get("/mcp")
+	if strings.Contains(body, key) || strings.Count(body, "已接入") < 2 || !strings.Contains(body, `value="didi.taxi_create_order"`) {
+		t.Fatal("MCP 页应显示预置服务已接入并列出工具，不显示密钥")
+	}
+	// 再次保存时密钥留空：沿用原密钥，已有的授权不动。
+	if loc := post("/mcp/didi", url.Values{}); !strings.Contains(loc, "新登记 0 个") {
+		t.Fatalf("留空密钥应沿用原密钥: %s", loc)
+	}
+	for _, name := range []string{"didi", "12306"} {
+		if loc := post("/mcp/server/delete", url.Values{"name": {name}}); !strings.Contains(loc, "已移除") {
+			t.Fatalf("移除 %s 失败: %s", name, loc)
+		}
+	}
+	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
+		t.Fatalf("移除后配置应回到原样:\n%s", now)
+	}
+}
+
 type fakeScanner struct{}
 
 func (fakeScanner) Check(_ context.Context, dir string) (skillscan.Report, error) {

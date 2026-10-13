@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -300,6 +301,9 @@ func TestNew_缺少出口管控时拒绝构造(t *testing.T) {
 }
 
 func TestBuildTransport_环境变量不继承主进程(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	t.Setenv("DATABASE_URL", "postgres://secret")
+	t.Setenv("ATOM_VAULT_KEY", "secret")
 	tr, err := buildTransport(context.Background(), ServerSpec{
 		Name: "x", Transport: TransportCommand, Command: "echo", Env: []string{"A=1"},
 	})
@@ -311,8 +315,29 @@ func TestBuildTransport_环境变量不继承主进程(t *testing.T) {
 		t.Fatalf("期望 CommandTransport，实际 %T", tr)
 	}
 	// 继承主进程环境等于把数据库密码和模型密钥交给第三方工具。
-	if len(ct.Command.Env) != 1 || ct.Command.Env[0] != "A=1" {
-		t.Fatalf("只应传入显式声明的环境变量，实际 %v", ct.Command.Env)
+	// 能继承的只有 PATH、HOME 这几个找解释器、放缓存用的；显式声明的排在最后。
+	env := ct.Command.Env
+	if len(env) == 0 || env[len(env)-1] != "A=1" {
+		t.Fatalf("显式声明的环境变量应排在最后，实际 %v", env)
+	}
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "A" || k == "PATH" {
+			continue
+		}
+		if strings.HasPrefix(k, "ATOM_") || k == "DATABASE_URL" || k == "DEEPSEEK_API_KEY" {
+			t.Fatalf("主进程的密钥不应传给子进程: %s", k)
+		}
+		ok := false
+		for _, allowed := range passthroughEnv {
+			ok = ok || k == allowed
+		}
+		if !ok {
+			t.Fatalf("不在名单里的环境变量不应传给子进程: %s", k)
+		}
+	}
+	if !strings.HasPrefix(env[0], "PATH=") {
+		t.Fatalf("PATH 应传给子进程，否则 npx 这类启动器找不到解释器: %v", env)
 	}
 }
 

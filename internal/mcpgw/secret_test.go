@@ -71,7 +71,7 @@ func TestBuildTransport_密钥的取用(t *testing.T) {
 		t.Fatalf("构造传输失败: %v", err)
 	}
 	env := tr.(*mcp.CommandTransport).Command.Env
-	if len(env) != 2 || env[1] != "AMAP_MAPS_API_KEY=s3cret" {
+	if len(env) < 2 || env[len(env)-2] != "A=1" || env[len(env)-1] != "AMAP_MAPS_API_KEY=s3cret" {
 		t.Fatalf("密钥应作为环境变量传入: %v", env)
 	}
 

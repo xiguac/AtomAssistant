@@ -127,6 +127,20 @@ func connectorCmd(st *pg.Store, cfg *config.Config, args []string) error {
 			}
 		}
 	}
+	qw, err := file.Weather(safe)
+	if err != nil {
+		return err
+	}
+	if qw != nil {
+		checked++
+		fmt.Printf("天气 和风天气（%s）\n", qw.Host)
+		rep, err := qw.Forecast(ctx, "北京", "", 1)
+		if err != nil {
+			fmt.Printf("  失败: %v\n", err)
+		} else {
+			fmt.Printf("  取到了，%s 现在 %s，%s\n", rep.Place.Name, rep.Now.Text, rep.Now.Temp)
+		}
+	}
 	if checked == 0 {
 		fmt.Println("配置里没有 connectors 一节，没有接入任何连接器")
 	}
