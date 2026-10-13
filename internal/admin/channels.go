@@ -92,7 +92,7 @@ func (s *Server) channelSave(w http.ResponseWriter, r *http.Request, _ *view) {
 			return errors.New("名称仅支持字母、数字、中文及 _ - .")
 		}
 		if kind == "weixin" {
-			return errors.New("微信渠道没有 AppID 与 AppSecret，请使用「微信扫码连接」")
+			return errors.New("微信消息源没有 AppID 与 AppSecret，请使用「微信扫码连接」")
 		}
 		if appID == "" {
 			return errors.New("请填写 AppID")
@@ -118,12 +118,12 @@ func (s *Server) channelSave(w http.ResponseWriter, r *http.Request, _ *view) {
 			if c.Secret != "" {
 				label = strings.TrimPrefix(c.Secret, vault.HandlePrefix)
 			}
-			if err := s.opts.Vault.Seal(r.Context(), label, secret, "消息渠道 "+name+" 的凭据", []string{c.VaultUser()}); err != nil {
+			if err := s.opts.Vault.Seal(r.Context(), label, secret, "消息源 "+name+" 的凭据", []string{c.VaultUser()}); err != nil {
 				return err
 			}
 			c.Secret = vault.HandlePrefix + label
 		} else if c.Secret == "" {
-			return errors.New("新增渠道时必须填写 AppSecret")
+			return errors.New("新增消息源时必须填写 AppSecret")
 		}
 		return s.editChannels(func(list []config.ChannelConfig) ([]config.ChannelConfig, error) {
 			if at >= 0 {
@@ -134,9 +134,9 @@ func (s *Server) channelSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		})
 	}()
 	if err == nil {
-		s.opts.Log.Info("消息渠道已在后台修改", "渠道", name, "更换凭据", secret != "", "来自", r.RemoteAddr)
+		s.opts.Log.Info("消息源已在后台修改", "消息源", name, "更换凭据", secret != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/channels", "渠道「"+name+"」已保存，重启服务后生效。", err)
+	back(w, r, "/channels", "消息源「"+name+"」已保存，重启服务后生效。", err)
 }
 
 func (s *Server) channelDelete(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -149,13 +149,13 @@ func (s *Server) channelDelete(w http.ResponseWriter, r *http.Request, _ *view) 
 				return append(list[:i], list[i+1:]...), nil
 			}
 		}
-		return nil, fmt.Errorf("渠道 %s 不存在", name)
+		return nil, fmt.Errorf("消息源 %s 不存在", name)
 	})
 	if err == nil {
 		s.dropCredential(r.Context(), gone.Secret, gone.VaultUser())
-		s.opts.Log.Info("消息渠道已在后台删除", "渠道", name, "来自", r.RemoteAddr)
+		s.opts.Log.Info("消息源已在后台删除", "消息源", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/channels", "渠道「"+name+"」及其凭据已删除，重启服务后生效。", err)
+	back(w, r, "/channels", "消息源「"+name+"」及其凭据已删除，重启服务后生效。", err)
 }
 
 // channelOwner 给一个渠道添加或移除主人。
@@ -186,14 +186,14 @@ func (s *Server) channelOwner(w http.ResponseWriter, r *http.Request, _ *view) {
 			list[i].Owners = kept
 			return list, nil
 		}
-		return nil, fmt.Errorf("渠道 %s 不存在", name)
+		return nil, fmt.Errorf("消息源 %s 不存在", name)
 	})
-	notice := "已将该账号设为渠道「" + name + "」的主人，重启服务后生效。"
+	notice := "已将该账号设为消息源「" + name + "」的主人，重启服务后生效。"
 	if remove {
-		notice = "已移除渠道「" + name + "」的该主人，重启服务后生效。"
+		notice = "已移除消息源「" + name + "」的该主人，重启服务后生效。"
 	}
 	if err == nil {
-		s.opts.Log.Warn("消息渠道的主人已在后台变更", "渠道", name, "账号", owner, "移除", remove, "来自", r.RemoteAddr)
+		s.opts.Log.Warn("消息源的主人已在后台变更", "消息源", name, "账号", owner, "移除", remove, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/channels", notice, err)
 }

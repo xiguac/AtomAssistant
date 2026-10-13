@@ -54,6 +54,8 @@ svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; st
 /* 窄的那一栏里，表单一行只放一个字段，底栏放不下时换行。 */
 .cols:not(.even) > :last-child .grid2 { grid-template-columns:1fr; }
 .cols > * .band.foot { flex-wrap:wrap; }
+/* 底栏换行之后，按钮仍然靠右，和没换行的卡片对齐。 */
+.band.foot > .btn, .band.foot > .actions, .band.foot > form { margin-left:auto; }
 .sticky { position:sticky; top:24px; }
 
 /* 标题 */
@@ -171,6 +173,9 @@ th { text-align:left; font-size:11px; line-height:14px; font-weight:500; letter-
 th:first-child { border-top-left-radius:8px; } th:last-child { border-top-right-radius:8px; }
 td { padding:11px 16px; border-bottom:1px solid var(--row); vertical-align:top; font-size:13px; }
 tr:last-child td { border-bottom:0; }
+/* 表格首尾两列与卡片里其他内容的左右边距（20px）对齐。 */
+th:first-child, td:first-child { padding-left:20px; }
+th:last-child, td:last-child { padding-right:20px; }
 tbody tr:hover td { background:var(--canvas); }
 td.r, th.r { text-align:right; }
 td.time { color:var(--text-2); font:12px/20px var(--mono); white-space:nowrap; }
@@ -295,10 +300,10 @@ label.method .note { display:block; margin-top:2px; }
   </div>
   <nav class="nav">
     <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>任务</a>
-    <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg>保险库</a>
+    <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg>环境变量</a>
     <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg>记忆</a>
     <a href="/models" class="{{if eq .Page "models"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/></svg>模型</a>
-    <a href="/channels" class="{{if eq .Page "channels"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/></svg>渠道</a>
+    <a href="/channels" class="{{if eq .Page "channels"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/></svg>消息源</a>
     <a href="/connectors" class="{{if eq .Page "connectors"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.5 5a4.6 4.6 0 0 1 6.5 6.5L17.5 13"/><path d="M13 17.5 11.5 19A4.6 4.6 0 0 1 5 12.5L6.5 11"/></svg>连接器</a>
     <a href="/mcp" class="{{if eq .Page "mcp"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9 3.5v4M15 3.5v4"/><path d="M6.5 7.5h11v4a5.5 5.5 0 0 1-11 0Z"/><path d="M12 17v3.5"/></svg>MCP</a>
     <a href="/skills" class="{{if eq .Page "skills"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M6 4.5h9l3 3v12H6Z"/><path d="M9 10h6M9 13.5h6M9 17h3.5"/></svg>Skill</a>
@@ -317,7 +322,7 @@ label.method .note { display:block; margin-top:2px; }
   {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：
 {{.Status}}
 
-请在「模型」页填写模型的接口地址与密钥，在「渠道」「连接器」页填写对应的账号与凭据，然后重启服务。</div><a class="go" href="/models">前往模型页</a></div>{{end}}{{end}}
+请在「模型」页填写模型的接口地址与密钥，在「消息源」「连接器」页填写对应的账号与凭据，然后重启服务。</div><a class="go" href="/models">前往模型页</a></div>{{end}}{{end}}
   {{if .Notice}}<div class="banner ok"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><div>{{.Notice}}</div></div>{{end}}
   {{if .Error}}<div class="banner bad"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>{{.Error}}</div></div>{{end}}
   {{template "content" .}}

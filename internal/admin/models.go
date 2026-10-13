@@ -99,13 +99,13 @@ func (s *Server) modelsPage(w http.ResponseWriter, r *http.Request, v *view) {
 		switch {
 		case p.APIKey != "":
 			pv.KeyOK = stored[strings.TrimPrefix(p.APIKey, vault.HandlePrefix)]
-			pv.KeyState = "保险库 " + p.APIKey
+			pv.KeyState = "环境变量 " + p.APIKey
 			if !pv.KeyOK {
 				pv.KeyState += "（未保存）"
 			}
 		case p.APIKeyEnv != "":
 			pv.KeyOK = os.Getenv(p.APIKeyEnv) != ""
-			pv.KeyState = "环境变量 " + p.APIKeyEnv
+			pv.KeyState = "系统环境变量 " + p.APIKeyEnv
 			if !pv.KeyOK {
 				pv.KeyState += "（未设置）"
 			}

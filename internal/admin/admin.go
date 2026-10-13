@@ -142,7 +142,7 @@ func CheckAddr(addr string, tls bool) error {
 	ip := net.ParseIP(host)
 	local := host == "localhost" || (ip != nil && ip.IsLoopback())
 	if !local && !tls {
-		return fmt.Errorf("admin: 后台监听在 %s 上却没有配置 TLS 证书——口令和保险库的内容会在网络上明文传输。"+
+		return fmt.Errorf("admin: 后台监听在 %s 上却没有配置 TLS 证书——口令和环境变量的内容会在网络上明文传输。"+
 			"要么监听 127.0.0.1 并经 SSH 隧道访问，要么设置 ATOM_ADMIN_TLS_CERT 与 ATOM_ADMIN_TLS_KEY", host)
 	}
 	return nil
@@ -782,7 +782,7 @@ type owner struct {
 func owners(users []string) []owner {
 	kinds := []struct{ prefix, kind, page string }{
 		{"provider.", "模型服务", "/models"},
-		{"channel.", "消息渠道", "/channels"},
+		{"channel.", "消息源", "/channels"},
 		{"mcp.", "MCP server", "/mcp"},
 	}
 	out := make([]owner, 0, len(users))
@@ -848,7 +848,7 @@ func (s *Server) toolOptions(metas []vault.Meta) []toolOption {
 		}
 		if list, err := config.ReadChannels(raw); err == nil {
 			for _, c := range list {
-				add(c.VaultUser(), "消息渠道 "+c.Name)
+				add(c.VaultUser(), "消息源 "+c.Name)
 			}
 		}
 		if t, err := config.ReadToolset(raw); err == nil {
@@ -881,7 +881,7 @@ func (s *Server) vaultPut(w http.ResponseWriter, r *http.Request, _ *view) {
 	value := strings.TrimRight(r.PostFormValue("value"), "\r\n")
 	err := s.opts.Vault.Seal(r.Context(), label, value, strings.TrimSpace(r.PostFormValue("note")), tools)
 	if err == nil {
-		s.opts.Log.Info("保险库条目已写入", "名字", label, "可用于", strings.Join(tools, ","))
+		s.opts.Log.Info("环境变量条目已写入", "名字", label, "可用于", strings.Join(tools, ","))
 	}
 	back(w, r, "/vault", "条目「"+label+"」已保存。保存后不可查看，仅可替换或删除。", err)
 }
@@ -890,7 +890,7 @@ func (s *Server) vaultDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	label := r.PostFormValue("label")
 	err := s.opts.Vault.Remove(r.Context(), label)
 	if err == nil {
-		s.opts.Log.Info("保险库条目已删除", "名字", label)
+		s.opts.Log.Info("环境变量条目已删除", "名字", label)
 	}
 	back(w, r, "/vault", "条目「"+label+"」已删除。", err)
 }

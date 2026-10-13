@@ -69,7 +69,7 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 	if loc := post("/mcp/server", url.Values{"name": {"maps"}, "transport": {"http"}, "url": {"http://mcp.example.com/mcp"}}); !strings.Contains(loc, "https://") {
 		t.Fatalf("明文地址应被拒绝: %s", loc)
 	}
-	if loc := post("/mcp/server", url.Values{"name": {"maps"}, "transport": {"http"}, "url": {ts.URL + "?key=" + key}}); !strings.Contains(loc, "保险库") {
+	if loc := post("/mcp/server", url.Values{"name": {"maps"}, "transport": {"http"}, "url": {ts.URL + "?key=" + key}}); !strings.Contains(loc, "环境变量") {
 		t.Fatalf("密钥写在地址里应被拒绝: %s", loc)
 	}
 	if loc := post("/mcp/server", url.Values{"name": {"maps"}, "transport": {"http"}, "url": {ts.URL}, "secret_name": {"key"}}); !strings.Contains(loc, "还需填写密钥") {
@@ -102,7 +102,7 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 		t.Fatalf("解析失败: %v", err)
 	}
 	if got, err := servers[0].Secret(context.Background()); err != nil || got != key {
-		t.Fatalf("密钥应能从保险库取出: %v", err)
+		t.Fatalf("密钥应能从环境变量取出: %v", err)
 	}
 	// 自称只读的按只读登记，其余按不可撤销。
 	sides := map[string]string{}
@@ -155,7 +155,7 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 	personal, services, ok := strings.Cut(body, "<b>服务凭据</b>")
 	if !ok || !strings.Contains(personal, "vault://身份证") || strings.Contains(personal, "vault://mcp.maps") ||
 		!strings.Contains(services, "vault://mcp.maps") || !strings.Contains(services, `href="/mcp">MCP server maps</a>`) {
-		t.Fatal("保险库页应把个人信息和服务凭据分开列，服务凭据链接到它的管理页面")
+		t.Fatal("环境变量页应把个人信息和服务凭据分开列，服务凭据链接到它的管理页面")
 	}
 	// 在 server 自己的卡片上换密钥：换的是保险库里的同一条。
 	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "key": {"wrong-key"}}); !strings.Contains(loc, "读取工具列表失败") {
@@ -560,14 +560,14 @@ func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {
 
 	// 飞书、钉钉和 QQ 一样填 AppID 与 AppSecret，凭据进保险库。
 	if loc := post("/channels", url.Values{"name": {"feishu"}, "type": {"feishu"}, "app_id": {"cli_abc"}, "secret": {"feishu-secret"}}); !strings.Contains(loc, "已保存") {
-		t.Fatalf("保存飞书渠道失败: %s", loc)
+		t.Fatalf("保存飞书消息源失败: %s", loc)
 	}
 	if loc := post("/channels", url.Values{"name": {"ding"}, "type": {"dingtalk"}, "app_id": {"dingabc"}, "secret": {"ding-secret"}}); !strings.Contains(loc, "已保存") {
-		t.Fatalf("保存钉钉渠道失败: %s", loc)
+		t.Fatalf("保存钉钉消息源失败: %s", loc)
 	}
 	// 微信没有 AppID 可填，走不了这张表单。
 	if loc := post("/channels", url.Values{"name": {"wx"}, "type": {"weixin"}, "app_id": {"x"}, "secret": {"y"}}); !strings.Contains(loc, "扫码连接") {
-		t.Fatalf("微信渠道应引导去扫码: %s", loc)
+		t.Fatalf("微信消息源应引导去扫码: %s", loc)
 	}
 
 	// 微信：申请二维码 → 显示 → 等扫码 → 确认之后凭证进保险库、渠道进配置、扫码的人成为主人。
@@ -589,8 +589,8 @@ func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {
 	e.server.wxBase = wx.URL
 
 	// 名称被别的类型的渠道占着时不能拿来接微信。
-	if loc := post("/channels/weixin/start", url.Values{"name": {"feishu"}}); !strings.Contains(loc, "已被其他类型的渠道使用") {
-		t.Fatalf("不应覆盖别的渠道: %s", loc)
+	if loc := post("/channels/weixin/start", url.Values{"name": {"feishu"}}); !strings.Contains(loc, "已被其他类型的消息源使用") {
+		t.Fatalf("不应覆盖别的消息源: %s", loc)
 	}
 	if loc := post("/channels/weixin/start", url.Values{"name": {"wx"}}); !strings.HasPrefix(loc, "/channels/weixin?name=wx") {
 		t.Fatalf("应跳到显示二维码的页面: %s", loc)
@@ -630,21 +630,21 @@ func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {
 	wxc := file.Channels[2]
 	if wxc.Type != "weixin" || wxc.AppID != "bot1@im.bot" || wxc.APIBase != "https://ilink.example" ||
 		wxc.Secret != "vault://channel.wx" || len(wxc.Owners) != 1 || wxc.Owners[0] != "me@im.wechat" {
-		t.Fatalf("微信渠道的配置不对: %+v", wxc)
+		t.Fatalf("微信消息源的配置不对: %+v", wxc)
 	}
 	// 三个渠道都装得起来，各自从保险库取自己的凭据。
 	bindings, err := file.BuildChannels(e.vault, e.store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil || len(bindings) != 3 {
-		t.Fatalf("渠道应能构造: %d %v", len(bindings), err)
+		t.Fatalf("消息源应能构造: %d %v", len(bindings), err)
 	}
 	take, err := e.vault.Lend("vault://channel.wx", "channel.wx")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if token, err := take(ctx); err != nil || token != "wx-bot-token-1" {
-		t.Fatalf("微信的机器人凭证应在保险库里: %v", err)
+		t.Fatalf("微信的机器人凭证应在环境变量里: %v", err)
 	}
 	if _, body = e.get("/channels"); !strings.Contains(body, "微信扫码连接") || !strings.Contains(body, "me@im.wechat") || !strings.Contains(body, "飞书") || !strings.Contains(body, "钉钉") {
-		t.Fatal("渠道页应列出三个渠道，并提供微信扫码连接")
+		t.Fatal("消息源页应列出三个消息源，并提供微信扫码连接")
 	}
 }

@@ -136,6 +136,8 @@ type mcpServerView struct {
 	config.MCPConfig
 	// KeyOK 为假表示它要密钥，而保险库里还没有。
 	KeyOK bool
+	// NoKey 为真表示它是不需要密钥的预置服务，页面上不显示填写密钥的那一行。
+	NoKey bool
 	Tools []mcpToolView
 }
 
@@ -198,7 +200,8 @@ func (s *Server) mcpPage(w http.ResponseWriter, r *http.Request, v *view) {
 		}
 	}
 	for _, m := range t.MCP {
-		sv := mcpServerView{MCPConfig: m, KeyOK: m.Secret == "" || stored[strings.TrimPrefix(m.Secret, vault.HandlePrefix)]}
+		preset := presetOf(m)
+		sv := mcpServerView{MCPConfig: m, NoKey: preset != nil && preset.KeyLabel == "", KeyOK: m.Secret == "" || stored[strings.TrimPrefix(m.Secret, vault.HandlePrefix)]}
 		for _, tool := range t.Tools {
 			if short, ok := strings.CutPrefix(tool.Name, m.Name+"."); ok {
 				side := tool.SideEffect
@@ -252,7 +255,7 @@ func checkMCP(m config.MCPConfig) error {
 			return errors.New("服务器地址必须以 https:// 开头")
 		}
 		if u.RawQuery != "" {
-			return errors.New("服务器地址不含查询参数：密钥请填写在「密钥」一栏，由保险库保管")
+			return errors.New("服务器地址不含查询参数：密钥请填写在「密钥」一栏，将保存至环境变量")
 		}
 	case mcpgw.TransportCommand:
 		if m.Command == "" {

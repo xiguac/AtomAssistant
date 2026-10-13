@@ -45,7 +45,7 @@ func (s *Server) weixinStart(w http.ResponseWriter, r *http.Request, _ *view) {
 		}
 		for _, c := range list {
 			if c.Name == name && c.Type != "weixin" {
-				return errors.New("名称「" + name + "」已被其他类型的渠道使用")
+				return errors.New("名称「" + name + "」已被其他类型的消息源使用")
 			}
 		}
 		login, err := weixin.StartLogin(r.Context(), nil, s.wxBase)
@@ -114,7 +114,7 @@ func (s *Server) weixinPoll(w http.ResponseWriter, r *http.Request, _ *view) {
 	}
 	login := s.weixinLogin(name)
 	if login == nil {
-		reply(false, true, "二维码已失效，请返回「渠道」页重新发起扫码连接。")
+		reply(false, true, "二维码已失效，请返回「消息源」页重新发起扫码连接。")
 		return
 	}
 	res, err := login.Poll(r.Context(), code)
@@ -132,7 +132,7 @@ func (s *Server) weixinPoll(w http.ResponseWriter, r *http.Request, _ *view) {
 		reply(true, false, "请在下方输入手机微信上显示的数字。")
 	case weixin.StatusExpired:
 		s.weixinDrop(name)
-		reply(false, true, "二维码已过期，请返回「渠道」页重新发起扫码连接。")
+		reply(false, true, "二维码已过期，请返回「消息源」页重新发起扫码连接。")
 	case weixin.StatusBlocked:
 		s.weixinDrop(name)
 		reply(false, true, "数字多次输入错误，本次连接已终止，请稍后重试。")
@@ -145,8 +145,8 @@ func (s *Server) weixinPoll(w http.ResponseWriter, r *http.Request, _ *view) {
 			reply(false, true, "扫码已确认，但保存失败："+err.Error())
 			return
 		}
-		s.opts.Log.Info("微信渠道已在后台扫码连接", "渠道", name, "来自", r.RemoteAddr)
-		reply(true, true, "微信已连接，扫码的微信号已设为该渠道的主人。重启服务后生效。")
+		s.opts.Log.Info("微信消息源已在后台扫码连接", "消息源", name, "来自", r.RemoteAddr)
+		reply(true, true, "微信已连接，扫码的微信号已设为该消息源的主人。重启服务后生效。")
 	}
 }
 
@@ -154,7 +154,7 @@ func (s *Server) weixinPoll(w http.ResponseWriter, r *http.Request, _ *view) {
 func (s *Server) weixinSave(r *http.Request, name string, res weixin.LoginResult) error {
 	c := config.ChannelConfig{Name: name, Type: "weixin", AppID: res.BotID, APIBase: res.BaseURL}
 	label := c.VaultUser()
-	if err := s.opts.Vault.Seal(r.Context(), label, res.Token, "微信渠道 "+name+" 的机器人凭证", []string{c.VaultUser()}); err != nil {
+	if err := s.opts.Vault.Seal(r.Context(), label, res.Token, "微信消息源 "+name+" 的机器人凭证", []string{c.VaultUser()}); err != nil {
 		return err
 	}
 	c.Secret = vault.HandlePrefix + label

@@ -246,7 +246,7 @@ func (s *Server) dropCredential(ctx context.Context, handle, user string) {
 	}
 	metas, err := s.opts.Vault.List(ctx)
 	if err != nil {
-		s.opts.Log.Error("清理凭据时读取保险库失败", "条目", label, "err", err)
+		s.opts.Log.Error("清理凭据时读取环境变量失败", "条目", label, "err", err)
 		return
 	}
 	for _, meta := range metas {

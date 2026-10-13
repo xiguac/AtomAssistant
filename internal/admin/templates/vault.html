@@ -1,8 +1,8 @@
 {{define "content"}}
-<h1>保险库</h1>
-<div class="sub">所有敏感信息均加密存放于此，保存后不可读取。个人信息在本页添加并授权给工具；模型密钥、渠道凭据、MCP 密钥、日历与邮箱密码属于服务凭据，在各自的管理页面填写，本页提供总览。</div>
+<h1>环境变量</h1>
+<div class="sub">所有敏感信息均加密存放于此，保存后不可读取。个人信息在本页添加并授权给工具；模型密钥、消息源凭据、MCP 密钥、日历与邮箱密码属于服务凭据，在各自的管理页面填写，本页提供总览。</div>
 
-<div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>保险库不提供查看功能，已保存的值对任何人均不可见。如需修改，请以相同名称重新保存。</div></div>
+<div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>环境变量不提供查看功能，已保存的值对任何人均不可见。如需修改，请以相同名称重新保存。</div></div>
 
 <div class="cols">
 <div>
@@ -36,7 +36,7 @@
         <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
         <button class="btn danger sm">删除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无服务凭据。请在「模型」「渠道」「连接器」「MCP」页填写对应的密钥或密码。</div>{{end}}
+  </table>{{else}}<div class="empty">暂无服务凭据。请在「模型」「消息源」「连接器」「MCP」页填写对应的密钥或密码。</div>{{end}}
   <div class="band foot"><span class="note muted">服务凭据由系统在连接时取用，对助手不可见。更换请前往归属对象的管理页面；删除归属对象时其凭据一并删除。</span></div>
 </div>
 
@@ -56,11 +56,11 @@
       <details class="dropdown">
         <summary><span class="none">请选择或输入</span><span class="some">已选择</span></summary>
         <div class="menu">
-          <input type="text" name="tools" list="tool-prefixes" placeholder="输入自定义标识，例如 provider.模型服务名称、channel.渠道名称；多个以逗号分隔">
-          <datalist id="tool-prefixes"><option value="provider.">模型服务</option><option value="channel.">消息渠道</option>{{range .Data.Tools}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</datalist>
+          <input type="text" name="tools" list="tool-prefixes" placeholder="输入自定义标识，例如 provider.模型服务名称、channel.消息源名称；多个以逗号分隔">
+          <datalist id="tool-prefixes"><option value="provider.">模型服务</option><option value="channel.">消息源</option>{{range .Data.Tools}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</datalist>
           {{range .Data.Tools}}<label class="check"><input type="checkbox" name="tools" value="{{.Value}}"><span>{{.Label}}</span><span class="mono muted">{{.Value}}</span></label>{{end}}</div>
       </details>
-      <div class="help">可多选，也可直接输入尚未配置的模型服务或渠道的标识。仅选中或输入的对象可使用该条目，其余对象引用时调用将被拒绝</div></div>
+      <div class="help">可多选，也可直接输入尚未配置的模型服务或消息源的标识。仅选中或输入的对象可使用该条目，其余对象引用时调用将被拒绝</div></div>
   </div>
   <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>

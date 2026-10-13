@@ -90,7 +90,7 @@ func TestAuth_没设置登录方式时哪里都去不了(t *testing.T) {
 		}
 	}
 	if code, _ := e.post("/vault", url.Values{"csrf": {csrf}, "label": {"x"}, "value": {"y"}, "note": {"n"}}); code != http.StatusSeeOther {
-		t.Fatalf("设置登录方式之前不能写保险库: %d", code)
+		t.Fatalf("设置登录方式之前不能写环境变量: %d", code)
 	}
 	if metas, _ := e.vault.List(context.Background()); len(metas) != 0 {
 		t.Fatal("设置登录方式之前的请求不应写入任何东西")

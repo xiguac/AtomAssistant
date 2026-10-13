@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>配置</h1>
-<div class="sub">保存前将校验配置，校验未通过时不会写入。请勿在此填写密码或密钥，应保存至保险库并以 vault://名称 引用。模型相关配置可在「模型」页填写。</div>
+<div class="sub">保存前将校验配置，校验未通过时不会写入。请勿在此填写密码或密钥，应保存至环境变量并以 vault://名称 引用。模型相关配置可在「模型」页填写。</div>
 
 <div class="cols">
 <div>
@@ -16,7 +16,7 @@
 <div class="card">
   <div class="band"><b>重启服务</b></div>
   <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div class="note grow">使修改后的配置与保险库中新增的密钥生效。执行中的任务将回到队列，重启后继续执行。</div>
+    <div class="note grow">使修改后的配置与环境变量中新增的密钥生效。执行中的任务将回到队列，重启后继续执行。</div>
     <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{.CSRF}}">
       <button class="btn sec"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V9h-4.5"/></svg>重启服务</button></form>
   </div>

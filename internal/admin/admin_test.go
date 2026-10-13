@@ -219,12 +219,12 @@ func (e *env) signIn(c *http.Client, pw, code string) (int, string) {
 func TestAdmin_不登录什么都看不到(t *testing.T) {
 	e := setup(t)
 	for _, path := range []string{"/", "/vault", "/memory", "/config", "/files", "/tasks/x", "/files/download?path=a"} {
-		if code, body := e.get(path); code != http.StatusSeeOther || strings.Contains(body, "保险库") {
+		if code, body := e.get(path); code != http.StatusSeeOther || strings.Contains(body, "环境变量") {
 			t.Errorf("%s 未登录应跳去登录页，实际 %d", path, code)
 		}
 	}
 	if code, _ := e.post("/vault", url.Values{"label": {"x"}, "value": {"y"}}); code != http.StatusSeeOther {
-		t.Fatalf("未登录不能写保险库: %d", code)
+		t.Fatalf("未登录不能写环境变量: %d", code)
 	}
 	if metas, _ := e.vault.List(context.Background()); len(metas) != 0 {
 		t.Fatal("未登录的请求不应写入任何东西")
@@ -277,7 +277,7 @@ func TestAdmin_改动要带防伪令牌保险库只进不出(t *testing.T) {
 	// 后台的任何页面上都看不到它。
 	for _, path := range []string{"/vault", "/", "/config", "/memory"} {
 		if _, body := e.get(path); strings.Contains(body, secret) {
-			t.Fatalf("%s 页面上出现了保险库的内容", path)
+			t.Fatalf("%s 页面上出现了环境变量的内容", path)
 		}
 	}
 	if code, _ := e.post("/vault/delete", url.Values{"csrf": {e.csrf}, "label": {"deepseek"}}); code != http.StatusSeeOther {
@@ -628,32 +628,32 @@ func TestAdmin_渠道页接入机器人并指定主人(t *testing.T) {
 	before, _ := os.ReadFile(e.cfg)
 
 	if loc := post("/channels", url.Values{"name": {"qq"}, "type": {"qq"}, "app_id": {"1020"}}); !strings.Contains(loc, "必须填写 AppSecret") {
-		t.Fatalf("新增渠道没有凭据应被拒绝: %s", loc)
+		t.Fatalf("新增消息源没有凭据应被拒绝: %s", loc)
 	}
 	if loc := post("/channels", url.Values{"name": {"wx"}, "type": {"wechat"}, "app_id": {"1"}, "secret": {"s"}}); !strings.Contains(loc, "不支持") {
 		t.Fatalf("不支持的类型应被拒绝: %s", loc)
 	}
 	if loc := post("/channels", url.Values{"name": {"qq"}, "type": {"qq"}, "app_id": {"1020"}, "secret": {"app-secret-1"}, "sandbox": {"1"}}); !strings.Contains(loc, "已保存") {
-		t.Fatalf("保存渠道失败: %s", loc)
+		t.Fatalf("保存消息源失败: %s", loc)
 	}
 	raw, _ := os.ReadFile(e.cfg)
 	text := string(raw)
 	if strings.Contains(text, "app-secret-1") || !strings.HasPrefix(text, string(before)) ||
 		!strings.Contains(text, "secret: vault://channel.qq") || !strings.Contains(text, "sandbox: true") {
-		t.Fatalf("凭据应进保险库、配置里只留句柄，其余内容不动:\n%s", text)
+		t.Fatalf("凭据应进环境变量、配置里只留句柄，其余内容不动:\n%s", text)
 	}
 	// 保存渠道不会顺带指定主人：主人只能单独、明确地添加。
 	file, err := config.LoadFile(e.cfg)
 	if err != nil || len(file.Channels) != 1 || len(file.Channels[0].Owners) != 0 {
-		t.Fatalf("新渠道不应有主人: %+v %v", file, err)
+		t.Fatalf("新消息源不应有主人: %+v %v", file, err)
 	}
 	// 凭据授权给这个渠道自己，启动时取得出来。
 	bindings, err := file.BuildChannels(e.vault, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil || len(bindings) != 1 {
-		t.Fatalf("保存出来的渠道应能构造: %v", err)
+		t.Fatalf("保存出来的消息源应能构造: %v", err)
 	}
 	if _, body := e.get("/channels"); !strings.Contains(body, "尚未指定主人") || !strings.Contains(body, "凭据已配置") || strings.Contains(body, "app-secret-1") {
-		t.Fatal("渠道页应提示尚无主人，且不显示凭据")
+		t.Fatal("消息源页应提示尚无主人，且不显示凭据")
 	}
 
 	if loc := post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"有 空格"}}); !strings.Contains(loc, "不含空白字符") {
@@ -664,17 +664,17 @@ func TestAdmin_渠道页接入机器人并指定主人(t *testing.T) {
 	post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"OPENID-A"}}) // 重复添加不产生两条
 	// 修改渠道（换 AppID、不填凭据）：主人名单和凭据都保留。
 	if loc := post("/channels", url.Values{"name": {"qq"}, "type": {"qq"}, "app_id": {"2030"}}); !strings.Contains(loc, "已保存") {
-		t.Fatalf("修改渠道失败: %s", loc)
+		t.Fatalf("修改消息源失败: %s", loc)
 	}
 	post("/channels/owner", url.Values{"name": {"qq"}, "owner": {"OPENID-B"}, "remove": {"1"}})
 	file, err = config.LoadFile(e.cfg)
 	if err != nil || file.Channels[0].AppID != "2030" || file.Channels[0].Sandbox ||
 		strings.Join(file.Channels[0].Owners, ",") != "OPENID-A" || file.Channels[0].Secret != "vault://channel.qq" {
-		t.Fatalf("修改后的渠道不对: %+v %v", file.Channels, err)
+		t.Fatalf("修改后的消息源不对: %+v %v", file.Channels, err)
 	}
 
 	if loc := post("/channels/delete", url.Values{"name": {"qq"}}); !strings.Contains(loc, "已删除") {
-		t.Fatalf("删除渠道失败: %s", loc)
+		t.Fatalf("删除消息源失败: %s", loc)
 	}
 	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
 		t.Fatalf("删除后配置应回到原样:\n%q\n%q", now, before)
@@ -753,21 +753,21 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 		t.Fatalf("日历连接器不对: %+v %v", cal, err)
 	}
 	if got, err := cal.Secret(ctx); err != nil || got != "cal pass word" {
-		t.Fatalf("日历密码应能从保险库取出且原样: %v", err)
+		t.Fatalf("日历密码应能从环境变量取出且原样: %v", err)
 	}
 	box, err := file.Mail(e.vault)
 	if err != nil || box.Name != "张三" || box.SMTPAddr != "smtp.example.com:587" {
 		t.Fatalf("邮件连接器不对: %+v %v", box, err)
 	}
 	if got, err := box.Secret(ctx); err != nil || got != "mail-secret-9" {
-		t.Fatalf("邮件密码应能从保险库取出: %v", err)
+		t.Fatalf("邮件密码应能从环境变量取出: %v", err)
 	}
 	qw, err := file.Weather(e.vault)
 	if err != nil || qw.Host != "abcxyz.qweatherapi.com" {
 		t.Fatalf("天气连接器不对: %+v %v", qw, err)
 	}
 	if got, err := qw.Secret(ctx); err != nil || got != "qw-key-42" {
-		t.Fatalf("天气的 API KEY 应能从保险库取出: %v", err)
+		t.Fatalf("天气的 API KEY 应能从环境变量取出: %v", err)
 	}
 	_, body := e.get("/connectors")
 	if strings.Contains(body, "cal pass word") || strings.Contains(body, "mail-secret-9") || strings.Contains(body, "qw-key-42") ||
