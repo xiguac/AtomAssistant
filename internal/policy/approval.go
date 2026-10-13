@@ -58,6 +58,9 @@ type Caps struct {
 	PerTaskAmountCents   int64
 }
 
+// ReasonOutbound 是自主模式下一个对外发送的动作要用户确认的理由。
+const ReasonOutbound = "这个动作会把内容发到外部，由你确认"
+
 // ReasonNoCap 是自主模式下一笔花钱的操作因为没有设置金额上限而转手动的理由。
 const ReasonNoCap = "未设置金额上限（单任务或单日），涉及金额的操作需手动确认"
 
@@ -65,10 +68,12 @@ const ReasonNoCap = "未设置金额上限（单任务或单日），涉及金�
 type Policy struct {
 	Rules []Rule
 	Caps  Caps
-	// Autonomous 为真是自主模式：没有为它写规则的工具直接执行，不再默认手动确认。
+	// Autonomous 为真是自主模式：取数据和在用户自己地盘上的处理（记日程、写文件、整理邮件）直接执行，
+	// 不再默认手动确认。
 	//
-	// 长程任务要调几十次工具，每一次都等人点确认的话，人就得一直盯着。自主模式放开的是"默认要问"，
-	// 下面这些照旧：绝密数据不外传；不是用户发起的任务不能改动东西；用户写了 never 的工具始终确认；
+	// 长程任务要调几十次工具，每一次都等人点确认的话，人就得一直盯着。自主模式放开的只是内部的事；
+	// 对外发送的动作（Request.Outbound）仍然要用户确认，除非用户为那个工具写了放行规则。
+	// 下面这些也照旧：绝密数据不外传；不是用户发起的任务不能改动东西；用户写了 never 的工具始终确认；
 	// 用户写了条件的按条件；累计帽子；以及花钱的操作必须有金额上限罩着，没设上限就仍然要确认。
 	Autonomous bool
 }
@@ -85,6 +90,9 @@ type Request struct {
 	EventAt *time.Time
 	// MaxPrivacy 是参数里出现的最高隐私等级。
 	MaxPrivacy core.PrivacyLevel
+	// Outbound 为真表示这个动作会把内容发到外部：发信、付款、向外部服务提交信息。
+	// 查询不算——它带出去的只是查询条件，而且能带多敏感的数据已经由工具的隐私上限管着。
+	Outbound bool
 }
 
 // Usage 是当前的累计用量。
@@ -128,6 +136,13 @@ func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
 	switch {
 	case !found && !p.Autonomous:
 		return Decision{OutcomeManual, ReasonNoRule}
+	case !found && req.Outbound:
+		// 对外发出去的东西收不回来，而且任务读过的网页、邮件里可能埋着让助手往外发东西的话。
+		// 这一类不交给模型判断，由用户确认。
+		if req.MaxPrivacy >= core.PrivacySensitive {
+			return Decision{OutcomeManual, ReasonOutbound + "（其中含有敏感信息）"}
+		}
+		return Decision{OutcomeManual, ReasonOutbound}
 	case !found:
 		// 自主模式下没有规则的工具直接执行，但花钱必须有上限罩着：
 		// 没有任何金额上限时，一个跑飞的任务能花多少就没有边了。

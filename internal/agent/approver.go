@@ -154,6 +154,27 @@ func (a *Approver) drivenBy(ctx context.Context, t *core.Task, d kernel.Decision
 	return t.Origin, "", nil
 }
 
+// inHouse 是会改动东西、但改的是用户自己地盘上的东西的内置工具：他的日历、他的邮箱、本机的工作区。
+// 它们不把内容交给任何第三方。
+var inHouse = map[string]bool{
+	ToolCalendarCreate: true, ToolCalendarUpdate: true, ToolCalendarDelete: true,
+	ToolMailMark: true, ToolMailMove: true,
+	ToolSheetWrite: true, ToolDocWrite: true, ToolSlidesWrite: true,
+	ToolCapabilityInstall: true,
+}
+
+// outbound 报告一个动作是不是对外发送：发信、付款与付费请求、通过 MCP 工具向外部服务提交信息。
+//
+// 判断的办法是排除法：只读的不算；规划器自己的记录和上面那几个"自己地盘上"的工具不算；
+// 其余会产生副作用的一律算。新接的 MCP 工具因此默认按对外发送对待——宁可多问一次，
+// 也不要让一个没人认得的工具悄悄把东西带出去。
+func outbound(tool string, side core.SideEffect) bool {
+	if side == core.SideEffectNone || side == core.SideEffectReadOnly {
+		return false
+	}
+	return !inHouse[tool] && !isInternalTool(tool)
+}
+
 var _ kernel.Approver = (*Approver)(nil)
 
 // NewApprover 构造审批器。
@@ -202,6 +223,7 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 
 	amount, eventAt := extractIntent(d.Input)
 	decision := a.policy.Decide(policy.Request{
+		Outbound:    outbound(d.ToolName, d.SideEffect),
 		Tool:        d.ToolName,
 		SideEffect:  d.SideEffect,
 		AmountCents: amount,

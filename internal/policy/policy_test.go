@@ -365,12 +365,22 @@ func TestDecide_默认策略一律手动(t *testing.T) {
 	}
 }
 
-func TestPolicy_自主模式放开默认确认但硬限制照旧(t *testing.T) {
+func TestPolicy_自主模式放开内部的事对外发送仍由用户确认(t *testing.T) {
 	now := time.Now()
-	req := Request{Tool: "mail.send", SideEffect: core.SideEffectIrreversible, Origin: core.TrustUser, MaxPrivacy: core.PrivacyNormal}
+	req := Request{Tool: "calendar.delete", SideEffect: core.SideEffectIrreversible, Origin: core.TrustUser, MaxPrivacy: core.PrivacyNormal}
 	p := &Policy{Autonomous: true}
 	if d := p.Decide(req, Usage{}, now); d.Outcome != OutcomeAuto {
-		t.Fatalf("自主模式下没有规则的工具应直接执行: %+v", d)
+		t.Fatalf("自主模式下内部的事应直接执行: %+v", d)
+	}
+	// 对外发送的由用户确认；含敏感信息的在理由里写明。
+	out := req
+	out.Tool, out.Outbound = "mail.send", true
+	if d := p.Decide(out, Usage{}, now); d.Outcome != OutcomeManual || d.Reason != ReasonOutbound {
+		t.Fatalf("对外发送应由用户确认: %+v", d)
+	}
+	out.MaxPrivacy = core.PrivacySensitive
+	if d := p.Decide(out, Usage{}, now); d.Outcome != OutcomeManual || d.Reason == ReasonOutbound {
+		t.Fatalf("含敏感信息时理由应写明: %+v", d)
 	}
 	// 绝密数据照旧拒绝。
 	secret := req
@@ -391,16 +401,21 @@ func TestPolicy_自主模式放开默认确认但硬限制照旧(t *testing.T) {
 	if d := capped.Decide(pay, Usage{TaskAmountCents: 8000}, now); d.Outcome != OutcomeManual {
 		t.Fatalf("超出单任务上限应确认: %+v", d)
 	}
-	// 用户写的规则仍然算数：never 始终确认，带条件的按条件。
+	// 用户写的规则仍然算数：never 始终确认，带条件的按条件，写了放行的对外工具直接执行。
 	ruled := &Policy{Autonomous: true, Rules: []Rule{
-		{Tool: "mail.send", Never: true},
+		{Tool: "calendar.delete", Never: true},
 		{Tool: "ride.book", AutoIf: Condition{AmountBelowCents: 1000}},
+		{Tool: "mail.send"},
 	}}
 	if d := ruled.Decide(req, Usage{}, now); d.Outcome != OutcomeManual {
 		t.Fatalf("never 应始终确认: %+v", d)
 	}
-	ride := Request{Tool: "ride.book", SideEffect: core.SideEffectIrreversible, Origin: core.TrustUser, AmountCents: 5000}
+	ride := Request{Tool: "ride.book", SideEffect: core.SideEffectIrreversible, Origin: core.TrustUser, AmountCents: 5000, Outbound: true}
 	if d := ruled.Decide(ride, Usage{}, now); d.Outcome != OutcomeManual {
 		t.Fatalf("不满足用户写的条件应确认: %+v", d)
+	}
+	out.MaxPrivacy = core.PrivacyNormal
+	if d := ruled.Decide(out, Usage{}, now); d.Outcome != OutcomeAuto {
+		t.Fatalf("用户写了放行规则的对外工具应直接执行: %+v", d)
 	}
 }

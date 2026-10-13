@@ -484,48 +484,47 @@ func TestDelegate_主模型可以接手自己调工具办完(t *testing.T) {
 func TestGuard_修改和删除先由主模型把关写入不用(t *testing.T) {
 	ctx := context.Background()
 	task := core.NewTask("t", "把周五的会删掉", core.TrustUser)
-	book := `{"action":"tool","tool":"demo.book","params":{"id":"evt-1"},"reason":"delete it"}`
+	del := `{"action":"tool","tool":"calendar.delete","params":{"id":"evt-1"},"reason":"delete it"}`
+	planner := func(m *fakeModel, review bool) *Planner {
+		return NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{}).WithCalendar(true).WithActionReview(review)
+	}
 
 	// 同意：照原样执行，两次调用的用量都记上。
-	m := &fakeModel{replies: []string{book, `{"verdict":"approve","reason":"user asked"}`}}
-	p := NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{}).WithActionReview(true)
-	d, err := p.Decide(ctx, task, nil)
-	if err != nil || d.ToolName != "demo.book" || d.SideEffect != core.SideEffectIrreversible || m.calls != 2 || d.TokensIn != 20 {
+	m := &fakeModel{replies: []string{del, `{"verdict":"approve","reason":"user asked"}`}}
+	d, err := planner(m, true).Decide(ctx, task, nil)
+	if err != nil || d.ToolName != ToolCalendarDelete || d.SideEffect != core.SideEffectIrreversible || m.calls != 2 || d.TokensIn != 20 {
 		t.Fatalf("主模型同意后应照原样执行: %+v %v", d, err)
 	}
 	seen := text(m.lastReq)
-	if !strings.Contains(seen, "把周五的会删掉") || !strings.Contains(seen, "evt-1") || !strings.Contains(seen, "demo.book") {
+	if !strings.Contains(seen, "把周五的会删掉") || !strings.Contains(seen, "evt-1") || !strings.Contains(seen, ToolCalendarDelete) {
 		t.Fatal("把关时主模型应看到用户的原始要求和待执行的动作")
 	}
 
 	// 不同意：动作不执行，理由记进日志，提出它的模型下一步看得到。
-	m = &fakeModel{replies: []string{book, `{"verdict":"reject","reason":"wrong event, ask the user"}`}}
-	p = NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{}).WithActionReview(true)
-	d, err = p.Decide(ctx, task, nil)
+	m = &fakeModel{replies: []string{del, `{"verdict":"reject","reason":"wrong event, ask the user"}`}}
+	d, err = planner(m, true).Decide(ctx, task, nil)
 	var veto vetoRecord
 	if err != nil || d.ToolName != ToolVeto || d.SideEffect != core.SideEffectNone ||
-		json.Unmarshal(d.Input, &veto) != nil || veto.Tool != "demo.book" || veto.Reason != "wrong event, ask the user" {
+		json.Unmarshal(d.Input, &veto) != nil || veto.Tool != ToolCalendarDelete || veto.Reason != "wrong event, ask the user" {
 		t.Fatalf("主模型不同意时动作不应执行: %+v %v", d, err)
 	}
 
-	// 可撤销的写入、只读查询不经过把关；没开把关时什么都不拦。
+	// 不经过主模型把关的：新建、只读查询、对外发送（那一类归用户确认），以及没开把关的时候。
 	for _, c := range []struct {
-		side   core.SideEffect
 		reply  string
 		review bool
 	}{
-		{core.SideEffectReversible, book, true},
-		{core.SideEffectIrreversible, `{"action":"tool","tool":"demo.weather","params":{}}`, true},
-		{core.SideEffectIrreversible, book, false},
+		{`{"action":"tool","tool":"calendar.create","params":{}}`, true},
+		{`{"action":"tool","tool":"demo.weather","params":{}}`, true},
+		{`{"action":"tool","tool":"demo.book","params":{}}`, true},
+		{del, false},
 	} {
 		m = &fakeModel{replies: []string{c.reply}}
-		p = NewPlanner(m, catalogWith(c.side), PlannerOptions{}).WithActionReview(c.review)
-		if d, err = p.Decide(ctx, task, nil); err != nil || isInternalTool(d.ToolName) || m.calls != 1 {
-			t.Fatalf("这个动作不应经过把关: %+v %v", d, err)
+		if d, err = planner(m, c.review).Decide(ctx, task, nil); err != nil || isInternalTool(d.ToolName) || m.calls != 1 {
+			t.Fatalf("这个动作不应经过主模型把关: %+v %v", d, err)
 		}
 	}
 
-	// 改已有的日程、挪动邮件虽然撤得回来，也要把关；新建不用。
 	for tool, want := range map[string]bool{ToolCalendarUpdate: true, ToolMailMove: true, ToolCalendarCreate: false, ToolDocWrite: false} {
 		got := needsMainReview(kernel.Decision{Kind: kernel.DecideStep, ToolName: tool, SideEffect: core.SideEffectReversible})
 		if got != want {
@@ -534,36 +533,65 @@ func TestGuard_修改和删除先由主模型把关写入不用(t *testing.T) {
 	}
 }
 
-func TestApprover_自主模式下读过外部内容的任务也直接执行(t *testing.T) {
+func TestApprover_自主模式下内部的事直接做对外发送由用户确认(t *testing.T) {
 	ctx := context.Background()
 	task := core.NewTask("t", "g", core.TrustUser)
 	external := core.NewStep(task.ID, 1, core.StepTool, nil)
 	external.ToolName = "web.search"
 	external.Complete(json.RawMessage(`{"text":"..."}`), core.TrustExternal)
-	d := kernel.Decision{Kind: kernel.DecideStep, Type: core.StepTool, ToolName: "demo.book",
-		SideEffect: core.SideEffectIrreversible, Input: json.RawMessage(`{"city":"上海"}`)}
-	check := func(pol *policy.Policy, t2 *core.Task) kernel.ApprovalOutcome {
+	check := func(pol *policy.Policy, t2 *core.Task, tool string, side core.SideEffect, params string) (kernel.ApprovalOutcome, string) {
 		t.Helper()
 		a := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).WithHistory(stepList{external})
-		outcome, _, err := a.CheckAction(ctx, t2, d)
+		outcome, reason, err := a.CheckAction(ctx, t2, kernel.Decision{Kind: kernel.DecideStep, Type: core.StepTool,
+			ToolName: tool, SideEffect: side, Input: json.RawMessage(params)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return outcome
+		return outcome, reason
 	}
-	if check(&policy.Policy{}, task) != kernel.ApprovalManual {
-		t.Fatal("逐项确认模式下，没有规则的改动应等用户确认")
+	auto := &policy.Policy{Autonomous: true}
+
+	// 内部的事：自己的日历、邮箱、工作区。任务读过外部内容也直接做。
+	for tool, side := range map[string]core.SideEffect{
+		ToolCalendarCreate: core.SideEffectReversible, ToolCalendarDelete: core.SideEffectIrreversible,
+		ToolMailMove: core.SideEffectReversible, ToolDocWrite: core.SideEffectReversible,
+	} {
+		if got, why := check(auto, task, tool, side, `{"title":"开会"}`); got != kernel.ApprovalAuto {
+			t.Fatalf("自主模式下 %s 应直接执行: %s", tool, why)
+		}
+		if got, _ := check(&policy.Policy{}, task, tool, side, `{"title":"开会"}`); got != kernel.ApprovalManual {
+			t.Fatalf("逐项确认模式下 %s 应等用户确认", tool)
+		}
 	}
-	if check(&policy.Policy{Autonomous: true}, task) != kernel.ApprovalAuto {
-		t.Fatal("自主模式下应直接执行，即使任务读过外部内容")
+	// 取数据：只读的 MCP 工具直接调用。
+	if got, _ := check(auto, task, "amap.maps_weather", core.SideEffectReadOnly, `{"city":"上海"}`); got != kernel.ApprovalAuto {
+		t.Fatal("只读查询应直接执行")
 	}
-	// 不是用户发起的任务，自主模式下也改不了东西。
-	if check(&policy.Policy{Autonomous: true}, core.NewTask("t", "g", core.TrustExternal)) != kernel.ApprovalManual {
+	// 对外发送：发信、付款、通过 MCP 提交信息，一律由用户确认。
+	for tool, side := range map[string]core.SideEffect{
+		ToolMailSend: core.SideEffectIrreversible, ToolPaySubmit: core.SideEffectIrreversible,
+		"forms.submit": core.SideEffectReversible, "demo.book": core.SideEffectIrreversible,
+	} {
+		got, why := check(auto, task, tool, side, `{"body":"你好"}`)
+		if got != kernel.ApprovalManual || !strings.Contains(why, "发到外部") {
+			t.Fatalf("对外发送的 %s 应由用户确认: %s %s", tool, got, why)
+		}
+	}
+	// 带着敏感信息往外发的，理由里写明。
+	if _, why := check(auto, task, "forms.submit", core.SideEffectReversible, `{"phone":"13800138000"}`); !strings.Contains(why, "敏感信息") {
+		t.Fatalf("含敏感信息时应在理由里写明: %s", why)
+	}
+	// 用户为某个对外的工具写了放行规则，就是他的批准。
+	ruled := &policy.Policy{Autonomous: true, Rules: []policy.Rule{{Tool: "forms.submit"}}}
+	if got, _ := check(ruled, task, "forms.submit", core.SideEffectReversible, `{"body":"你好"}`); got != kernel.ApprovalAuto {
+		t.Fatal("用户写了放行规则的对外工具应直接执行")
+	}
+	// 不是用户发起的任务，自主模式下也改不了东西；never 规则仍然生效。
+	if got, _ := check(auto, core.NewTask("t", "g", core.TrustExternal), ToolCalendarCreate, core.SideEffectReversible, `{}`); got != kernel.ApprovalManual {
 		t.Fatal("外部来源发起的任务不应自动改动东西")
 	}
-	// 用户写了 never 的工具始终确认。
-	never := &policy.Policy{Autonomous: true, Rules: []policy.Rule{{Tool: "demo.book", Never: true}}}
-	if check(never, task) != kernel.ApprovalManual {
+	never := &policy.Policy{Autonomous: true, Rules: []policy.Rule{{Tool: ToolCalendarCreate, Never: true}}}
+	if got, _ := check(never, task, ToolCalendarCreate, core.SideEffectReversible, `{}`); got != kernel.ApprovalManual {
 		t.Fatal("never 规则在自主模式下仍然生效")
 	}
 }
