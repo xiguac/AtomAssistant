@@ -21,41 +21,44 @@
     <div class="help"><a href="/login">返回上一步</a> · 验证码每 30 秒更换一次，每个验证码只能使用一次。</div>
 
     {{else}}
-    {{if .Password}}{{if not .Setup}}<div class="login-steps"><span class="on">1 密码</span><i></i><span>2 动态验证码</span></div>{{end}}{{end}}
+    {{if .Password}}{{if not .Setup}}{{if not .Passkey}}<div class="login-steps"><span class="on">1 密码</span><i></i><span>2 动态验证码</span></div>{{end}}{{end}}{{end}}
     <h1>登录</h1>
     <div class="sub">{{if .Setup}}尚未设置登录方式。本次使用密码登录，登录后须先设置「密码 + 动态验证码」或「通行密钥」。
-      {{else if and .Password .Passkey}}选择一种方式登录。
+      {{else if and .Password .Passkey}}请选择登录方式。
       {{else if .Password}}输入密码后，继续输入手机验证器上的动态验证码。
       {{else}}使用已登记的通行密钥登录。{{end}}</div>
     {{if $.Error}}<div class="banner bad"><div>{{$.Error}}</div></div>{{end}}
 
+    {{if and .Password .Passkey}}
+    <input class="login-pick" type="radio" name="way" id="pick-password" checked>
+    <input class="login-pick" type="radio" name="way" id="pick-passkey">
+    <div class="login-tabs" role="tablist" aria-label="登录方式">
+      <label for="pick-password">密码 + 动态验证码</label>
+      <label for="pick-passkey">通行密钥</label>
+    </div>
+    {{end}}
+
     {{if .Password}}
-    <form method="post" action="/login">
-      <label for="pw">登录密码</label>
-      <input id="pw" type="password" name="password" autofocus autocomplete="current-password">
-      <button class="btn wide">{{if .Setup}}登录{{else}}下一步{{end}}</button>
-    </form>
+    <div class="{{if .Passkey}}login-way password{{end}}">
+      <form method="post" action="/login">
+        <label for="pw">登录密码</label>
+        <input id="pw" type="password" name="password" autofocus autocomplete="current-password">
+        <button class="btn wide">{{if .Setup}}登录{{else}}下一步{{end}}</button>
+      </form>
+    </div>
     {{end}}
 
     {{if .Passkey}}
-    {{if .Password}}<div class="login-or"><span>或</span></div>{{end}}
-    <button class="btn {{if .Password}}sec{{end}} wide" type="button" data-passkey="login">
-      <svg class="ico" viewBox="0 0 24 24"><circle cx="9" cy="9" r="4"/><path d="M12 12.5 20 20.5M17 17.5l2-2M14.5 15l1.5-1.5"/></svg>使用通行密钥登录</button>
-    <div class="async-result passkey-result" hidden></div>
+    <div class="{{if .Password}}login-way passkey{{end}}">
+      {{if .Password}}<div class="note">使用设备上的指纹、面容或硬件密钥，一步完成登录。</div>{{end}}
+      <button class="btn wide" type="button" data-passkey="login">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="9" cy="9" r="4"/><path d="M12 12.5 20 20.5M17 17.5l2-2M14.5 15l1.5-1.5"/></svg>使用通行密钥登录</button>
+      <div class="async-result passkey-result" hidden></div>
+    </div>
     {{end}}
 
     <div class="help">连续失败 5 次后，登录将被暂时锁定。</div>
     {{end}}
-  </div>
-  <div class="login-side">
-    <div>
-      <h2>登录受两道保护</h2>
-      <ul>
-        <li><b>密码 + 动态验证码</b><span>先输入密码，再输入手机验证器上的 6 位数字。系统先核对验证码，再核对密码。</span></li>
-        <li><b>通行密钥</b><span>使用设备上的指纹、面容或硬件密钥，一步完成登录。</span></li>
-        <li><b>数据加密存储</b><span>数据库中的内容以本机密钥加密保存。</span></li>
-      </ul>
-    </div>
   </div>
 </div>
 {{end}}

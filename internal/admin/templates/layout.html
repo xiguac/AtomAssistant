@@ -235,28 +235,32 @@ details.fold > summary:hover { background:var(--canvas); }
 .steps .err { color:var(--bad); font-size:13px; margin-top:4px; }
 
 /* 登录：左边是表单，右边是说明 */
-.login { min-height:100vh; display:grid; grid-template-columns:minmax(380px,520px) 1fr; }
-.login-panel { background:var(--card); border-right:1px solid var(--line); padding:56px 56px 40px; display:flex; flex-direction:column; justify-content:center; }
-.login-panel .brand { padding:0 0 36px; }
-.login-panel h1 { font-size:22px; line-height:30px; }
-.login-panel .sub { margin-bottom:20px; }
+/* 登录页：一张卡片居中。两种登录方式都开着时，上面一排选项卡由用户自己选，只显示选中的那一种。
+   选项卡不用脚本：一组单选框排在面板前面，选中哪个就显示哪个面板。 */
+.login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:32px 16px; }
+.login-panel { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:36px 36px 28px; }
+.login-panel .brand { padding:0 0 28px; justify-content:center; }
+.login-panel h1 { font-size:22px; line-height:30px; text-align:center; }
+.login-panel .sub { margin:6px 0 20px; text-align:center; }
 .login-panel form { display:grid; }
-.login-panel .help { margin-top:18px; }
+.login-panel .help { margin-top:18px; text-align:center; }
 .login-panel .async-result { margin:12px 0 0; }
 .btn.wide { width:100%; margin-top:16px; height:40px; }
-.login-or { display:flex; align-items:center; gap:12px; margin:18px 0 2px; color:var(--muted); font-size:12px; }
-.login-or::before, .login-or::after { content:""; flex:1; height:1px; background:var(--line); }
-.login-steps { display:flex; align-items:center; gap:10px; margin-bottom:18px; font-size:12px; font-weight:500; color:var(--muted); }
+.login-steps { display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:18px; font-size:12px; font-weight:500; color:var(--muted); }
 .login-steps i { width:28px; height:1px; background:var(--line-strong); }
 .login-steps .on { color:var(--primary); }
 .login-steps .done { color:var(--ok); }
-.login-side { display:flex; align-items:center; padding:56px; background:var(--canvas); }
-.login-side > div { max-width:460px; }
-.login-side h2 { margin:0 0 18px; font-size:18px; }
-.login-side ul { list-style:none; margin:0; padding:0; display:grid; gap:14px; }
-.login-side li { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; }
-.login-side li b { display:block; font-weight:500; }
-.login-side li span { display:block; color:var(--text-2); font-size:13px; line-height:18px; margin-top:4px; }
+.login-pick { position:absolute; opacity:0; pointer-events:none; }
+.login-tabs { display:grid; grid-template-columns:1fr 1fr; gap:4px; padding:4px; margin-bottom:20px; background:var(--recess); border-radius:10px; }
+.login-tabs label { margin:0; height:34px; display:flex; align-items:center; justify-content:center; border-radius:7px; font-size:13px; font-weight:500; color:var(--text-2); cursor:pointer; }
+.login-tabs label:hover { color:var(--text); }
+#pick-password:checked ~ .login-tabs label[for=pick-password],
+#pick-passkey:checked ~ .login-tabs label[for=pick-passkey] { background:var(--card); color:var(--primary); box-shadow:0 0 0 1px var(--line); }
+#pick-password:focus-visible ~ .login-tabs label[for=pick-password],
+#pick-passkey:focus-visible ~ .login-tabs label[for=pick-passkey] { outline:2px solid rgba(37,99,235,.3); outline-offset:2px; }
+.login-way { display:none; }
+#pick-password:checked ~ .login-way.password, #pick-passkey:checked ~ .login-way.passkey { display:block; }
+.login-way .note { text-align:center; }
 input.otp { height:48px; font:600 22px/28px var(--mono); letter-spacing:.3em; text-align:center; }
 input.otp.sm { height:36px; font-size:15px; letter-spacing:.2em; max-width:200px; }
 input.otp::placeholder { font:400 13px/20px var(--sans); letter-spacing:normal; }
@@ -282,9 +286,7 @@ label.method .note { display:block; margin-top:2px; }
   .main { margin-left:0; padding:20px 16px 48px; }
   .grid2 { grid-template-columns:1fr; }
   .rows .t { width:140px; }
-  .login { grid-template-columns:1fr; }
-  .login-panel { border-right:0; padding:32px 24px; }
-  .login-side { display:none; }
+  .login-panel { padding:28px 20px 22px; }
   .totp { grid-template-columns:1fr; }
 }
 /* 内容区不够宽时，左右两栏叠成一栏。 */
