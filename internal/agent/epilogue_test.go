@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/memory/memstore"
 	"github.com/xiguac/atomhelper/internal/skill"
@@ -416,5 +418,65 @@ func TestPlanner_指定的Skill加载不出来时不得不受限地继续(t *tes
 	p = NewPlanner(&fakeModel{replies: []string{reply}}, catalogWith(core.SideEffectIrreversible), PlannerOptions{})
 	if _, err := p.Decide(context.Background(), task, nil); err == nil {
 		t.Fatal("未启用 Skill 时带 Skill 标签的任务应拒绝决策")
+	}
+}
+
+func TestEpilogue_推断攒多了由主模型合并相近的条目(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	pipe := memory.NewPipeline(st, nil)
+	add := func(i int, value string) string {
+		t.Helper()
+		out, err := pipe.Ingest(ctx, []memory.Candidate{{
+			Kind: memory.KindFact, Subject: "user", Domain: fmt.Sprintf("话题%d", i), Value: value,
+			Temporality: memory.TemporalDurable,
+			Source:      memory.Source{Kind: memory.SourceTask, Ref: fmt.Sprintf("t%d", i), Trust: core.TrustToolOutput},
+		}})
+		if err != nil || len(out) != 1 {
+			t.Fatalf("写入失败: %v", err)
+		}
+		return out[0].MemoryID
+	}
+	// 模型提了三组：一组正常；一组编号越界；一组想把已经并掉的再并一次。只有第一组生效。
+	m := &fakeModel{replies: []string{`{"merges":[{"items":[1,2],"value":"不太吃辣，点菜时会让少放辣"},` +
+		`{"items":[3,99],"value":"越界"},{"items":[2,4],"value":"重复使用"}]}`}}
+	now := time.Now().UTC()
+	e := NewEpilogue(m, pipe).WithMemoryTidy(pipe)
+	e.now = func() time.Time { return now }
+
+	// 条数不够时不整理，不花钱。
+	add(1, "不太吃辣")
+	add(2, "点菜时让少放辣")
+	if cost, err := e.tidyMemories(ctx); err != nil || m.calls != 0 || cost.TokensIn != 0 {
+		t.Fatalf("没攒够不应整理: %v %d", err, m.calls)
+	}
+	for i := 3; i <= tidyThreshold; i++ {
+		add(i, fmt.Sprintf("第 %d 件事", i))
+	}
+	cost, err := e.tidyMemories(ctx)
+	if err != nil || m.calls != 1 || cost.TokensIn == 0 || m.lastPurp != llm.PurposePlan {
+		t.Fatalf("攒够了应由主模型整理一次: %v %d", err, m.calls)
+	}
+	left, _ := pipe.Mergeable(ctx)
+	if len(left) != tidyThreshold-1 {
+		t.Fatalf("应只合并掉一条，剩 %d 条", len(left))
+	}
+	merged := false
+	for _, mem := range left {
+		if mem.Current.Value == "不太吃辣，点菜时会让少放辣" {
+			merged = mem.Inferred()
+		}
+	}
+	if !merged {
+		t.Fatal("合并出来的条目应在，并且仍是待确认的推断")
+	}
+	// 间隔没到不再整理；到了才会再来。
+	add(20, "又一件事")
+	if _, err := e.tidyMemories(ctx); err != nil || m.calls != 1 {
+		t.Fatalf("两次整理之间应有间隔: %v %d", err, m.calls)
+	}
+	now = now.Add(tidyEvery)
+	if _, err := e.tidyMemories(ctx); err != nil || m.calls != 2 {
+		t.Fatalf("间隔到了应再整理: %v %d", err, m.calls)
 	}
 }

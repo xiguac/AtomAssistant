@@ -67,10 +67,12 @@ type MemoryWriter interface {
 // 这是"越用越懂你"的落点：对话里透露的住址、习惯、相关的人，
 // 以及这类事情该怎么办，都在这里沉淀下来，而不是随任务结束一起消失。
 type Epilogue struct {
-	model    Completer
-	writer   MemoryWriter
-	voice    VoiceLearner
-	team     WorkRater
+	model  Completer
+	writer MemoryWriter
+	voice  VoiceLearner
+	team   WorkRater
+	// tidy 非空时，收尾顺带整理推断出来的记忆，见 tidy.go。
+	tidy     *tidier
 	maxChars int
 	now      func() time.Time
 }
@@ -131,7 +133,11 @@ func (e *Epilogue) TaskFinished(ctx context.Context, t *core.Task, history []*co
 	cost.TokensIn += teamCost.TokensIn
 	cost.TokensOut += teamCost.TokensOut
 	cost.Micros += teamCost.Micros
-	return cost, errors.Join(voiceErr, err, teamErr)
+	tidyCost, tidyErr := e.tidyMemories(ctx)
+	cost.TokensIn += tidyCost.TokensIn
+	cost.TokensOut += tidyCost.TokensOut
+	cost.Micros += tidyCost.Micros
+	return cost, errors.Join(voiceErr, err, teamErr, tidyErr)
 }
 
 // extract 从一次完成的任务里提炼记忆候选并送进写入管线。

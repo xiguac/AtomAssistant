@@ -177,3 +177,54 @@ func TestAffirmForget_用户对已记下的记忆表态(t *testing.T) {
 		t.Fatal("不存在的记忆应报错")
 	}
 }
+
+func TestMergeInferred_几条相近的推断并成一条仍待确认(t *testing.T) {
+	st := memstore.New()
+	p := memory.NewPipeline(st, nil)
+	a := ingest(t, p, inferred("t1", "饮食", "不太吃辣")).MemoryID
+	b := ingest(t, p, inferred("t2", "饮食/口味", "点菜时让少放辣")).MemoryID
+	c := ingest(t, p, inferred("t3", "作息", "习惯早起")).MemoryID
+	said := ingest(t, p, stated("t4", "出行", "能坐高铁就不坐飞机")).MemoryID
+
+	list, err := p.Mergeable(ctx())
+	if err != nil || len(list) != 3 {
+		t.Fatalf("可合并的只有推断出来的那几条: %d %v", len(list), err)
+	}
+
+	keep, err := p.MergeInferred(ctx(), []string{a, b}, "不太吃辣，点菜时会让少放辣")
+	if err != nil || (keep != a && keep != b) {
+		t.Fatalf("合并失败: %s %v", keep, err)
+	}
+	m, _ := st.Get(ctx(), keep)
+	// 合并只减少条数：留下来的仍是推断，仍等用户确认；原来的说法进了版本链，证据并到一起。
+	if !m.Inferred() || m.Current.Value != "不太吃辣，点菜时会让少放辣" || len(m.History) != 1 ||
+		m.History[0].OverrideReason != memory.OverrideMerged || len(m.Current.Evidence) != 2 {
+		t.Fatalf("合并后的记忆不对: %+v", m)
+	}
+	// 被并掉的归档而不删除。
+	active, _ := st.List(ctx(), memory.Query{})
+	all, _ := st.List(ctx(), memory.Query{IncludeInactive: true})
+	if len(active) != 3 || len(all) != 4 {
+		t.Fatalf("被并掉的应归档、仍可回溯: 生效 %d 条，共 %d 条", len(active), len(all))
+	}
+
+	// 底线：用户亲口说的不并；已经并掉的、同一条重复的、只有一条的、没有表述的，都不行。
+	for _, bad := range [][]string{{c, said}, {c, a}, {c, c}, {c}} {
+		if bad[len(bad)-1] == a && keep == a {
+			bad[len(bad)-1] = b
+		}
+		if _, err := p.MergeInferred(ctx(), bad, "合在一起"); err == nil {
+			t.Fatalf("%v 不应能合并", bad)
+		}
+	}
+	if _, err := p.MergeInferred(ctx(), []string{c, keep}, "  "); err == nil {
+		t.Fatal("没有合并后的表述不应合并")
+	}
+	// 类型不一样的不并。
+	pref := inferred("t5", "作息", "周末睡到十点")
+	pref.Kind = memory.KindPreference
+	d := ingest(t, p, pref).MemoryID
+	if _, err := p.MergeInferred(ctx(), []string{c, d}, "作息"); err == nil {
+		t.Fatal("类型不同不应合并")
+	}
+}

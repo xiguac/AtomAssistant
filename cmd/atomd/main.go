@@ -426,7 +426,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		}
 	}
 
-	epilogue := agent.NewEpilogue(router, memory.NewPipeline(memStore, nil))
+	pipeline := memory.NewPipeline(memStore, nil)
+	// 推断出来的记忆攒多了，由主模型把说的是同一件事的并成一条，免得用户要逐条确认一大堆。
+	epilogue := agent.NewEpilogue(router, pipeline).WithMemoryTidy(pipeline)
 	// 表达风格：从用户亲口说的话里学，替他写东西、对他说话时用。
 	if file.Reply.LearnVoice() {
 		voice := style.NewLearner(st.Style(), router)
