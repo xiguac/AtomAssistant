@@ -68,6 +68,45 @@ func (i *Installer) InstallUserServer(ctx context.Context, name, rawURL string) 
 	return srv, tools, nil
 }
 
+// InstallUserServerAwaitingKey 记下用户亲口给出地址、但密钥还没给的一个远程 MCP server。
+//
+// 密钥不经过对话：这里只记下 server 和密钥的参数名（keyParam，网址里的查询参数名），
+// 同时登记一条待填写的条目，由用户在管理后台亲手填。填好并重启之后它才会连上——
+// 所以这一步不连接，也就读不出工具。
+func (i *Installer) InstallUserServerAwaitingKey(ctx context.Context, name, rawURL, keyParam string) (*Server, error) {
+	if i.AskKey == nil || i.Servers == nil {
+		return nil, fmt.Errorf("market: 未启用密钥待填的 MCP server 安装")
+	}
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Hostname() == "" {
+		return nil, fmt.Errorf("%w: 无法解析", ErrBadAddress)
+	}
+	if u.Scheme != "https" {
+		return nil, fmt.Errorf("%w: 必须是 https 地址", ErrBadAddress)
+	}
+	if u.User != nil || u.RawQuery != "" {
+		return nil, fmt.Errorf("%w: 密钥待填的地址里不能带账号密码和参数", ErrBadAddress)
+	}
+	keyParam = strings.TrimSpace(keyParam)
+	if !reSegment.MatchString(keyParam) {
+		return nil, fmt.Errorf("%w: 密钥的参数名 %q 不合规矩", ErrBadAddress, keyParam)
+	}
+	name = userServerName(name, u.Hostname())
+	label := "mcp." + name
+	u.Fragment = ""
+	srv := &Server{
+		Name: name, ByUser: true, URL: u.String(), Description: "用户在对话里给出的地址，密钥待填", Payload: "{}",
+		SecretName: keyParam, Secret: vaultHandlePrefix + label, InstalledAt: time.Now().UTC(),
+	}
+	if err := i.AskKey(ctx, label, "MCP server "+name+"（"+u.Hostname()+"）的密钥"); err != nil {
+		return nil, err
+	}
+	if err := i.Servers.PutServer(ctx, srv); err != nil {
+		return nil, err
+	}
+	return srv, nil
+}
+
 // userServerName 定出本机的 server 名：用助手起的，起得不合规矩就从域名里取。
 //
 // 不加 mcp- 前缀：那是给来路不明的 server 用的。但名字仍然只能是小写字母、数字、下划线和连字符，

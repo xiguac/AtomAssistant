@@ -467,3 +467,41 @@ func TestInstallUserServer_用户给的地址不扫描直接接入密钥进保�
 		t.Fatal("连不上的不应留在库里")
 	}
 }
+
+func TestInstallUserServerAwaitingKey_密钥不经过对话由用户在后台填(t *testing.T) {
+	ctx := context.Background()
+	servers := memServers{}
+	asked := map[string]string{}
+	connects := 0
+	in := &Installer{Servers: servers,
+		AskKey:  func(_ context.Context, label, note string) error { asked[label] = note; return nil },
+		Connect: func(context.Context, *Server) ([]string, error) { connects++; return nil, nil }}
+
+	srv, err := in.InstallUserServerAwaitingKey(ctx, "Flight", "https://mcp.flight.example.com/mcp", "key")
+	if err != nil {
+		t.Fatalf("记录失败: %v", err)
+	}
+	// 记下了 server 和密钥的参数名，密钥指向一条还没有值的条目；没有去连接。
+	if srv.Name != "flight" || !srv.ByUser || srv.SecretName != "key" || srv.Secret != "vault://mcp.flight" ||
+		servers["flight"] == nil || connects != 0 {
+		t.Fatalf("记录的内容不对: %+v 连接了 %d 次", srv, connects)
+	}
+	if note := asked["mcp.flight"]; !strings.Contains(note, "mcp.flight.example.com") {
+		t.Fatalf("应登记一条待填写的密钥并写明是哪个服务: %v", asked)
+	}
+	for _, bad := range []struct{ url, param string }{
+		{"http://mcp.example.com/mcp", "key"},
+		{"https://mcp.example.com/mcp?key=k", "key"},
+		{"https://u:p@mcp.example.com/mcp", "key"},
+		{"https://mcp.example.com/mcp", "k=v&x"},
+		{"https://mcp.example.com/mcp", ""},
+	} {
+		if _, err := in.InstallUserServerAwaitingKey(ctx, "x", bad.url, bad.param); !errors.Is(err, ErrBadAddress) {
+			t.Fatalf("%+v 应被拒绝: %v", bad, err)
+		}
+	}
+	// 没接上登记待填写条目的能力时装不了，不会留下一个永远连不上的 server。
+	if _, err := (&Installer{Servers: memServers{}}).InstallUserServerAwaitingKey(ctx, "y", "https://y.example.com/mcp", "key"); err == nil {
+		t.Fatal("没有 AskKey 时应报错")
+	}
+}

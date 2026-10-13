@@ -106,6 +106,8 @@ type Planner struct {
 	hasCalendar, hasMail, canSend bool
 	// hasHolidays 为真表示接入了节假日数据。
 	hasHolidays bool
+	// canRequestSecrets 为真表示助手可以在后台登记待用户填写的环境变量。
+	canRequestSecrets bool
 	// hasWeather 为真表示接入了天气数据。
 	hasWeather bool
 	// hasFiles 为真表示启用了文件处理。
@@ -232,6 +234,12 @@ func (p *Planner) WithHolidays(enabled bool) *Planner {
 	return p
 }
 
+// WithSecretRequests 向模型开放"在后台登记待填写的环境变量"。
+func (p *Planner) WithSecretRequests(enabled bool) *Planner {
+	p.canRequestSecrets = enabled
+	return p
+}
+
 // WithWeather 向模型开放天气查询。
 func (p *Planner) WithWeather(enabled bool) *Planner {
 	p.hasWeather = enabled
@@ -279,6 +287,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 别人写的流程不能自己再去装东西、读别的流程。
 	if p.library != nil {
 		gated = append(gated, capabilityToolset...)
+	}
+	// 别人写的流程不能让后台多出一个向用户要密钥的输入框。
+	if p.canRequestSecrets {
+		gated = append(gated, vaultRequestTool)
 	}
 	for _, t := range gated {
 		if p.permits(t.Name) {

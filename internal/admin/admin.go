@@ -333,6 +333,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /vault", auth(s.vaultPage))
 	mux.HandleFunc("POST /vault", auth(s.vaultPut))
 	mux.HandleFunc("POST /vault/delete", auth(s.vaultDelete))
+	mux.HandleFunc("POST /vault/request", auth(s.vaultRequestFill))
+	mux.HandleFunc("POST /vault/request/dismiss", auth(s.vaultRequestDismiss))
 	mux.HandleFunc("GET /memory", auth(s.memoryPage))
 	mux.HandleFunc("POST /memory/confirm", auth(s.memoryConfirm))
 	mux.HandleFunc("POST /memory/dismiss", auth(s.memoryDismiss))
@@ -756,6 +758,9 @@ func (s *Server) vaultPage(w http.ResponseWriter, r *http.Request, v *view) {
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Label < metas[j].Label })
 	d := vaultData{Tools: s.toolOptions(metas)}
+	if d.Requests, err = s.requests().List(r.Context()); err != nil {
+		v.Error = err.Error()
+	}
 	for _, m := range metas {
 		if m.Service() {
 			d.Services = append(d.Services, serviceItem{Meta: m, Owners: owners(m.AllowedTools)})
@@ -807,7 +812,51 @@ func owners(users []string) []owner {
 	return out
 }
 
+// requests 是助手登记的、待用户填写的条目。
+func (s *Server) requests() *vault.Requests {
+	return &vault.Requests{Store: s.opts.Store, Vault: s.opts.Vault}
+}
+
+// vaultRequestFill 填写一条助手登记的待填写条目：值由用户在这里给，授权对象按登记时写明的来。
+func (s *Server) vaultRequestFill(w http.ResponseWriter, r *http.Request, _ *view) {
+	label := r.PostFormValue("label")
+	// 值原样存入，只去掉粘贴时常带上的结尾换行。
+	value := strings.TrimRight(r.PostFormValue("value"), "\r\n")
+	err := func() error {
+		req, err := s.requests().Get(r.Context(), label)
+		if err != nil {
+			return err
+		}
+		if req == nil {
+			return errors.New("待填写的条目不存在")
+		}
+		if value == "" {
+			return errors.New("请填写值")
+		}
+		if err := s.opts.Vault.Seal(r.Context(), req.Label, value, req.Note, req.Tools); err != nil {
+			return err
+		}
+		return s.requests().Remove(r.Context(), label)
+	}()
+	if err == nil {
+		s.opts.Log.Info("待填写的环境变量已由用户填写", "名字", label, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/vault", "条目「"+label+"」已保存。保存后不可查看；供 MCP server 使用的密钥需重启服务后生效。", err)
+}
+
+// vaultRequestDismiss 忽略一条待填写的条目。
+func (s *Server) vaultRequestDismiss(w http.ResponseWriter, r *http.Request, _ *view) {
+	label := r.PostFormValue("label")
+	err := s.requests().Remove(r.Context(), label)
+	if err == nil {
+		s.opts.Log.Info("待填写的环境变量已被忽略", "名字", label, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/vault", "已忽略待填写的条目「"+label+"」。", err)
+}
+
 type vaultData struct {
+	// Requests 是助手登记的、等用户填值的条目。
+	Requests []vault.Request
 	// Items 是个人信息：授权给工具、由模型用句柄引用的条目。
 	Items []vault.Meta
 	// Services 是服务凭据：在各自的管理页面里填写、由系统连接时取用的条目。

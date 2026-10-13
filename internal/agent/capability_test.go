@@ -13,6 +13,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/skill"
 	"github.com/xiguac/atomhelper/internal/skillscan"
+	"github.com/xiguac/atomhelper/internal/vault"
 )
 
 // fakeLibrary 是 SkillLibrary 的测试替身。
@@ -291,6 +292,14 @@ func TestActuator_查找安装与读取(t *testing.T) {
 	}
 }
 
+func (f *fakeCapabilities) InstallUserServerAwaitingKey(_ context.Context, name, rawURL, keyParam string) (*market.Server, error) {
+	if f.installErr != nil {
+		return nil, f.installErr
+	}
+	f.installed = append(f.installed, "awaiting:"+name+"|"+rawURL+"|"+keyParam)
+	return &market.Server{Name: name, ByUser: true, SecretName: keyParam, Secret: "vault://mcp." + name}, nil
+}
+
 func (f *fakeCapabilities) InstallUserServer(_ context.Context, name, rawURL string) (*market.Server, []string, error) {
 	if f.installErr != nil {
 		return nil, nil, f.installErr
@@ -358,5 +367,59 @@ func TestCapability_用户亲口给的MCP地址直接装别处读来的要用户
 	}
 	if out := string(res.Output); strings.Contains(out, "0123456789abcdef") || !strings.Contains(out, "amap.maps_weather") || !strings.Contains(out, "保险库") {
 		t.Fatalf("结果里应有工具、提示密钥已入库，但不回显密钥: %s", out)
+	}
+}
+
+type fakeSecretRequests struct{ got []vault.Request }
+
+func (f *fakeSecretRequests) Add(_ context.Context, req vault.Request) error {
+	if req.Label == "" {
+		return vault.ErrBadRequest
+	}
+	f.got = append(f.got, req)
+	return nil
+}
+
+func TestVaultRequest_助手登记输入框而不索要密钥(t *testing.T) {
+	ctx := context.Background()
+	bare := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	if strings.Contains(bare.toolList(), ToolVaultRequest) {
+		t.Fatal("没启用时不应出现这个工具")
+	}
+	p := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithSecretRequests(true)
+	d, err := p.toolDecision(ToolVaultRequest, json.RawMessage(`{"name":"github-token","purpose":"GitHub 的访问令牌","tools":["github.create_issue"]}`), "")
+	if err != nil {
+		t.Fatalf("决策失败: %v", err)
+	}
+	// 用户发起的任务：自主模式下直接登记——它只在用户自己的后台里多出一个空的输入框。
+	task := core.NewTask("t", "g", core.TrustUser)
+	approver := NewApprover(&policy.Policy{Autonomous: true}, policy.NewClassifier(), NewMemoryUsageTracker())
+	if out, reason, _ := approver.CheckAction(ctx, task, d); out != kernel.ApprovalAuto {
+		t.Fatalf("登记待填写的条目应直接执行: %s（%s）", out, reason)
+	}
+	// 不是用户发起的任务（外部事件触发的）不能让后台多出一个要密钥的输入框。
+	if out, _, _ := approver.CheckAction(ctx, core.NewTask("t2", "g", core.TrustExternal), d); out == kernel.ApprovalAuto {
+		t.Fatal("外部内容发起的任务登记待填写的条目不应直接执行")
+	}
+
+	reqs := &fakeSecretRequests{}
+	a := NewActuator(&fakeTools{}, &fakeModel{}).WithSecretRequests(reqs)
+	step := capStep(ToolVaultRequest, string(d.Input))
+	res, err := a.Execute(ctx, task, step)
+	if err != nil || len(reqs.got) != 1 || reqs.got[0].Label != "github-token" || reqs.got[0].Task != task.ID ||
+		!strings.Contains(string(res.Output), "vault://github-token") {
+		t.Fatalf("登记不对: %v %+v %s", err, reqs.got, res.Output)
+	}
+	if _, err := a.Execute(ctx, task, capStep(ToolVaultRequest, `{"name":"","purpose":"x","tools":["a.b"]}`)); !errors.Is(err, vault.ErrBadRequest) {
+		t.Fatalf("不合规矩的登记应报错: %v", err)
+	}
+
+	// 装一个要密钥而地址里没带的 MCP server：只记下来，不连接，回执里让用户去后台填。
+	caps := &fakeCapabilities{}
+	a = NewActuator(&fakeTools{}, &fakeModel{}).WithCapabilities(caps, nil)
+	res, err = a.Execute(ctx, task, capStep(ToolCapabilityInstall, `{"kind":"mcp","url":"https://mcp.flight.example.com/mcp","name":"flight","key_param":"key"}`))
+	if err != nil || len(caps.installed) != 1 || caps.installed[0] != "awaiting:flight|https://mcp.flight.example.com/mcp|key" ||
+		!strings.Contains(string(res.Output), `"awaiting_key":true`) {
+		t.Fatalf("密钥待填的安装不对: %v %v %s", err, caps.installed, res.Output)
 	}
 }

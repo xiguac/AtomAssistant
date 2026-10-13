@@ -1048,3 +1048,61 @@ func TestAdmin_经HTTPS代理访问时会话只走加密连接(t *testing.T) {
 		t.Fatal("直接经本机明文访问时不应标成仅限加密连接")
 	}
 }
+
+func TestAdmin_环境变量页填写助手登记的待填写条目(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	reqs := &vault.Requests{Store: e.store, Vault: e.vault}
+	for _, r := range []vault.Request{
+		{Label: "mcp.flight", Note: "MCP server flight 的密钥", Tools: []string{"mcp.flight"}},
+		{Label: "github-token", Note: "GitHub 的访问令牌<b>", Tools: []string{"github.create_issue"}},
+	} {
+		if err := reqs.Add(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 页面上按登记显示输入框；助手写的说明原样转义。
+	_, body := e.get("/vault")
+	if !strings.Contains(body, "待填写") || !strings.Contains(body, "vault://mcp.flight") || !strings.Contains(body, `form="req-github-token"`) ||
+		strings.Contains(body, "访问令牌<b>") {
+		t.Fatal("环境变量页应列出待填写的条目并带输入框")
+	}
+	if loc := post("/vault/request", url.Values{"label": {"mcp.flight"}}); !strings.Contains(loc, "请填写值") {
+		t.Fatalf("没填值应被拒绝: %s", loc)
+	}
+	if loc := post("/vault/request", url.Values{"label": {"没登记过"}, "value": {"x"}}); !strings.Contains(loc, "不存在") {
+		t.Fatalf("没登记过的名字不能借这个入口写入: %s", loc)
+	}
+	if loc := post("/vault/request", url.Values{"label": {"mcp.flight"}, "value": {"flight-key-77"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("填写失败: %s", loc)
+	}
+	// 值进了保险库，授权对象是登记时写明的；这一条不再待填写。
+	take, err := e.vault.Lend("vault://mcp.flight", "mcp.flight")
+	if err != nil {
+		t.Fatalf("填好的条目应能被登记的对象取用: %v", err)
+	}
+	if got, err := take(ctx); err != nil || got != "flight-key-77" {
+		t.Fatalf("值不对: %v", err)
+	}
+	if other, err := e.vault.Lend("vault://mcp.flight", "github.create_issue"); err == nil {
+		if _, err := other(ctx); err == nil {
+			t.Fatal("没登记的对象不应能取用")
+		}
+	}
+	if loc := post("/vault/request/dismiss", url.Values{"label": {"github-token"}}); !strings.Contains(loc, "已忽略") {
+		t.Fatalf("忽略失败: %s", loc)
+	}
+	if list, _ := reqs.List(ctx); len(list) != 0 {
+		t.Fatalf("处理完之后不应还有待填写的条目: %+v", list)
+	}
+	if _, body = e.get("/vault"); strings.Contains(body, "待填写") || strings.Contains(body, "flight-key-77") || !strings.Contains(body, "MCP server flight") {
+		t.Fatal("填好的条目应归入服务凭据，页面上不显示值")
+	}
+}

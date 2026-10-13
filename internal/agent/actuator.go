@@ -56,7 +56,9 @@ type Actuator struct {
 	searcher Searcher
 	// capabilities 非空时助手可以自己查找、安装能力；library 用来读已安装的 Skill。
 	capabilities CapabilityService
-	library      SkillLibrary
+	// secretRequests 非空时助手可以在后台登记待用户填写的环境变量。
+	secretRequests SecretRequests
+	library        SkillLibrary
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
 }
@@ -88,6 +90,12 @@ func (a *Actuator) WithHolidays(h HolidayService) *Actuator {
 // WithWeather 接入天气数据。
 func (a *Actuator) WithWeather(w WeatherService) *Actuator {
 	a.weather = w
+	return a
+}
+
+// WithSecretRequests 让助手可以在管理后台登记待用户填写的环境变量。
+func (a *Actuator) WithSecretRequests(r SecretRequests) *Actuator {
+	a.secretRequests = r
 	return a
 }
 
@@ -265,6 +273,21 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 节假日安排来自用户指定的订阅，是日期和种类这样的结构化事实，名称在取回时已经截短。
 		// 按权威数据对待：查一下哪天调休，不该让后面记日程的动作变成"由外部内容引出"。
 		return kernel.Result{Output: out, Trust: core.TrustConnector}, nil
+	}
+	if s.ToolName == ToolVaultRequest {
+		out, err := a.runVaultRequest(ctx, t, s)
+		if a.audit != nil {
+			detail := "成功: " + string(out)
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustSystem, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 回执是我们自己生成的：名字和下一步怎么办。
+		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
 	}
 	if s.ToolName == ToolWeather {
 		out, err := a.runWeather(ctx, s)

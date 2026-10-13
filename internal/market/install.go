@@ -75,6 +75,8 @@ type Installer struct {
 	Servers ServerStore
 	// Secrets 用来存用户给的地址里带的密钥。为空时带密钥的地址装不了。
 	Secrets SecretKeeper
+	// AskKey 登记一条待用户填写的密钥（label 是保险库里的名字）。为空时装不了"密钥待填"的 server。
+	AskKey func(ctx context.Context, label, note string) error
 	// Probe 连上一个 server 看它有哪些工具，看完就断开，什么都不登记。
 	Probe func(ctx context.Context, s *Server) ([]ToolBrief, error)
 	// Connect 连接一个 server 并登记它的工具，返回工具全名。连不上就不算装上。

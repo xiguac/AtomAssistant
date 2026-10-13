@@ -358,7 +358,12 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}
 	// 缺少能力时助手自己找、扫描通过就装。扫描器不可用时装不上，但照样能找。
 	agent.CapabilityDefaults(approval)
+	// 待填写的环境变量：助手登记名字和用途，值由用户在后台填。
+	requests := &vault.Requests{Store: st, Vault: safe}
 	installer := &market.Installer{
+		AskKey: func(ctx context.Context, label, note string) error {
+			return requests.Add(ctx, vault.Request{Label: label, Note: note, Tools: []string{label}})
+		},
 		Client:  &market.Client{},
 		Scanner: skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
 		Skills:  st.Skills(),
@@ -405,7 +410,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		WithActionReview(approval.Autonomous).
 		// 用户发来的图片原样随上下文交给模型看。
 		WithImages(st)
-	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills())
+	planner = planner.WithSecretRequests(true)
+	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills()).
+		WithSecretRequests(requests)
 
 	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。
 	if router.CanSearch() {

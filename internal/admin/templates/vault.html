@@ -6,6 +6,27 @@
 
 <div class="cols">
 <div>
+{{if .Data.Requests}}<div class="card">
+  <div class="band"><b>待填写</b><span class="count warn">{{len .Data.Requests}}</span></div>
+  <table>
+    <thead><tr><th>名称</th><th>用途</th><th>授权对象</th><th style="width:34%">值</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Data.Requests}}<tr>
+      <td><span class="mono" style="color:var(--text)">vault://{{.Label}}</span><div class="note muted" style="margin-top:4px">{{when .At}}</div></td>
+      <td>{{.Note}}</td>
+      <td>{{range .Tools}}<span class="chip">{{.}}</span>{{end}}</td>
+      <td><input form="req-{{.Label}}" type="password" name="value" autocomplete="new-password" aria-label="{{.Label}} 的值"></td>
+      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
+        <form id="req-{{.Label}}" method="post" action="/vault/request" autocomplete="off">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
+          <button class="btn sm">保存</button></form>
+        <form method="post" action="/vault/request/dismiss">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
+          <button class="btn sec sm">忽略</button></form></div></td>
+    </tr>{{end}}</tbody>
+  </table>
+  <div class="band foot"><span class="note muted">以上条目由助手在任务中登记，名称、用途与授权对象均为助手填写，请核对后再填值。值仅由你在此填写，助手无法获取；仅所列授权对象可使用。</span></div>
+</div>
+{{end}}
 <div class="card">
   <div class="band"><b>个人信息</b><span class="count">{{len .Data.Items}}</span></div>
   {{if .Data.Items}}<table>
