@@ -131,7 +131,12 @@ func (z sealer) putRevision(ctx context.Context, tx pgx.Tx, memoryID string, r m
 			superseded_by = EXCLUDED.superseded_by,
 			override_reason = EXCLUDED.override_reason,
 			evidence = EXCLUDED.evidence,
-			confidence = EXCLUDED.confidence`,
+			confidence = EXCLUDED.confidence,
+			-- 来源也会变：用户确认一条推断之后，它就转到了用户名下。不写回去的话，
+			-- 确认过的记忆读出来仍然是"推断"，页面上的确认按钮永远消不掉。
+			source_kind = EXCLUDED.source_kind,
+			source_ref = EXCLUDED.source_ref,
+			source_trust = EXCLUDED.source_trust`,
 		r.ID, memoryID, z.str("memory_revisions.value", r.Value), string(r.Source.Kind),
 		z.str("memory_revisions.source_ref", r.Source.Ref), int16(r.Source.Trust),
 		z.strs("memory_revisions.evidence", r.Evidence), r.Confidence, r.CreatedAt,
