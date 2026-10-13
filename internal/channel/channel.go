@@ -389,7 +389,8 @@ func (h *Hub) rate(ctx context.Context, channel, chat, tag string, good bool) er
 		h.say(ctx, channel, chat, "现在是主 AI 一个人在干活，没有可评价的协作模型。")
 		return nil
 	}
-	recent, err := h.tasks.ByTag(ctx, tag, false, 20)
+	// 评的是整个会话里最近的一件事，不分它是在哪个消息源里发起的。
+	recent, err := h.tasks.ByTag(ctx, ConversationTag, false, 20)
 	if err != nil {
 		return err
 	}
@@ -436,7 +437,8 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		return h.rate(ctx, channel, m.Chat, tag, text == praiseWord)
 	}
 
-	active, err := h.tasks.ByTag(ctx, tag, true, 20)
+	// 所有消息源共用一个会话：在 QQ 里问出来的问题，到微信里回答也算数。
+	active, err := h.tasks.ByTag(ctx, ConversationTag, true, 50)
 	if err != nil {
 		return err
 	}
@@ -446,6 +448,7 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		if t.State != core.StateWaiting || t.Wake == nil || t.Wake.Kind != core.WakeApproval {
 			continue
 		}
+		h.follow(ctx, t, channel, m.Chat)
 		if isApproval(text) {
 			return h.tasks.Approve(ctx, t.ID)
 		}
@@ -454,6 +457,7 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	// 有任务在等用户回话：这句话是给它的。
 	for _, t := range active {
 		if asking(t) {
+			h.follow(ctx, t, channel, m.Chat)
 			return h.tasks.Reply(ctx, t.ID, text, channel)
 		}
 	}
@@ -503,6 +507,10 @@ func (h *Hub) Notify(ctx context.Context, since time.Time) error {
 		if !ok {
 			continue
 		}
+		// 用户换了个消息源接着说这件事的话，进展跟着他走。
+		if c, ch, moved := h.followed(ctx, t.ID); moved {
+			channel, chat = c, ch
+		}
 		if _, known := h.bindings[channel]; !known {
 			continue
 		}
@@ -531,6 +539,34 @@ func (h *Hub) Notify(ctx context.Context, since time.Time) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// followKey 是"这个任务的进展改推到哪里"在通知记录里的名字。
+// 借用通知记录的存储：它就是一张按名字存一个字符串的表，任务 ID 不会带竖线，不会撞上。
+func followKey(taskID string) string { return "follow|" + taskID }
+
+// follow 记下用户是在哪个会话里接着说这件事的：与任务发起的地方不同时，之后的进展改推到这里。
+// 记不下来只影响进展推到哪，不该让这句话送不到任务手里，所以只记日志。
+func (h *Hub) follow(ctx context.Context, t *core.Task, channel, chat string) {
+	if origin, originChat, ok := parseTag(t.Tags); ok && origin == channel && originChat == chat {
+		// 回到了发起的地方：去掉之前记下的改道。
+		if _, _, moved := h.followed(ctx, t.ID); !moved {
+			return
+		}
+	}
+	if err := h.state.PutNotice(ctx, followKey(t.ID), channel+"/"+chat); err != nil {
+		h.log.Error("记录任务进展的去向失败", "任务", t.ID, "err", err)
+	}
+}
+
+// followed 返回一个任务的进展改推到了哪里；没有改过时 moved 为假。
+func (h *Hub) followed(ctx context.Context, taskID string) (channel, chat string, moved bool) {
+	v, err := h.state.GetNotice(ctx, followKey(taskID))
+	if err != nil || v == "" {
+		return "", "", false
+	}
+	channel, chat, ok := strings.Cut(v, "/")
+	return channel, chat, ok && channel != "" && chat != ""
 }
 
 // describe 把一个任务当前的状态说成一句给用户看的话。指纹为空表示这个状态不用通知。
@@ -714,7 +750,7 @@ func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, 
 		h.say(ctx, channel, m.Chat, fmt.Sprintf("一次最多看 %d 张图片，这次只收下了前 %d 张。", maxPictures, maxPictures))
 	}
 
-	active, err := h.tasks.ByTag(ctx, tag, true, 20)
+	active, err := h.tasks.ByTag(ctx, ConversationTag, true, 50)
 	if err != nil {
 		return err
 	}
@@ -723,6 +759,7 @@ func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, 
 		if !asking(t) {
 			continue
 		}
+		h.follow(ctx, t, channel, m.Chat)
 		if err := h.tasks.Attach(ctx, t.ID, pictures, channel); err != nil {
 			return err
 		}

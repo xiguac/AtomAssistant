@@ -95,6 +95,13 @@ func (f *fakeTasks) PendingAction(_ context.Context, id string) (*Pending, error
 
 func (f *fakeTasks) add(title string, tags ...string) *core.Task {
 	t := core.NewTask(title, title, core.TrustUser)
+	// 聊天里发起的任务都带着会话标签，和 Hub 自己建的一样。
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, TagPrefix) {
+			tags = append(tags, ConversationTag)
+			break
+		}
+	}
 	t.Tags, t.State = tags, core.StateRunning
 	f.tasks = append([]*core.Task{t}, f.tasks...)
 	return t
@@ -217,9 +224,9 @@ func TestRoute_回话表态和新任务(t *testing.T) {
 		t.Fatal("空消息不应建任务")
 	}
 
-	// 别的会话里的任务不相干：那边在等回话，这边的话仍是新任务。
+	// 不属于会话的任务不相干（比如在后台页面上建的）：它在等回话，聊天里的话仍是新任务。
 	mail.State, trip.State = core.StateDone, core.StateDone
-	other := tasks.add("别处的任务", Tag("qq", "c2c:SOMEONE"))
+	other := tasks.add("别处的任务")
 	ask(other, "？")
 	say("今天有啥安排")
 	if last() != "create:今天有啥安排|今天有啥安排" {
@@ -525,5 +532,50 @@ func TestFetchPicture_只认https和真正的图片(t *testing.T) {
 	}
 	if _, err := fetchPicture(ctx, Attachment{URL: "file:///etc/passwd"}); err == nil {
 		t.Fatal("不是 https 的地址应被拒绝")
+	}
+}
+
+func TestRoute_换一个消息源也能回答进展跟着走(t *testing.T) {
+	qq, wx := &fakeAdapter{name: "qq"}, &fakeAdapter{name: "weixin"}
+	tasks := &fakeTasks{}
+	h, err := NewHub([]Binding{{Adapter: qq, Owners: []string{"OWNER"}}, {Adapter: wx, Owners: []string{"WXME"}}},
+		tasks, NewMemState(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	last := func() string { return tasks.log[len(tasks.log)-1] }
+
+	// 在 QQ 里发起的任务问了个问题，问题推到 QQ。
+	trip := tasks.add("订票", Tag("qq", "c2c:OWNER"))
+	ask(trip, "周五几点出发？")
+	if err := h.Notify(ctx, time.Time{}); err != nil || len(qq.sent) != 1 || len(wx.sent) != 0 {
+		t.Fatalf("问题应推到发起的消息源: %v qq=%d wx=%d", err, len(qq.sent), len(wx.sent))
+	}
+	// 到微信里回答：算这个任务的回答，不是新任务。
+	h.Handle(ctx, "weixin", from("WXME", "早上八点左右", "w1"))
+	if last() != "reply:订票|早上八点左右|weixin" {
+		t.Fatalf("换一个消息源回答也应送给提问的任务: %s", last())
+	}
+	// 之后的进展跟着用户走：推到微信，不再推到 QQ。
+	trip.State, trip.Reason, trip.Wake = core.StateDone, "订好了 G7001", nil
+	if err := h.Notify(ctx, time.Time{}); err != nil || len(qq.sent) != 1 || len(wx.sent) != 1 ||
+		wx.sent[0].Chat != "c2c:WXME" || !strings.Contains(wx.sent[0].Text, "G7001") {
+		t.Fatalf("进展应推到用户接着说话的消息源: %v qq=%d wx=%+v", err, len(qq.sent), wx.sent)
+	}
+
+	// 等确认的动作同理：在微信里说同意就放行。
+	pay := tasks.add("付款", Tag("qq", "c2c:OWNER"))
+	awaitApproval(tasks, pay, "s1", "pay.send", `{"amount":"10"}`, "")
+	h.Handle(ctx, "weixin", from("WXME", "同意", "w2"))
+	if last() != "approve:付款" {
+		t.Fatalf("换一个消息源表态也应算数: %s", last())
+	}
+	// 陌生人在别的消息源里说话不算：主人名单各管各的。
+	ask(tasks.add("查天气", Tag("qq", "c2c:OWNER")), "哪个城市？")
+	before := len(tasks.log)
+	h.Handle(ctx, "weixin", from("STRANGER", "北京", "w3"))
+	if len(tasks.log) != before {
+		t.Fatalf("不是主人的话不应送给任务: %v", tasks.log[before:])
 	}
 }
