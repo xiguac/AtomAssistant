@@ -56,6 +56,9 @@ type Attachment struct {
 	URL string
 	// ContentType 形如 image/jpeg。
 	ContentType string
+	// Fetch 非空时用它取回附件，不看 URL。有的平台的图片没有公开的下载地址，
+	// 要带着凭证调接口取（飞书、钉钉），或者取回来还要解密（微信）。
+	Fetch func(ctx context.Context) (Picture, error)
 }
 
 // Picture 是已经取回来的一张图片。
@@ -689,7 +692,13 @@ func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, 
 	pictures := make([]Picture, 0, len(images))
 	for _, a := range images {
 		fetchCtx, cancel := context.WithTimeout(ctx, pictureTimeout)
-		p, err := h.fetch(fetchCtx, a)
+		var p Picture
+		var err error
+		if a.Fetch != nil {
+			p, err = a.Fetch(fetchCtx)
+		} else {
+			p, err = h.fetch(fetchCtx, a)
+		}
 		cancel()
 		if err != nil {
 			return fmt.Errorf("取回图片失败: %w", err)

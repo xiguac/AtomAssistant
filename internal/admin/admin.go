@@ -41,6 +41,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/channel/weixin"
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/files"
@@ -111,6 +112,10 @@ type Server struct {
 	sessions map[string]session
 	// ceremonies 是进行到一半的通行密钥操作。
 	ceremonies map[string]ceremony
+	// wxLogins 是进行到一半的微信扫码登录，按渠道名存。
+	wxLogins map[string]*weixin.Login
+	// wxBase 是微信后端的地址，为空用正式的。只有测试会设它。
+	wxBase string
 	// hash 是当前生效的密码摘要：后台改过的优先，否则是环境变量里的。
 	hash     string
 	failures int
@@ -340,6 +345,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /channels", auth(s.channelSave))
 	mux.HandleFunc("POST /channels/delete", auth(s.channelDelete))
 	mux.HandleFunc("POST /channels/owner", auth(s.channelOwner))
+	mux.HandleFunc("POST /channels/weixin/start", auth(s.weixinStart))
+	mux.HandleFunc("GET /channels/weixin", auth(s.weixinPage))
+	mux.HandleFunc("POST /channels/weixin/poll", auth(s.weixinPoll))
 	mux.HandleFunc("GET /connectors", auth(s.connectorsPage))
 	mux.HandleFunc("POST /connectors/calendar", auth(s.calendarSave))
 	mux.HandleFunc("POST /connectors/mail", auth(s.mailSave))

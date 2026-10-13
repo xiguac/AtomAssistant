@@ -12,7 +12,7 @@
 <div class="card">
   <div class="band">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <b>{{.Name}}</b><span class="pill plain">{{.Type}}</span>
+      <b>{{.Name}}</b><span class="pill plain">{{if eq .Type "qq"}}QQ{{else if eq .Type "feishu"}}飞书{{else if eq .Type "dingtalk"}}钉钉{{else if eq .Type "weixin"}}微信{{else}}{{.Type}}{{end}}</span>
       {{if .Sandbox}}<span class="pill warn plain">沙箱环境</span>{{end}}
       {{if .SecretOK}}<span class="pill ok plain">凭据已配置</span>{{else}}<span class="pill bad plain">凭据未配置</span>{{end}}
     </div>
@@ -21,7 +21,7 @@
   </div>
   <div class="pad">
     <dl class="kv">
-      <dt>AppID</dt><dd class="mono">{{.AppID}}</dd>
+      <dt>{{if eq .Type "weixin"}}机器人标识{{else}}AppID{{end}}</dt><dd class="mono" style="word-break:break-all">{{.AppID}}</dd>
       <dt>凭据</dt><dd class="mono">{{.Secret}}</dd>
       <dt>主人</dt><dd>
         {{range .Owners}}<form method="post" action="/channels/owner" class="actions" style="margin-bottom:6px;flex-wrap:nowrap">
@@ -51,15 +51,25 @@
     <div><label for="c-name">名称</label><input id="c-name" type="text" name="name" placeholder="qq">
       <div class="help">自定义标识。填写已有名称即为修改该渠道，主人名单保持不变</div></div>
     <div><label for="c-type">类型</label>
-      <select id="c-type" name="type">{{range .Types}}<option value="{{.}}">{{if eq . "qq"}}QQ 机器人{{else}}{{.}}{{end}}</option>{{end}}</select>
-      <div class="help">目前支持 QQ 机器人（单聊）。飞书、钉钉尚未支持</div></div>
+      <select id="c-type" name="type">{{range .Types}}{{if ne . "weixin"}}<option value="{{.}}">{{if eq . "qq"}}QQ 机器人{{else if eq . "feishu"}}飞书机器人{{else if eq . "dingtalk"}}钉钉机器人{{else}}{{.}}{{end}}</option>{{end}}{{end}}</select>
+      <div class="help">均为单聊。飞书须在应用中启用机器人并以「长连接」方式订阅「接收消息」事件；钉钉须为企业内部应用并启用 Stream 模式的机器人</div></div>
     <div><label for="c-app">AppID</label><input id="c-app" type="text" name="app_id" placeholder="102012345">
-      <div class="help">在 QQ 开放平台创建机器人后获得</div></div>
+      <div class="help">QQ 为 AppID，飞书为 App ID，钉钉为 Client ID（原 AppKey）</div></div>
     <div><label for="c-secret">AppSecret</label><input id="c-secret" type="password" name="secret" autocomplete="new-password">
-      <div class="help">保存至保险库，保存后不可查看。修改已有渠道时留空表示沿用原凭据</div></div>
-    <div class="full"><label class="check"><input type="checkbox" name="sandbox" value="1">使用沙箱环境（机器人尚未上线、仅在沙箱中调试时勾选）</label></div>
+      <div class="help">飞书为 App Secret，钉钉为 Client Secret。保存至保险库，保存后不可查看。修改已有渠道时留空表示沿用原凭据</div></div>
+    <div class="full"><label class="check"><input type="checkbox" name="sandbox" value="1">使用沙箱环境（仅 QQ：机器人尚未上线、仅在沙箱中调试时勾选）</label></div>
   </div>
   <div class="band foot"><span class="note muted">保存渠道不会指定主人。主人需在渠道接入后单独添加。</span><button class="btn">保存</button></div>
+</form>
+
+<form method="post" action="/channels/weixin/start" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>微信扫码连接</b></div>
+  <div class="pad">
+    <label for="wx-name">名称</label><input id="wx-name" type="text" name="name" value="weixin">
+    <div class="help">自定义标识。填写已有的微信渠道名称即为重新连接（登录失效后使用）</div>
+  </div>
+  <div class="band foot"><span class="note muted">微信无需填写 AppID 与 AppSecret。扫码的微信号将设为主人；与助手的对话在微信中以单聊进行。</span><button class="btn">获取二维码</button></div>
 </form>
 
 <div class="card">

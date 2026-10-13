@@ -12,7 +12,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/channel/dingtalk"
+	"github.com/xiguac/atomhelper/internal/channel/feishu"
 	"github.com/xiguac/atomhelper/internal/channel/qq"
+	"github.com/xiguac/atomhelper/internal/channel/weixin"
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
 	"github.com/xiguac/atomhelper/internal/connector/holiday"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
@@ -81,15 +84,21 @@ func (f *File) Workspace(box *seal.Box) (*files.Workspace, error) {
 type ChannelConfig struct {
 	// Name 是渠道的名字，自己起，不能重复，不能含 /。
 	Name string `yaml:"name"`
-	// Type 是渠道的种类，目前支持 qq。
+	// Type 是渠道的种类：qq / feishu / dingtalk / weixin。
 	Type string `yaml:"type"`
 	// AppID 与 Secret 是在对应平台上创建机器人时拿到的凭据。
 	// Secret 必须是保险库句柄（vault://名字），授权名单里要有 channel.<渠道名>。
+	// 各家的叫法不一样：QQ 是 AppID / AppSecret，飞书是 App ID / App Secret，
+	// 钉钉是 Client ID / Client Secret。微信没有这两样：它是扫码登录的，
+	// app_id 里记的是登录后拿到的机器人标识，secret 指向登录后拿到的机器人凭证，
+	// 两项都由管理后台的扫码流程写入，不用手填。
 	AppID  string `yaml:"app_id"`
 	Secret string `yaml:"secret"`
 	// Owners 是主人在这个渠道里的账号标识。只有他们发来的消息会被处理。
 	// 第一次接入时留空：给机器人发一句话，它会把你的标识回给你。
 	Owners []string `yaml:"owners,omitempty"`
+	// RobotCode 只有钉钉用：机器人的编码。不写按 app_id（企业内部应用的机器人两者相同）。
+	RobotCode string `yaml:"robot_code,omitempty"`
 	// Sandbox 为真时连 QQ 的沙箱环境（机器人还没上线、只在沙箱里调试时用）。
 	Sandbox bool `yaml:"sandbox,omitempty"`
 	// APIBase 与 TokenURL 覆盖平台接口的地址，只在对着自建的模拟服务调试时才需要。
@@ -112,7 +121,16 @@ func (c ChannelConfig) qqAPIBase() string {
 func (c ChannelConfig) VaultUser() string { return "channel." + c.Name }
 
 // ChannelTypes 是目前支持的渠道种类。
-var ChannelTypes = []string{"qq"}
+var ChannelTypes = []string{"qq", "feishu", "dingtalk", "weixin"}
+
+func knownChannelType(t string) bool {
+	for _, k := range ChannelTypes {
+		if k == t {
+			return true
+		}
+	}
+	return false
+}
 
 // validateChannels 校验消息渠道一节。
 //
@@ -127,8 +145,8 @@ func (f *File) validateChannels() error {
 			return fmt.Errorf("config: 渠道 %s 重复", c.Name)
 		}
 		seen[c.Name] = true
-		if c.Type != "qq" {
-			return fmt.Errorf("config: 渠道 %s 的类型 %q 不支持（目前支持 qq）", c.Name, c.Type)
+		if !knownChannelType(c.Type) {
+			return fmt.Errorf("config: 渠道 %s 的类型 %q 不支持（目前支持 %s）", c.Name, c.Type, strings.Join(ChannelTypes, " / "))
 		}
 		if c.AppID == "" {
 			return fmt.Errorf("config: 渠道 %s 缺少 app_id", c.Name)
@@ -141,31 +159,38 @@ func (f *File) validateChannels() error {
 }
 
 // BuildChannels 按配置构造消息渠道。
-func (f *File) BuildChannels(secrets SecretLender, log *slog.Logger) ([]channel.Binding, error) {
+// state 用来存微信渠道要跨重启留着的小状态，没有微信渠道时可以为 nil。
+func (f *File) BuildChannels(secrets SecretLender, state weixin.KV, log *slog.Logger) ([]channel.Binding, error) {
 	var out []channel.Binding
 	for _, c := range f.Channels {
 		if c.Name == "" || strings.Contains(c.Name, "/") {
 			return nil, fmt.Errorf("config: 渠道名 %q 不合法（不能为空，不能含 /）", c.Name)
 		}
+		if !knownChannelType(c.Type) {
+			return nil, fmt.Errorf("config: 渠道 %s 的类型 %q 不支持（目前支持 %s）", c.Name, c.Type, strings.Join(ChannelTypes, " / "))
+		}
+		if c.AppID == "" {
+			return nil, fmt.Errorf("config: 渠道 %s 缺少 app_id", c.Name)
+		}
+		secret, err := secrets.Lend(c.Secret, c.VaultUser())
+		if err != nil {
+			return nil, fmt.Errorf("config: 渠道 %s 的 secret: %w", c.Name, err)
+		}
+		var adapter channel.Adapter
 		switch c.Type {
 		case "qq":
-			if c.AppID == "" {
-				return nil, fmt.Errorf("config: 渠道 %s 缺少 app_id", c.Name)
-			}
-			secret, err := secrets.Lend(c.Secret, c.VaultUser())
-			if err != nil {
-				return nil, fmt.Errorf("config: 渠道 %s 的 secret: %w", c.Name, err)
-			}
-			out = append(out, channel.Binding{
-				Adapter: &qq.Bot{
-					Label: c.Name, AppID: c.AppID, Secret: secret, Log: log,
-					APIBase: c.qqAPIBase(), TokenURL: c.TokenURL,
-				},
-				Owners: c.Owners,
-			})
-		default:
-			return nil, fmt.Errorf("config: 渠道 %s 的类型 %q 不支持（目前支持 qq）", c.Name, c.Type)
+			adapter = &qq.Bot{Label: c.Name, AppID: c.AppID, Secret: secret, Log: log,
+				APIBase: c.qqAPIBase(), TokenURL: c.TokenURL}
+		case "feishu":
+			adapter = &feishu.Bot{Label: c.Name, AppID: c.AppID, Secret: secret, Log: log, APIBase: c.APIBase}
+		case "dingtalk":
+			adapter = &dingtalk.Bot{Label: c.Name, AppID: c.AppID, Secret: secret, Log: log,
+				RobotCode: c.RobotCode, APIBase: c.APIBase}
+		case "weixin":
+			// 微信没有 AppSecret：secret 指向的是扫码登录后拿到的机器人凭证，接口地址也是登录时给的。
+			adapter = &weixin.Bot{Label: c.Name, Token: secret, BaseURL: c.APIBase, State: state, Log: log}
 		}
+		out = append(out, channel.Binding{Adapter: adapter, Owners: c.Owners})
 	}
 	return out, nil
 }

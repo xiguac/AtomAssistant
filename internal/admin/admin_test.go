@@ -648,7 +648,7 @@ func TestAdmin_渠道页接入机器人并指定主人(t *testing.T) {
 		t.Fatalf("新渠道不应有主人: %+v %v", file, err)
 	}
 	// 凭据授权给这个渠道自己，启动时取得出来。
-	bindings, err := file.BuildChannels(e.vault, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	bindings, err := file.BuildChannels(e.vault, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil || len(bindings) != 1 {
 		t.Fatalf("保存出来的渠道应能构造: %v", err)
 	}

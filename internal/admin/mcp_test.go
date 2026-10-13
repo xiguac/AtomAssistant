@@ -7,6 +7,8 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/team"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -401,4 +403,106 @@ func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T)
 	}
 	_ = done2
 	_ = failed
+}
+
+func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+
+	// 飞书、钉钉和 QQ 一样填 AppID 与 AppSecret，凭据进保险库。
+	if loc := post("/channels", url.Values{"name": {"feishu"}, "type": {"feishu"}, "app_id": {"cli_abc"}, "secret": {"feishu-secret"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存飞书渠道失败: %s", loc)
+	}
+	if loc := post("/channels", url.Values{"name": {"ding"}, "type": {"dingtalk"}, "app_id": {"dingabc"}, "secret": {"ding-secret"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存钉钉渠道失败: %s", loc)
+	}
+	// 微信没有 AppID 可填，走不了这张表单。
+	if loc := post("/channels", url.Values{"name": {"wx"}, "type": {"weixin"}, "app_id": {"x"}, "secret": {"y"}}); !strings.Contains(loc, "扫码连接") {
+		t.Fatalf("微信渠道应引导去扫码: %s", loc)
+	}
+
+	// 微信：申请二维码 → 显示 → 等扫码 → 确认之后凭证进保险库、渠道进配置、扫码的人成为主人。
+	step := 0
+	wx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ilink/bot/get_bot_qrcode":
+			_, _ = w.Write([]byte(`{"qrcode":"qr-1","qrcode_img_content":"https://liteapp.weixin.qq.com/q/abc"}`))
+		case "/ilink/bot/get_qrcode_status":
+			step++
+			if step == 1 {
+				_, _ = w.Write([]byte(`{"status":"scaned"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"confirmed","bot_token":"wx-bot-token-1","ilink_bot_id":"bot1@im.bot","baseurl":"https://ilink.example","ilink_user_id":"me@im.wechat"}`))
+		}
+	}))
+	defer wx.Close()
+	e.server.wxBase = wx.URL
+
+	// 名称被别的类型的渠道占着时不能拿来接微信。
+	if loc := post("/channels/weixin/start", url.Values{"name": {"feishu"}}); !strings.Contains(loc, "已被其他类型的渠道使用") {
+		t.Fatalf("不应覆盖别的渠道: %s", loc)
+	}
+	if loc := post("/channels/weixin/start", url.Values{"name": {"wx"}}); !strings.HasPrefix(loc, "/channels/weixin?name=wx") {
+		t.Fatalf("应跳到显示二维码的页面: %s", loc)
+	}
+	_, body := e.get("/channels/weixin?name=wx")
+	if !strings.Contains(body, "<svg") || !strings.Contains(body, "liteapp.weixin.qq.com/q/abc") || !strings.Contains(body, "data-poll") {
+		t.Fatal("页面应显示二维码和它的链接，并自动查询状态")
+	}
+	poll := func() map[string]any {
+		t.Helper()
+		_, raw := e.post("/channels/weixin/poll", url.Values{"csrf": {e.csrf}, "name": {"wx"}})
+		var out map[string]any
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			t.Fatalf("应答不是 JSON: %s", raw)
+		}
+		return out
+	}
+	if out := poll(); out["done"] != false || !strings.Contains(out["message"].(string), "已扫码") {
+		t.Fatalf("扫码后应提示在手机上确认: %v", out)
+	}
+	if out := poll(); out["done"] != true || out["ok"] != true || !strings.Contains(out["message"].(string), "微信已连接") {
+		t.Fatalf("确认后应连接成功: %v", out)
+	}
+	// 登录用完就没有了：再问就是已失效。
+	if out := poll(); out["ok"] != false || out["done"] != true {
+		t.Fatalf("登录结束后不应还能查询: %v", out)
+	}
+
+	raw, _ := os.ReadFile(e.cfg)
+	if strings.Contains(string(raw), "wx-bot-token-1") || strings.Contains(string(raw), "feishu-secret") || strings.Contains(string(raw), "ding-secret") {
+		t.Fatalf("凭据不能出现在配置里:\n%s", raw)
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil || len(file.Channels) != 3 {
+		t.Fatalf("保存出来的配置应能加载: %v\n%s", err, raw)
+	}
+	wxc := file.Channels[2]
+	if wxc.Type != "weixin" || wxc.AppID != "bot1@im.bot" || wxc.APIBase != "https://ilink.example" ||
+		wxc.Secret != "vault://channel.wx" || len(wxc.Owners) != 1 || wxc.Owners[0] != "me@im.wechat" {
+		t.Fatalf("微信渠道的配置不对: %+v", wxc)
+	}
+	// 三个渠道都装得起来，各自从保险库取自己的凭据。
+	bindings, err := file.BuildChannels(e.vault, e.store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil || len(bindings) != 3 {
+		t.Fatalf("渠道应能构造: %d %v", len(bindings), err)
+	}
+	take, err := e.vault.Lend("vault://channel.wx", "channel.wx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token, err := take(ctx); err != nil || token != "wx-bot-token-1" {
+		t.Fatalf("微信的机器人凭证应在保险库里: %v", err)
+	}
+	if _, body = e.get("/channels"); !strings.Contains(body, "微信扫码连接") || !strings.Contains(body, "me@im.wechat") || !strings.Contains(body, "飞书") || !strings.Contains(body, "钉钉") {
+		t.Fatal("渠道页应列出三个渠道，并提供微信扫码连接")
+	}
 }

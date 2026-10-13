@@ -483,7 +483,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		log.Info("已接入邮件", "收信", box.IMAPAddr, "发信", box.SMTPAddr, "账号", box.Username)
 	}
 
-	channels, err := file.BuildChannels(safe, log)
+	channels, err := file.BuildChannels(safe, st, log)
 	if err != nil {
 		return nil, err
 	}

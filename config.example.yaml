@@ -114,6 +114,15 @@ reply:
 #     app_id: "102012345"
 #     secret: vault://qqbot
 #     owners: []
+#   # 飞书（type: feishu）与钉钉（type: dingtalk）的写法相同：app_id 是飞书的 App ID / 钉钉的 Client ID，
+#   # secret 指向 App Secret / Client Secret。钉钉可另写 robot_code，不写按 app_id。
+#   - name: feishu
+#     type: feishu
+#     app_id: cli_xxxxxxxx
+#     secret: vault://channel.feishu
+#     owners: []
+#   # 微信（type: weixin）不用手写：在管理后台的「渠道」页用微信扫码连接，
+#   # 机器人标识、凭证、接口地址和主人都由扫码流程填好。
 
 # ---------------------------------------------------------------
 # 连接器：直连开放协议的日历（CalDAV）和邮件（IMAP/SMTP）。不写的那一项就不接入。

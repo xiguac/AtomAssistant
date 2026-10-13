@@ -91,6 +91,9 @@ func (s *Server) channelSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		if !vault.ValidLabel(name) || strings.ContainsAny(name, " /") {
 			return errors.New("名称仅支持字母、数字、中文及 _ - .")
 		}
+		if kind == "weixin" {
+			return errors.New("微信渠道没有 AppID 与 AppSecret，请使用「微信扫码连接」")
+		}
 		if appID == "" {
 			return errors.New("请填写 AppID")
 		}

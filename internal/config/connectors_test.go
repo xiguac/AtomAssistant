@@ -108,7 +108,7 @@ channels:
 		t.Fatalf("加载失败: %v", err)
 	}
 	lender := &fakeLender{}
-	got, err := f.BuildChannels(lender, nil)
+	got, err := f.BuildChannels(lender, nil, nil)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("应构造出两个渠道: %v %v", got, err)
 	}
