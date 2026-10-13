@@ -214,6 +214,14 @@ mcp_servers: []
 #     url: https://mcp.didichuxing.com/mcp-servers
 #     secret_name: key
 #     secret: vault://mcp.didi
+#   # 飞常准（航班数据）也是预置的，填一个 API Key 即可。它的密钥放在请求头里：secret_in 写 header，
+#   # secret_name 是请求头的名字，保险库里存的是完整的值（Bearer vf_usr_…）。不写 secret_in 就是放在网址的查询参数里。
+#   - name: variflight
+#     transport: http
+#     url: https://c-gw.variflight.com/chat_message/mcp/api
+#     secret_name: Authorization
+#     secret_in: header
+#     secret: vault://mcp.variflight
 #   # 12306（https://github.com/Joooook/12306-mcp）也是预置的：查余票、中转、经停站，不能购票。
 #   # 它在本机以子进程运行，机器上要有 Node.js 18 以上。版本是固定的，要升级就改这里的版本号。
 #   - name: "12306"

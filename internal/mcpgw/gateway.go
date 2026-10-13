@@ -85,6 +85,9 @@ type ServerSpec struct {
 type NamedSecret struct {
 	Name string
 	Take func(ctx context.Context) (string, error)
+	// Header 为真表示远程 server 要它放在请求头里（Name 是请求头的名字，如 Authorization），
+	// 而不是网址的查询参数里。本机 server 不看这一项，一律作为环境变量。
+	Header bool
 }
 
 // ToolInfo 是目录里的一个工具，供 Planner 选择使用。
@@ -562,8 +565,8 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 	if spec.Secret != nil {
 		wanted = append([]NamedSecret{{Name: spec.SecretName, Take: spec.Secret}}, wanted...)
 	}
-	// secrets 是取出来的各项密钥，按声明的次序。
-	var secrets [][2]string
+	// secrets 是取出来的各项密钥，按声明的次序；headers 是其中要放进请求头的。
+	var secrets, headers [][2]string
 	for _, w := range wanted {
 		if w.Name == "" || w.Take == nil {
 			return nil, fmt.Errorf("mcpgw: %s 配了密钥，却没有说明它的参数名", spec.Name)
@@ -571,6 +574,10 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 		value, err := w.Take(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("mcpgw: 从保险库取 %s 的密钥 %s 失败: %w", spec.Name, w.Name, err)
+		}
+		if w.Header && spec.Transport == TransportHTTP {
+			headers = append(headers, [2]string{w.Name, value})
+			continue
 		}
 		secrets = append(secrets, [2]string{w.Name, value})
 	}
@@ -598,8 +605,8 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 			return nil, fmt.Errorf("mcpgw: %s 缺少 URL", spec.Name)
 		}
 		t := &mcp.StreamableClientTransport{Endpoint: spec.URL}
-		if len(secrets) > 0 {
-			t.HTTPClient = &http.Client{Transport: keyedTransport{params: secrets}}
+		if len(secrets) > 0 || len(headers) > 0 {
+			t.HTTPClient = &http.Client{Transport: keyedTransport{params: secrets, headers: headers}}
 		}
 		return t, nil
 	default:
@@ -620,8 +627,8 @@ var passthroughEnv = []string{
 // 加在这里而不是直接拼进 Endpoint：请求失败时报错信息里带的是原来的网址，
 // 拼进去的话密钥会跟着报错进日志。
 type keyedTransport struct {
-	// params 是要加上的查询参数：名字与值。
-	params [][2]string
+	// params 是要加上的查询参数，headers 是要加上的请求头：名字与值。
+	params, headers [][2]string
 }
 
 func (k keyedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -631,7 +638,12 @@ func (k keyedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for _, kv := range k.params {
 		q.Set(kv[0], kv[1])
 	}
-	out.URL.RawQuery = q.Encode()
+	if len(k.params) > 0 {
+		out.URL.RawQuery = q.Encode()
+	}
+	for _, kv := range k.headers {
+		out.Header.Set(kv[0], kv[1])
+	}
 	return http.DefaultTransport.RoundTrip(out)
 }
 

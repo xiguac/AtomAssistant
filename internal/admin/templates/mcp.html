@@ -20,13 +20,14 @@
   </div>
   {{if not .NoKey}}{{$srv := .Name}}{{range .Keys}}<form method="post" action="/mcp/key" autocomplete="off" class="pad keyrow">
     <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{$srv}}"><input type="hidden" name="secret_name" value="{{.Param}}">
-    <div class="keyname"><label>密钥参数名</label><div class="mono keyparam">{{.Param}}</div></div>
+    <div class="keyname"><label>密钥参数名{{if .Header}}（请求头）{{end}}</label><div class="mono keyparam">{{.Param}}</div></div>
     <div class="grow"><label for="key-{{$srv}}-{{.Param}}">密钥 {{if .OK}}<span class="pill ok plain">已保存</span>{{else}}<span class="pill bad plain">未填写</span>{{end}}</label><input id="key-{{$srv}}-{{.Param}}" type="password" name="key" autocomplete="new-password" placeholder="{{if .OK}}填写后将替换原值{{end}}"></div>
     <button class="btn sec">保存密钥</button>
   </form>{{end}}
   <form method="post" action="/mcp/key" autocomplete="off" class="pad keyrow">
     <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
     <div class="keyname"><label for="key-name-{{.Name}}">{{if .Keys}}新增密钥参数{{else}}密钥参数名{{end}}</label><input id="key-name-{{.Name}}" type="text" name="secret_name" placeholder="key"></div>
+    <div style="width:130px"><label for="key-in-{{.Name}}">位置</label><select id="key-in-{{.Name}}" name="secret_in"><option value="query">查询参数</option><option value="header">请求头</option></select></div>
     <div class="grow"><label for="key-{{.Name}}">密钥</label><input id="key-{{.Name}}" type="password" name="key" autocomplete="new-password"></div>
     <button class="btn sec">{{if .Keys}}添加{{else}}保存密钥{{end}}</button>
   </form>{{end}}
@@ -94,7 +95,10 @@
     <div><label for="mcp-args">命令参数</label><input id="mcp-args" type="text" name="args" placeholder="-y @scope/some-mcp-server">
       <div class="help">以空格分隔</div></div>
     <div><label for="mcp-secret-name">密钥参数名</label><input id="mcp-secret-name" type="text" name="secret_name" placeholder="key">
-      <div class="help">远程为查询参数名，本地进程为系统环境变量名。无需密钥时留空</div></div>
+      <div class="help">远程为查询参数名或请求头名（如 Authorization），本地进程为系统环境变量名。无需密钥时留空</div></div>
+    <div><label for="mcp-secret-in">密钥位置</label>
+      <select id="mcp-secret-in" name="secret_in"><option value="query">查询参数</option><option value="header">请求头</option></select>
+      <div class="help">仅远程连接有效。置于请求头时，密钥须填写完整的值，如 Bearer xxxx</div></div>
     <div><label for="mcp-key">密钥</label><input id="mcp-key" type="password" name="key" autocomplete="new-password">
       <div class="help">保存至环境变量。修改已有 server 时留空表示沿用原密钥</div></div>
   </div>

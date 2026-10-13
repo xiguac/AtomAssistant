@@ -36,7 +36,10 @@ type mcpPreset struct {
 	Privacy string
 	// ReadOnly 报告它的某个工具（不带前缀的名字）是否按只读登记，其余按不可撤销。
 	// 这里不采信 server 的自报：预置的服务有哪些工具、各自做什么是查过文档的。
+	// 为 nil 表示它的工具清单没能查到，按 server 的自报登记（和手工添加的 server 一样）。
 	ReadOnly func(tool string) bool
+	// KeyPrefix 非空时，用户填的密钥没带这个前缀就补上（如 "Bearer "）。
+	KeyPrefix string
 }
 
 func oneOf(names ...string) func(string) bool {
@@ -92,6 +95,19 @@ var mcpPresets = []mcpPreset{
 		Privacy: "normal",
 		ReadOnly: oneOf("get-current-date", "get-stations-code-in-city", "get-station-code-of-citys", "get-station-code-by-names",
 			"get-station-by-telecode", "get-tickets", "get-interline-tickets", "get-train-route-stations"),
+	},
+	{
+		// 飞常准（VariFlight）的航班数据。密钥放在请求头 Authorization 里，形如 "Bearer vf_usr_…"。
+		// 它的工具清单要有密钥才读得到，这里没有写定名单：按 server 的自报登记，接入后在左侧逐项核对。
+		ID: "variflight", Title: "飞常准",
+		Server: config.MCPConfig{Name: "variflight", Transport: string(mcpgw.TransportHTTP),
+			URL: "https://c-gw.variflight.com/chat_message/mcp/api", SecretName: "Authorization", SecretIn: config.SecretInHeader},
+		Intro:     "提供航班动态、航班计划与航线等航班数据查询，供助手在出行类任务的规划中使用。",
+		KeyLabel:  "API Key",
+		KeyHelp:   "飞常准提供的 MCP 密钥，形如 vf_usr_…；带不带开头的 Bearer 均可。",
+		Foot:      "密钥随请求头 Authorization 发送。工具按 server 的自报登记：自称只读的可直接调用，其余每次调用均需经确认，可在左侧逐项调整。",
+		Privacy:   "normal",
+		KeyPrefix: "Bearer ",
 	},
 }
 
@@ -156,6 +172,8 @@ type mcpPresetView struct {
 type mcpKeyView struct {
 	Param string
 	OK    bool
+	// Header 为真表示它放在请求头里。
+	Header bool
 }
 
 type mcpData struct {
@@ -217,7 +235,7 @@ func (s *Server) mcpPage(w http.ResponseWriter, r *http.Request, v *view) {
 		}
 		for _, sec := range m.AllSecrets() {
 			ok := stored[strings.TrimPrefix(sec.Secret, vault.HandlePrefix)]
-			sv.Keys = append(sv.Keys, mcpKeyView{Param: sec.Name, OK: ok})
+			sv.Keys = append(sv.Keys, mcpKeyView{Param: sec.Name, OK: ok, Header: sec.In == config.SecretInHeader})
 			sv.KeyOK = sv.KeyOK && ok
 		}
 		for _, tool := range t.Tools {
@@ -291,6 +309,9 @@ func mcpFromForm(r *http.Request) config.MCPConfig {
 		Name:       strings.TrimSpace(r.PostFormValue("name")),
 		Transport:  r.PostFormValue("transport"),
 		SecretName: strings.TrimSpace(r.PostFormValue("secret_name")),
+	}
+	if r.PostFormValue("secret_in") == config.SecretInHeader {
+		m.SecretIn = config.SecretInHeader
 	}
 	if mcpgw.TransportKind(m.Transport) == mcpgw.TransportCommand {
 		m.Command = strings.TrimSpace(r.PostFormValue("command"))
@@ -392,7 +413,10 @@ func (s *Server) syncTools(ctx context.Context, m config.MCPConfig) (added, tota
 			side, privacy := core.SideEffectIrreversible, "normal"
 			readOnly := tool.ReadOnly
 			if preset != nil {
-				readOnly, privacy = preset.ReadOnly(strings.TrimPrefix(tool.Name, m.Name+".")), preset.Privacy
+				privacy = preset.Privacy
+				if preset.ReadOnly != nil {
+					readOnly = preset.ReadOnly(strings.TrimPrefix(tool.Name, m.Name+"."))
+				}
 			}
 			if readOnly {
 				side = core.SideEffectReadOnly
@@ -427,6 +451,9 @@ func (s *Server) mcpPresetSave(i int) func(http.ResponseWriter, *http.Request, *
 			}
 			if key == "" && !exists {
 				return "", errors.New("请填写" + p.Title + "的 " + p.KeyLabel)
+			}
+			if key != "" && p.KeyPrefix != "" && !strings.HasPrefix(key, p.KeyPrefix) {
+				key = p.KeyPrefix + key
 			}
 			return s.saveMCP(r.Context(), p.Server, key)
 		}()
@@ -472,9 +499,12 @@ func (s *Server) mcpKey(w http.ResponseWriter, r *http.Request, _ *view) {
 				if param != "" {
 					m.SecretName = param
 				}
+				if m.Secret == "" && r.PostFormValue("secret_in") == config.SecretInHeader {
+					m.SecretIn = config.SecretInHeader
+				}
 				return s.saveMCP(r.Context(), m, key)
 			}
-			return s.saveExtraSecret(r.Context(), m, param, key)
+			return s.saveExtraSecret(r.Context(), m, param, r.PostFormValue("secret_in"), key)
 		}
 		return "", errors.New("MCP server 不存在")
 	}()
@@ -485,7 +515,7 @@ func (s *Server) mcpKey(w http.ResponseWriter, r *http.Request, _ *view) {
 }
 
 // saveExtraSecret 填写或新增一个 server 的第一项之外的某一项密钥。
-func (s *Server) saveExtraSecret(ctx context.Context, m config.MCPConfig, param, key string) (string, error) {
+func (s *Server) saveExtraSecret(ctx context.Context, m config.MCPConfig, param, in, key string) (string, error) {
 	if !vault.ValidLabel(param) || strings.ContainsAny(param, " /.") {
 		return "", errors.New("密钥参数名仅支持字母、数字及 _ -")
 	}
@@ -498,7 +528,11 @@ func (s *Server) saveExtraSecret(ctx context.Context, m config.MCPConfig, param,
 		known = known || sec.Name == param
 	}
 	if !known {
-		m.Secrets = append(m.Secrets, config.MCPSecret{Name: param, Secret: vault.HandlePrefix + label})
+		extra := config.MCPSecret{Name: param, Secret: vault.HandlePrefix + label}
+		if in == config.SecretInHeader {
+			extra.In = config.SecretInHeader
+		}
+		m.Secrets = append(m.Secrets, extra)
 		if err := s.editToolset(func(t *config.Toolset) error {
 			for i := range t.MCP {
 				if t.MCP[i].Name == m.Name {
@@ -552,7 +586,7 @@ func (s *Server) mcpTest(w http.ResponseWriter, r *http.Request, _ *view) {
 				}
 			}
 			if !replaced {
-				spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: m.SecretName, Take: take})
+				spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: m.SecretName, Take: take, Header: m.SecretIn == config.SecretInHeader})
 			}
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)

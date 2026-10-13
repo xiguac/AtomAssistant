@@ -692,3 +692,77 @@ func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {
 		t.Fatal("消息源页应列出三个消息源，并提供微信扫码连接")
 	}
 }
+
+func TestAdmin_MCP页预置的飞常准密钥放在请求头里(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	// 假的飞常准：只认请求头里的 Bearer，网址里带什么都不认。
+	srv := mcp.NewServer(&mcp.Implementation{Name: "variflight", Version: "v1"}, nil)
+	type args struct {
+		Fnum string `json:"fnum"`
+	}
+	mcp.AddTool(srv, &mcp.Tool{Name: "searchFlight", Description: "查航班", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true}},
+		func(context.Context, *mcp.CallToolRequest, args) (*mcp.CallToolResult, any, error) {
+			return nil, nil, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "subscribe", Description: "订阅航班"},
+		func(context.Context, *mcp.CallToolRequest, args) (*mcp.CallToolResult, any, error) {
+			return nil, nil, nil
+		})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return srv }, nil)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer vf_usr_abc" || r.URL.RawQuery != "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	saved := append([]mcpPreset{}, mcpPresets...)
+	t.Cleanup(func() { copy(mcpPresets, saved) })
+	for i := range mcpPresets {
+		if mcpPresets[i].ID == "variflight" {
+			mcpPresets[i].Server.URL = ts.URL
+		}
+	}
+
+	// 只填密钥本身，开头的 Bearer 由程序补上；填了完整的值也认。
+	if loc := post("/mcp/variflight", url.Values{"key": {"vf_usr_abc"}}); !strings.Contains(loc, "共 2 个工具，新登记 2 个") {
+		t.Fatalf("接入飞常准失败: %s", loc)
+	}
+	if loc := post("/mcp/variflight", url.Values{"key": {"Bearer vf_usr_abc"}}); !strings.Contains(loc, "新登记 0 个") {
+		t.Fatalf("填完整的值也应可以: %s", loc)
+	}
+	raw, _ := os.ReadFile(e.cfg)
+	if strings.Contains(string(raw), "vf_usr_abc") || !strings.Contains(string(raw), "secret_in: header") || !strings.Contains(string(raw), "secret_name: Authorization") {
+		t.Fatalf("配置里应写明密钥在请求头里，不含密钥:\n%s", raw)
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil {
+		t.Fatalf("保存出来的配置应能加载: %v", err)
+	}
+	// 没有写定名单：按 server 的自报登记。
+	sides := map[string]string{}
+	for _, tool := range file.Tools {
+		sides[tool.Name] = tool.SideEffect
+	}
+	if sides["variflight.searchFlight"] != "read_only" || sides["variflight.subscribe"] != "irreversible" {
+		t.Fatalf("工具的副作用等级不对: %v", sides)
+	}
+	if _, body := e.get("/mcp"); !strings.Contains(body, "飞常准") || !strings.Contains(body, "密钥参数名（请求头）") || strings.Contains(body, "vf_usr_abc") {
+		t.Fatal("MCP 页应列出飞常准并标明密钥在请求头里，不显示密钥")
+	}
+	// 在卡片上换密钥：位置不变，仍在请求头里。
+	if loc := post("/mcp/key", url.Values{"name": {"variflight"}, "secret_name": {"Authorization"}, "key": {"Bearer vf_usr_abc"}}); !strings.Contains(loc, "共 2 个工具") {
+		t.Fatalf("换密钥失败: %s", loc)
+	}
+	if raw, _ = os.ReadFile(e.cfg); !strings.Contains(string(raw), "secret_in: header") {
+		t.Fatalf("换密钥不应改动密钥的位置:\n%s", raw)
+	}
+}

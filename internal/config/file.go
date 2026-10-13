@@ -422,6 +422,9 @@ type MCPConfig struct {
 	// （高德是 key），本地 server 是环境变量名（高德是 AMAP_MAPS_API_KEY）。
 	SecretName string `yaml:"secret_name,omitempty"`
 	Secret     string `yaml:"secret,omitempty"`
+	// SecretIn 是远程 server 收这项密钥的位置：query（默认，网址的查询参数）/ header（请求头，
+	// 这时 secret_name 是请求头的名字，如 Authorization）。
+	SecretIn string `yaml:"secret_in,omitempty"`
 	// Secrets 是除上面那一项之外它还要的密钥：有的 server 要两三样（如 ID 加密钥）。写法相同。
 	Secrets []MCPSecret `yaml:"secrets,omitempty"`
 }
@@ -430,7 +433,15 @@ type MCPConfig struct {
 type MCPSecret struct {
 	Name   string `yaml:"name"`
 	Secret string `yaml:"secret"`
+	// In 取值 query（默认）/ header，含义同 MCPConfig.SecretIn。
+	In string `yaml:"in,omitempty"`
 }
+
+// 密钥的位置。
+const (
+	SecretInQuery  = "query"
+	SecretInHeader = "header"
+)
 
 // SecretLabel 定出这个 server 名为 param 的那项密钥在保险库里该叫什么。
 func (m MCPConfig) SecretLabel(param string) string { return m.VaultUser() + "." + param }
@@ -439,7 +450,7 @@ func (m MCPConfig) SecretLabel(param string) string { return m.VaultUser() + "."
 func (m MCPConfig) AllSecrets() []MCPSecret {
 	var out []MCPSecret
 	if m.Secret != "" {
-		out = append(out, MCPSecret{Name: m.SecretName, Secret: m.Secret})
+		out = append(out, MCPSecret{Name: m.SecretName, Secret: m.Secret, In: m.SecretIn})
 	}
 	return append(out, m.Secrets...)
 }
@@ -746,6 +757,11 @@ func (f *File) validateMCP() error {
 			if seen[sec.Name] {
 				return fmt.Errorf("config: MCP server %s 的密钥参数名 %s 重复", m.Name, sec.Name)
 			}
+			switch sec.In {
+			case "", SecretInQuery, SecretInHeader:
+			default:
+				return fmt.Errorf("config: MCP server %s 的密钥 %s 的位置取值非法: %q（可选 query / header）", m.Name, sec.Name, sec.In)
+			}
 			seen[sec.Name] = true
 		}
 	}
@@ -784,7 +800,7 @@ func (m MCPConfig) Spec(secrets SecretLender) (mcpgw.ServerSpec, error) {
 		if err != nil {
 			return mcpgw.ServerSpec{}, fmt.Errorf("config: MCP server %s 的 secret: %w", m.Name, err)
 		}
-		spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: sec.Name, Take: take})
+		spec.Secrets = append(spec.Secrets, mcpgw.NamedSecret{Name: sec.Name, Take: take, Header: sec.In == SecretInHeader})
 	}
 	return spec, nil
 }
