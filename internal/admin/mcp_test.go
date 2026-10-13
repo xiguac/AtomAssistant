@@ -227,46 +227,78 @@ func TestAdmin_Skill页安装要过扫描(t *testing.T) {
 	}
 }
 
-func TestAdmin_系统提示词页改写与恢复默认(t *testing.T) {
+func TestAdmin_系统提示词页逐段改写停用与恢复默认(t *testing.T) {
 	e := setup(t)
 	e.login()
-	post := func(form url.Values) string {
+	post := func(path string, form url.Values) string {
 		t.Helper()
 		form.Set("csrf", e.csrf)
-		_, loc := e.post("/prompts", form)
+		_, loc := e.post(path, form)
 		return loc
 	}
 	ctx := context.Background()
 	source := agent.SettingPrompts{Store: e.store}
+	baseKey, offKey := agent.PromptSettingKey(agent.PromptBase), agent.PromptOffKey(agent.PromptWeb)
 
+	// 列表里每一段都有名字和用途；没有改动过时显示内置内容，全部加载。
 	_, body := e.get("/prompts")
-	if !strings.Contains(body, "# 基础约束") || !strings.Contains(body, "任务规划器") || strings.Contains(body, "已修改") {
-		t.Fatal("没有改写过时应显示内置内容")
+	for _, want := range []string{"基础约束", "联网搜索", "动作把关", "# Core rules", "You are the task planner", `aria-checked="true"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("系统提示词页缺少 %q", want)
+		}
 	}
-	if loc := post(url.Values{"key": {"prompt.other"}, "text": {"x"}}); !strings.Contains(loc, "e=") {
+	if strings.Contains(body, "已修改") || strings.Contains(body, "已停用") || strings.Count(body, `class="prompt"`) != len(agent.PromptSpecs()) {
+		t.Fatal("没有改动过时不应有已修改或已停用的段落，且每一段各占一行")
+	}
+
+	if loc := post("/prompts", url.Values{"key": {"other"}, "text": {"x"}}); !strings.Contains(loc, "e=") {
 		t.Fatalf("不认识的段落应被拒绝: %s", loc)
 	}
-	if loc := post(url.Values{"key": {agent.PromptKeyBase}, "text": {"  "}}); !strings.Contains(loc, "e=") {
+	if loc := post("/prompts", url.Values{"key": {agent.PromptBase}, "text": {"  "}}); !strings.Contains(loc, "e=") {
 		t.Fatalf("空内容应被拒绝: %s", loc)
 	}
-	if loc := post(url.Values{"key": {agent.PromptKeyBase}, "text": {"# 我的约束\r\n不编造"}}); !strings.Contains(loc, "立即生效") {
+	if loc := post("/prompts", url.Values{"key": {agent.PromptBase}, "text": {"# My rules\r\nNo fabrication"}}); !strings.Contains(loc, "立即生效") {
 		t.Fatalf("保存失败: %s", loc)
 	}
-	// 助手读到的就是刚保存的；没改的那一段是空的，表示用内置的。
-	if base, planner, err := source.Prompts(ctx); err != nil || base != "# 我的约束\n不编造" || planner != "" {
-		t.Fatalf("助手读到的系统提示不对: %q %q %v", base, planner, err)
+	// 助手读到的就是刚保存的。
+	if saved, err := source.Prompts(ctx); err != nil || saved[baseKey] != "# My rules\nNo fabrication" || len(saved) != 1 {
+		t.Fatalf("助手读到的系统提示不对: %v %v", saved, err)
 	}
-	if _, body = e.get("/prompts"); !strings.Contains(body, "# 我的约束") || strings.Count(body, "已修改") != 1 {
+	if _, body = e.get("/prompts"); !strings.Contains(body, "# My rules") || strings.Count(body, "已修改") != 1 {
 		t.Fatal("页面应显示改写后的内容并标明已修改")
 	}
+
+	// 开关：停用一段，再启用。规定输出格式的段落停不掉。
+	if loc := post("/prompts/toggle", url.Values{"key": {agent.PromptWeb}}); !strings.Contains(loc, "已停用") {
+		t.Fatalf("停用失败: %s", loc)
+	}
+	if saved, err := source.Prompts(ctx); err != nil || saved[offKey] == "" {
+		t.Fatalf("停用应存下来: %v %v", saved, err)
+	}
+	if _, body = e.get("/prompts"); strings.Count(body, "已停用") != 1 || !strings.Contains(body, `aria-checked="false"`) {
+		t.Fatal("页面应标明停用的段落")
+	}
+	if loc := post("/prompts/toggle", url.Values{"key": {agent.PromptPlanner}}); !strings.Contains(loc, "不可停用") {
+		t.Fatalf("必需的段落不应能停用: %s", loc)
+	}
+	if loc := post("/prompts/toggle", url.Values{"key": {agent.PromptWeb}, "on": {"1"}}); !strings.Contains(loc, "已启用") {
+		t.Fatalf("启用失败: %s", loc)
+	}
+
 	// 存回与内置一致的内容等于恢复默认。
-	if loc := post(url.Values{"key": {agent.PromptKeyPlanner}, "text": {agent.DefaultPlannerPrompt()}}); !strings.Contains(loc, "已恢复") {
+	planner := ""
+	for _, spec := range agent.PromptSpecs() {
+		if spec.Key == agent.PromptPlanner {
+			planner = spec.Default
+		}
+	}
+	if loc := post("/prompts", url.Values{"key": {agent.PromptPlanner}, "text": {planner}}); !strings.Contains(loc, "已恢复") {
 		t.Fatalf("与内置一致时应视为恢复默认: %s", loc)
 	}
-	if loc := post(url.Values{"key": {agent.PromptKeyBase}, "reset": {"1"}, "text": {"随便什么"}}); !strings.Contains(loc, "已恢复") {
+	if loc := post("/prompts", url.Values{"key": {agent.PromptBase}, "reset": {"1"}, "text": {"whatever"}}); !strings.Contains(loc, "已恢复") {
 		t.Fatalf("恢复默认失败: %s", loc)
 	}
-	if base, planner, err := source.Prompts(ctx); err != nil || base != "" || planner != "" {
-		t.Fatalf("恢复默认后不应留下改写的内容: %q %q %v", base, planner, err)
+	if saved, err := source.Prompts(ctx); err != nil || len(saved) != 0 {
+		t.Fatalf("恢复默认、重新启用之后不应留下任何改动: %v %v", saved, err)
 	}
 }

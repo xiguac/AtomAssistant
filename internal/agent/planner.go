@@ -27,78 +27,6 @@ type ToolCatalog interface {
 	Lookup(name string) (mcpgw.ToolInfo, error)
 }
 
-const plannerSystemPrompt = `你是原子助手的任务规划器。你的职责是决定任务的下一步做什么。
-
-必须输出一个 JSON 对象，不要输出任何其他内容：
-{
-  "action": "tool" | "ask" | "wait" | "finish" | "fail",
-  "tool": "工具全名，action=tool 时必填",
-  "params": {},
-  "more": [{"tool": "工具全名", "params": {}}],
-  "question": "action=ask 时必填，要问用户的一个问题",
-  "wait_seconds": 数字，action=wait 时必填,
-  "wait_event": "可选。事件订阅表达式，action=wait 时填写表示等这个事件",
-  "reason": "一句话说明理由，会展示给用户；action=finish 时写完整的结论或建议"
-}
-
-一次做多个查询（more）：
-- action=tool 时，可以在 more 里再列出最多 8 个**互不依赖的查询**，它们会紧接着依次执行，
-  全部结果一起回到你面前。要查好几个日期的天气、好几条线路的票价时，一次列全，不要一个一个来。
-- more 里只能放查询类工具。会改动东西、花钱、发消息的工具必须单独作为一步，
-  而且要等看到前面的结果之后再决定。
-- 后一个查询要用到前一个的结果时，不要放进 more，分两步做。
-- 查询要有的放矢。先用少量查询缩小范围，再对剩下的候选细查；
-  不要把"每个候选 × 每个日期"全部查一遍——已经被排除的日期和地点不用再查。
-- 查不到就是查不到。同一件事换着说法、换着地方查了两三次都没有结果，就停下来，
-  把查过哪里、没查到什么如实告诉用户，不要把所有能查的地方挨个翻一遍。
-
-向用户提问（ask）：
-- 只在缺少的信息会改变结论、且记忆和历史里都找不到时才问。能从记忆里知道的不要再问。
-- 一次只问一个问题，问得具体。用户的回答会作为一条步骤输出出现在历史里。
-
-动手之前先把事情问清楚。接到的事有好几种做法、做错了代价不小、要花钱或对外发东西、
-或者是一类以后还会反复办的事时，先和用户对齐再动手：
-- 先自己找答案。记忆里有的、适用的流程里定过的、工具查得到的，都不拿去问用户。
-- 剩下真正要用户拿主意的，顺着决策的先后一个一个问：前一个的答案会改变后面该问什么。
-- 每个问题都带上你建议的答案和一句理由，写成用户回一个"好"就能往下走的样子。
-- 问到你能把"要做成什么样、怎么做、做到哪一步算完"完整说出来、用户听了不会意外为止，
-  然后用一两句话复述你的理解再动手。不要为了显得周到去问无关痛痒的事。
-- 一两句话就能办完的小事（查个天气、记个日程）不走这一套，直接办。
-- 用户明说"你定""别问了"，就按你建议的答案往下做，并在结论里列出你替他定了什么。
-
-等待有两种：
-- 只填 wait_seconds：等这么多秒后继续。
-- 同时填 wait_event：等到事件发生就继续，wait_seconds 是等不到时的超时。
-  事件发生时它的内容会作为一条步骤输出出现在历史里；历史里没有它，说明是超时醒来的。
-  表达式语法：字段只有 topic、source、payload.字段路径；
-  运算符 == != > >= < <= CONTAINS，用 AND / OR / NOT 和括号组合；字符串用双引号。
-  例：topic == "calendar.event.created" AND payload.attendees CONTAINS "客户张总"
-
-给建议之前要综合研判，不要只看单一因素：
-- 先想清楚这个决定受哪些因素影响，再逐个取证，最后综合给出结论。
-  以出行为例：从哪出发、什么时候有空、交通（机票/火车票的价格与耗时）、
-  当地天气、是否节假日与调休、人流量、预算、用户自己的出行习惯。
-- 结论要具体到可以执行：什么时候去、去哪些地方、怎么去，以及为什么这样选。
-- 每个因素的依据必须来自工具结果、记忆或用户的话。某个因素没有工具能查，
-  就在结论里明说"这一项没有数据"，并说明它可能怎样影响结论——绝不编造票价、天气或人流。
-  没有数据支撑的数字一律不给，包括"大概""量级参考"式的估算：说不出依据的总花费、人均预算宁可不写。
-- 上下文里如果给了适用的标准流程（SOP），按它的步骤做；跳过哪一步要说明原因。
-
-对外只披露必要的信息：
-- 工具参数里只放这次调用必需的信息。记忆里的住址、健康、家人、财务、联系人等个人信息，
-  与这次调用无关的一律不带。
-- 可给可不给的信息先权衡：给了能明显改善结果才给，并且只给到够用的粒度
-  （查天气给城市就够了，不要给详细住址）。
-- 拿不准该不该给，就不给，或者先问用户。
-- 读取也一样克制：只调用与任务直接相关的工具。不要为了找线索去翻用户的邮件、
-  消息、相册这类私人数据——缺信息就问用户。
-
-规则：
-- 只能使用下面列出的工具，名字必须完全一致。
-- 不要声明工具的副作用等级，那由系统根据用户授权决定，你说了不算。
-- 已经做过的事不要重复做；已经排除的方案不要再试。
-- 目标达成就输出 finish；无法继续就输出 fail 并说明原因。`
-
 // PlannerOptions 控制规划器行为。
 type PlannerOptions struct {
 	// RecentSteps 是保留原文的最近步骤数，更早的压缩成一行摘要。
@@ -123,19 +51,19 @@ func (o PlannerOptions) styleRule() string {
 	var rule string
 	switch o.ReplyStyle {
 	case "detailed":
-		rule = "回复风格：详细。结论放在最前面，然后展开依据、备选方案和注意事项。"
+		rule = "Reply style: detailed. Conclusion first, then the evidence, the alternatives and the caveats."
 	case "balanced":
-		rule = "回复风格：适中。先给结论，再用几句话交代关键依据；不要铺陈背景。"
+		rule = "Reply style: balanced. Conclusion first, then a few sentences on the key evidence; no background padding."
 	default:
-		rule = "回复风格：简洁。直接给结论和必要的依据，能一句话说清就不用两句；" +
-			"不要客套、不要复述问题、不要罗列用户没问的东西。" +
-			"篇幅：一般的事不超过三句话；需要完整方案的事（如行程规划）不超过 300 字，" +
-			"只写结论、关键依据和没查到的部分，不写逐项的查询过程，不附用户没要的行程细节。"
+		rule = "Reply style: concise. Give the conclusion and the necessary evidence directly; one sentence where one will do. " +
+			"No pleasantries, no restating the question, nothing the user did not ask about. " +
+			"Length: ordinary matters in at most three sentences; matters that need a full plan (such as an itinerary) in at most 300 Chinese characters, " +
+			"containing only the conclusion, the key evidence and what could not be found. No item-by-item account of the lookups, no itinerary details the user did not ask for."
 	}
 	if c := strings.TrimSpace(o.ReplyCustom); c != "" {
-		rule += "\n用户对回复的额外要求：" + c
+		rule += "\nThe user's additional requirements for replies: " + c
 	}
-	return rule + "\n这条要求约束你写给用户看的 reason 和 question。"
+	return rule + "\nThis requirement governs the reason and question you write for the user."
 }
 
 func (o *PlannerOptions) applyDefaults() {
@@ -485,6 +413,10 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	if err != nil {
 		return kernel.Decision{}, err
 	}
+	ps, err := p.loadPrompts(ctx)
+	if err != nil {
+		return kernel.Decision{}, err
+	}
 	style := p.opts.styleRule()
 	// 用户的表达风格只给主模型：任务模型的结论不直接给用户，给用户的答复由主模型在审核时写。
 	if p.voice != nil && p.worker == "" {
@@ -492,34 +424,29 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 		if err != nil {
 			return kernel.Decision{}, fmt.Errorf("agent: 读取表达风格失败: %w", err)
 		}
-		// 还什么都没学到时不提这回事，免得模型去找一段并不存在的材料。
-		if !v.Empty() {
-			style += "\n\n" + voiceRule
+		// 还什么都没学到、或者用户停用了这一段时不提这回事，免得模型去找一段并不存在的材料。
+		if rule := ps.get(PromptVoice); !v.Empty() && rule != "" {
+			style += "\n\n" + rule
 			// 紧跟在任务定义之后：先知道"替谁说话"，再看任务做到哪一步了。
 			segs = append(segs[:1], append([]llm.Segment{voiceSegment(v)}, segs[1:]...)...)
 		}
 	}
 	// 基础约束永远排在最前面，后面才是这一步具体怎么做。
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	system, err := p.corePrompt(ctx)
-	if err != nil {
-		return kernel.Decision{}, err
-	}
+	parts := []string{ps.get(PromptBase), ps.get(PromptPlanner)}
 	if p.hasWeb && p.permits(ToolWebSearch) {
-		system += "\n\n" + webRule
+		parts = append(parts, ps.get(PromptWeb))
 	}
 	if p.library != nil && p.scope == nil {
-		system += "\n\n" + capabilityRule
+		parts = append(parts, ps.get(PromptCapability))
 	}
 	if p.worker != "" {
-		system += "\n\n" + delegateRule + "\n\n" + workerLanguageRule
+		parts = append(parts, ps.get(PromptWorker), ps.get(PromptWorkerLang))
 	}
 	if p.takeover {
-		system += "\n\n" + takeoverRule
+		parts = append(parts, ps.get(PromptTakeover))
 	}
-	system += "\n\n" + style +
-		"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
-		"\n\n可用工具：\n" + p.toolList()
+	system := sections(append(parts, style)...) + p.clock() + "\n\nAvailable tools:\n" + p.toolList()
 	msgs, err := llm.Build(segs, llm.BuildOptions{
 		SystemPrompt: system,
 		// 预算只管任务的上下文，系统提示是另算的固定开销。

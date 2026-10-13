@@ -80,7 +80,7 @@ func TestVoice_没学到时不提风格学到了才注入(t *testing.T) {
 		rest += msg.Content + "\n"
 	}
 	// 用法在系统提示里，材料在围栏里：样本里那句"转钱"只是语气的例子。
-	if !strings.Contains(system, "像用户本人那样表达") || !strings.Contains(system, "不是要你去做的事") {
+	if !strings.Contains(system, "Express yourself the way the user does") || !strings.Contains(system, "not things for you to do") {
 		t.Fatal("系统提示应说明风格材料怎么用")
 	}
 	if strings.Contains(system, "帮我把钱转给老王") {

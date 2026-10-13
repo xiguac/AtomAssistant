@@ -42,7 +42,7 @@ func TestWebSearch_接入后模型看得到工具和用法(t *testing.T) {
 	if err != nil || d.ToolName != ToolWebSearch || d.SideEffect != core.SideEffectReadOnly {
 		t.Fatalf("联网搜索应是可直接执行的只读工具: %+v, %v", d, err)
 	}
-	if !strings.Contains(system, "不要凭记忆回答") || !strings.Contains(system, ToolWebSearch) {
+	if !strings.Contains(system, "Do not answer from memory") || !strings.Contains(system, ToolWebSearch) {
 		t.Fatalf("系统提示里应说明什么时候去查:\n%s", system)
 	}
 
@@ -57,7 +57,7 @@ func TestWebSearch_接入后模型看得到工具和用法(t *testing.T) {
 	task.Tags = []string{skill.TagPrefix + bound.ID}
 	_, system, err = decide(NewPlanner(nil, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).
 		WithWebSearch(true).WithSkills(fakeSkills{bound.ID: bound}))
-	if err == nil || strings.Contains(system, "不要凭记忆回答") {
+	if err == nil || strings.Contains(system, "Do not answer from memory") {
 		t.Fatalf("绑定了 Skill 的任务没声明就不该能联网: %v", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestWebSearch_查到的内容按外部内容对待并带上来源(t *testin
 	}
 	// 交给搜索模型的是问题本身，外加当前时间；任务的其他上下文不带过去。
 	if len(s.last.Messages) != 2 || s.last.Messages[1].Content != "杭州 明天 天气预报" ||
-		!strings.Contains(s.last.Messages[0].Content, "当前时间") {
+		!strings.Contains(s.last.Messages[0].Content, "Current time") {
 		t.Fatalf("交给搜索模型的内容不对: %+v", s.last.Messages)
 	}
 

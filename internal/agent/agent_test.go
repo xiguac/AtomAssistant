@@ -594,11 +594,11 @@ func TestSceneOf_从标签推导检索场景(t *testing.T) {
 	}
 }
 
-type fakePrompts struct{ base, planner string }
+type fakePrompts map[string]string
 
-func (f fakePrompts) Prompts(context.Context) (string, string, error) { return f.base, f.planner, nil }
+func (f fakePrompts) Prompts(context.Context) (map[string]string, error) { return f, nil }
 
-func TestPlanner_系统提示以用户改写的为准(t *testing.T) {
+func TestPlanner_系统提示可以逐段改写与停用(t *testing.T) {
 	m := &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
 	task := core.NewTask("t", "g", core.TrustUser)
 	system := func(p *Planner) string {
@@ -608,20 +608,39 @@ func TestPlanner_系统提示以用户改写的为准(t *testing.T) {
 		}
 		return m.lastReq.Messages[0].Content
 	}
-
-	// 没有改写过：用内置的。
-	if got := system(NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{})); !strings.HasPrefix(got, baseRules+"\n\n"+plannerSystemPrompt) {
-		t.Fatal("默认应使用内置的基础约束与规划说明")
+	planner := func(saved fakePrompts) *Planner {
+		return NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithWebSearch(true).WithPrompts(saved)
 	}
-	// 只改了基础约束：规划说明仍是内置的，工具目录照常附在后面。
-	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithPrompts(fakePrompts{base: "# 我的约束"})
-	got := system(p)
-	if !strings.HasPrefix(got, "# 我的约束\n\n"+plannerSystemPrompt) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
+
+	// 没有改动过：用内置的，各段按顺序拼起来。提示用英文写，只要求给用户看的内容用中文。
+	got := system(planner(nil))
+	if !strings.HasPrefix(got, baseRules+"\n\n"+plannerSystemPrompt+"\n\n"+webRule) {
+		t.Fatal("默认应使用内置的基础约束、规划说明与联网搜索")
+	}
+	if !strings.Contains(got, "Think and reason in English") || !strings.Contains(got, "Simplified Chinese") {
+		t.Fatal("基础约束应要求用英文思考、用简体中文回复用户")
+	}
+	// 只改了基础约束：其余各段仍是内置的，工具目录照常附在后面。
+	got = system(planner(fakePrompts{PromptSettingKey(PromptBase): "# My rules"}))
+	if !strings.HasPrefix(got, "# My rules\n\n"+plannerSystemPrompt) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
 		t.Fatalf("应以改写的基础约束开头: %s", truncate(got, 200))
 	}
-	// 两段都改了。
-	p = p.WithPrompts(fakePrompts{base: "# 我的约束", planner: "只输出 JSON"})
-	if got := system(p); !strings.HasPrefix(got, "# 我的约束\n\n只输出 JSON\n\n") || strings.Contains(got, plannerSystemPrompt) {
-		t.Fatalf("两段都应以改写的为准: %s", truncate(got, 200))
+	// 停用的段落不加载；别的段落不受影响。
+	got = system(planner(fakePrompts{PromptOffKey(PromptWeb): "1", PromptOffKey(PromptBase): "1"}))
+	if strings.Contains(got, webRule) || strings.Contains(got, baseRules) || !strings.HasPrefix(got, plannerSystemPrompt) {
+		t.Fatalf("停用的段落不应出现在系统提示里: %s", truncate(got, 200))
+	}
+	// 规定了输出格式的段落停不掉：没有它程序解析不了模型的回答。
+	got = system(planner(fakePrompts{PromptOffKey(PromptPlanner): "1"}))
+	if !strings.Contains(got, plannerSystemPrompt) {
+		t.Fatal("必需的段落不应被停用")
+	}
+	// 每一段都登记了名字和用途，标识不重复。
+	seen := map[string]bool{}
+	for _, spec := range PromptSpecs() {
+		if spec.Key == "" || spec.Title == "" || spec.Usage == "" || strings.TrimSpace(spec.Default) == "" || seen[spec.Key] {
+			t.Fatalf("段落登记不完整或重复: %+v", spec.Key)
+		}
+		seen[spec.Key] = true
 	}
 }

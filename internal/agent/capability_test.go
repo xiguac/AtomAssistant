@@ -121,7 +121,7 @@ func TestCapability_启用后给出工具做法和已安装的Skill(t *testing.T
 		t.Fatalf("决策不对: %+v", d)
 	}
 	system := m.lastReq.Messages[0].Content
-	for _, want := range []string{ToolCapabilitySearch, ToolCapabilityInstall, ToolSkillRead, "自己去找，不要直接说办不到"} {
+	for _, want := range []string{ToolCapabilitySearch, ToolCapabilityInstall, ToolSkillRead, "go and find it instead of saying it cannot be done"} {
 		if !strings.Contains(system, want) {
 			t.Errorf("系统提示里应有 %q", want)
 		}
@@ -148,7 +148,7 @@ func TestCapability_绑定了Skill的任务不能自己装东西(t *testing.T) {
 	if _, err := p.Decide(context.Background(), task, nil); err == nil {
 		t.Fatal("别人写的流程没声明就不该能安装东西")
 	}
-	if strings.Contains(m.lastReq.Messages[0].Content, "自己去找，不要直接说办不到") {
+	if strings.Contains(m.lastReq.Messages[0].Content, "go and find it instead of saying it cannot be done") {
 		t.Fatal("绑定了 Skill 的任务不该被告知可以自己找能力")
 	}
 }

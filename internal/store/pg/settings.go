@@ -43,3 +43,24 @@ func (s *Store) PutSetting(ctx context.Context, key, value string) error {
 	}
 	return nil
 }
+
+// SettingsWithPrefix 读出名字以 prefix 开头的全部设置。
+func (s *Store) SettingsWithPrefix(ctx context.Context, prefix string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT key, value FROM settings WHERE starts_with(key, $1)`, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("pg: 读取设置 %s* 失败: %w", prefix, err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, fmt.Errorf("pg: 读取设置 %s* 失败: %w", prefix, err)
+		}
+		if err := s.z.open("settings.value", &v); err != nil {
+			return nil, fmt.Errorf("pg: 读取设置 %s 失败: %w", k, err)
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}

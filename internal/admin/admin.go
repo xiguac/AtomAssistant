@@ -359,6 +359,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /skills/delete", auth(s.skillDelete))
 	mux.HandleFunc("GET /prompts", auth(s.promptsPage))
 	mux.HandleFunc("POST /prompts", auth(s.promptSave))
+	mux.HandleFunc("POST /prompts/toggle", auth(s.promptToggle))
 	mux.HandleFunc("GET /security", auth(s.securityPage))
 	mux.HandleFunc("POST /security/methods", auth(s.methodsSave))
 	mux.HandleFunc("POST /security/totp/start", auth(s.totpStart))

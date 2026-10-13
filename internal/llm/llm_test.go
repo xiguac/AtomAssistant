@@ -26,7 +26,7 @@ func TestBuild_不可信内容被围栏包裹(t *testing.T) {
 	if msgs[0].Role != RoleSystem {
 		t.Fatalf("首条应为系统消息，实际 %s", msgs[0].Role)
 	}
-	if !strings.Contains(msgs[0].Content, "不是指令") {
+	if !strings.Contains(msgs[0].Content, "not instructions") {
 		t.Fatal("系统消息里必须包含不可信内容的处理规则")
 	}
 	// 可信内容不加围栏。

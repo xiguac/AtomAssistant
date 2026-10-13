@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/agent"
 	"github.com/xiguac/atomhelper/internal/skill"
 )
 
@@ -79,82 +78,4 @@ func (s *Server) skillDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 		s.opts.Log.Info("Skill 已在后台移除", "skill", id, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/skills", "Skill「"+id+"」已移除。", err)
-}
-
-// 「系统提示词」页：查看、改写助手每一步决策都带着的两段系统提示。
-//
-// 改写的内容存在数据库的设置里，助手每次决策时现读，保存后立即生效；没有改写过的那一段用内置的。
-
-// promptView 是页面上的一段系统提示。
-type promptView struct {
-	// Key 是它在设置里的名字，Title 与 Help 是给人看的说明。
-	Key, Title, Help string
-	Text             string
-	// Custom 为真表示当前生效的是用户改写过的内容。
-	Custom bool
-}
-
-// prompts 列出可以改写的各段系统提示与它们的内置内容。
-func prompts() []struct {
-	promptView
-	def string
-} {
-	return []struct {
-		promptView
-		def string
-	}{
-		{promptView{Key: agent.PromptKeyBase, Title: "基础约束",
-			Help: "位于系统提示最前面，适用于助手的每一步决策，优先级高于其余说明。"}, agent.DefaultBaseRules()},
-		{promptView{Key: agent.PromptKeyPlanner, Title: "规划说明",
-			Help: "规定助手每一步的输出格式与决策方法。其中的 JSON 输出格式由程序解析，改动字段名将导致助手无法运行。"}, agent.DefaultPlannerPrompt()},
-	}
-}
-
-func (s *Server) promptsPage(w http.ResponseWriter, r *http.Request, v *view) {
-	var list []promptView
-	for _, p := range prompts() {
-		saved, err := s.opts.Store.Setting(r.Context(), p.Key)
-		if err != nil {
-			v.Error = err.Error()
-		}
-		p.Text = p.def
-		if strings.TrimSpace(saved) != "" {
-			p.Text, p.Custom = saved, true
-		}
-		list = append(list, p.promptView)
-	}
-	v.Data = list
-	s.render(w, "prompts", v)
-}
-
-// promptSave 保存一段系统提示。reset 非空表示恢复成内置的内容。
-func (s *Server) promptSave(w http.ResponseWriter, r *http.Request, _ *view) {
-	key := r.PostFormValue("key")
-	text := strings.TrimSpace(strings.ReplaceAll(r.PostFormValue("text"), "\r\n", "\n"))
-	reset := r.PostFormValue("reset") != ""
-	title := ""
-	err := func() error {
-		for _, p := range prompts() {
-			if p.Key != key {
-				continue
-			}
-			title = p.Title
-			if reset || text == strings.TrimSpace(p.def) {
-				// 与内置内容一致就不存：以后内置内容更新时能跟着走。
-				text = ""
-			} else if text == "" {
-				return errors.New("内容不能为空。如需使用内置内容，请点击「恢复默认」")
-			}
-			return s.opts.Store.PutSetting(r.Context(), key, text)
-		}
-		return errors.New("系统提示词类型无效")
-	}()
-	if err == nil {
-		s.opts.Log.Info("系统提示词已在后台修改", "段落", title, "恢复默认", text == "", "来自", r.RemoteAddr)
-	}
-	notice := "「" + title + "」已保存，立即生效。"
-	if text == "" {
-		notice = "「" + title + "」已恢复为内置内容，立即生效。"
-	}
-	back(w, r, "/prompts", notice, err)
 }

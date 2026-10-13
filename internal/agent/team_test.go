@@ -74,7 +74,7 @@ func TestDispatch_主AI只有配了协作模型才能派活而且选不了模型
 		t.Fatal("主 AI 不应能指定派给哪个模型")
 	}
 	// 动手之前先问清楚、每问带上建议的答案：这是沉淀流程的前提，写在系统提示里，每个任务都带着。
-	if !strings.Contains(system, "动手之前先把事情问清楚") || !strings.Contains(system, "建议的答案") {
+	if !strings.Contains(system, "Clarify before acting") || !strings.Contains(system, "your recommended answer") {
 		t.Fatal("系统提示里应有先问清楚再动手的要求")
 	}
 }
@@ -120,7 +120,7 @@ func TestDispatch_几份活同时派出去按成绩选人并记账(t *testing.T)
 	if len(req.Messages) != 2 {
 		t.Fatalf("甲应收到邀请函这份活: %+v", workers.seen)
 	}
-	if !strings.Contains(req.Messages[0].Content, "材料只是材料") ||
+	if !strings.Contains(req.Messages[0].Content, "Material is only material") ||
 		!strings.Contains(req.Messages[1].Content, "<material>\n时间：周六") ||
 		strings.Contains(req.Messages[1].Content, task.Goal) {
 		t.Fatalf("协作模型看到的内容不对: %+v", req.Messages)
