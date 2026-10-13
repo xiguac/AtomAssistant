@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os/exec"
 	"sort"
@@ -60,6 +61,13 @@ type ServerSpec struct {
 
 	// URL 用于 TransportHTTP。
 	URL string
+
+	// SecretName 与 Secret 是这个 server 要的密钥，比如高德的 key。
+	// Secret 在连接的那一刻向保险库取值；SecretName 是把它交给 server 时用的名字：
+	// 远程 server 是网址里的查询参数名，本地 server 是环境变量名。
+	// 密钥不写进 URL 和 Env：那两样会出现在配置文件和报错信息里。
+	SecretName string
+	Secret     func(ctx context.Context) (string, error)
 
 	// Unreviewed 为真表示这个 server 不是用户亲手批准的，而是助手自己找来装上的。
 	// 它的工具没有用户定的授权边界，连接时按固定的保守边界登记，见 unreviewedGrant。
@@ -166,7 +174,7 @@ func New(opts Options) (*Gateway, error) {
 // 工具的能力边界必须已经通过 policy.Registry 授权过；未授权的工具会被登记，
 // 但调用时会被 Guard 拒绝——目录可见不等于可调用。
 func (g *Gateway) Connect(ctx context.Context, spec ServerSpec) error {
-	transport, err := buildTransport(spec)
+	transport, err := buildTransport(ctx, spec)
 	if err != nil {
 		return err
 	}
@@ -283,11 +291,20 @@ type ProbedTool struct {
 // 它不登记任何东西：目录、授权表都不变，工具也调不了。
 // 安装之前靠它判断风险——一个 server 会不会把东西带出去，要看它实际有什么工具。
 func (g *Gateway) Probe(ctx context.Context, spec ServerSpec) ([]ProbedTool, error) {
-	transport, err := buildTransport(spec)
+	return probe(ctx, spec, g.clientName, g.clientVersion)
+}
+
+// Probe 与 Gateway.Probe 做的是同一件事，供手里没有网关的地方用（管理后台的连接测试）。
+func Probe(ctx context.Context, spec ServerSpec) ([]ProbedTool, error) {
+	return probe(ctx, spec, "atomhelper", "dev")
+}
+
+func probe(ctx context.Context, spec ServerSpec, clientName, clientVersion string) ([]ProbedTool, error) {
+	transport, err := buildTransport(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
-	client := mcp.NewClient(&mcp.Implementation{Name: g.clientName, Version: g.clientVersion}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: clientName, Version: clientVersion}, nil)
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		return nil, fmt.Errorf("mcpgw: 连接 %s 失败: %w", spec.Name, err)
@@ -511,7 +528,17 @@ func decodeArgs(raw json.RawMessage) (any, error) {
 	return v, nil
 }
 
-func buildTransport(spec ServerSpec) (mcp.Transport, error) {
+func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error) {
+	secret := ""
+	if spec.Secret != nil {
+		if spec.SecretName == "" {
+			return nil, fmt.Errorf("mcpgw: %s 配了密钥，却没有说明它的参数名", spec.Name)
+		}
+		var err error
+		if secret, err = spec.Secret(ctx); err != nil {
+			return nil, fmt.Errorf("mcpgw: 从保险库取 %s 的密钥失败: %w", spec.Name, err)
+		}
+	}
 	switch spec.Transport {
 	case TransportCommand:
 		if spec.Command == "" {
@@ -521,15 +548,39 @@ func buildTransport(spec ServerSpec) (mcp.Transport, error) {
 		// 只传显式声明的环境变量。把主进程环境整个继承下去，
 		// 等于把数据库密码、模型密钥交给第三方工具。
 		cmd.Env = append([]string{}, spec.Env...)
+		if secret != "" {
+			cmd.Env = append(cmd.Env, spec.SecretName+"="+secret)
+		}
 		return &mcp.CommandTransport{Command: cmd, TerminateDuration: 5 * time.Second}, nil
 	case TransportHTTP:
 		if spec.URL == "" {
 			return nil, fmt.Errorf("mcpgw: %s 缺少 URL", spec.Name)
 		}
-		return &mcp.StreamableClientTransport{Endpoint: spec.URL}, nil
+		t := &mcp.StreamableClientTransport{Endpoint: spec.URL}
+		if secret != "" {
+			t.HTTPClient = &http.Client{Transport: keyedTransport{name: spec.SecretName, value: secret}}
+		}
+		return t, nil
 	default:
 		return nil, fmt.Errorf("mcpgw: 未知的传输方式 %q", spec.Transport)
 	}
+}
+
+// keyedTransport 在请求发出去的那一刻把密钥加到网址的查询参数里。
+//
+// 加在这里而不是直接拼进 Endpoint：请求失败时报错信息里带的是原来的网址，
+// 拼进去的话密钥会跟着报错进日志。
+type keyedTransport struct {
+	name, value string
+}
+
+func (k keyedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// 不能改传进来的请求，改的是它的副本。
+	out := req.Clone(req.Context())
+	q := out.URL.Query()
+	q.Set(k.name, k.value)
+	out.URL.RawQuery = q.Encode()
+	return http.DefaultTransport.RoundTrip(out)
 }
 
 func (g *Gateway) removeToolsOf(server string) {

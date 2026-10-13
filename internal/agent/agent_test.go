@@ -593,3 +593,35 @@ func TestSceneOf_从标签推导检索场景(t *testing.T) {
 		t.Fatalf("领域未解析: %s", scene.Domain)
 	}
 }
+
+type fakePrompts struct{ base, planner string }
+
+func (f fakePrompts) Prompts(context.Context) (string, string, error) { return f.base, f.planner, nil }
+
+func TestPlanner_系统提示以用户改写的为准(t *testing.T) {
+	m := &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
+	task := core.NewTask("t", "g", core.TrustUser)
+	system := func(p *Planner) string {
+		t.Helper()
+		if _, err := p.Decide(context.Background(), task, nil); err != nil {
+			t.Fatalf("决策失败: %v", err)
+		}
+		return m.lastReq.Messages[0].Content
+	}
+
+	// 没有改写过：用内置的。
+	if got := system(NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{})); !strings.HasPrefix(got, baseRules+"\n\n"+plannerSystemPrompt) {
+		t.Fatal("默认应使用内置的基础约束与规划说明")
+	}
+	// 只改了基础约束：规划说明仍是内置的，工具目录照常附在后面。
+	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithPrompts(fakePrompts{base: "# 我的约束"})
+	got := system(p)
+	if !strings.HasPrefix(got, "# 我的约束\n\n"+plannerSystemPrompt) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
+		t.Fatalf("应以改写的基础约束开头: %s", truncate(got, 200))
+	}
+	// 两段都改了。
+	p = p.WithPrompts(fakePrompts{base: "# 我的约束", planner: "只输出 JSON"})
+	if got := system(p); !strings.HasPrefix(got, "# 我的约束\n\n只输出 JSON\n\n") || strings.Contains(got, plannerSystemPrompt) {
+		t.Fatalf("两段都应以改写的为准: %s", truncate(got, 200))
+	}
+}

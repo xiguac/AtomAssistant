@@ -172,11 +172,19 @@ mcp_servers: []
 #   - name: maps
 #     transport: command
 #     command: /usr/local/bin/mcp-amap
-#     env:
-#       - AMAP_KEY=xxx
 #   - name: flight
 #     transport: http
 #     url: https://mcp.example.com/mcp
+#   # 高德地图（https://developer.amap.com/api/mcp-server/summary）。在管理后台的「MCP」页
+#   # 填一个 Key 就能接入，下面是它写出来的样子。
+#   # server 要的密钥只能放在保险库里：secret 写句柄，保险库那一条的授权名单要有 mcp.<server 名>；
+#   # secret_name 是把它交给 server 时用的名字——远程 server 是网址里的查询参数名，
+#   # 本地 server 是环境变量名。
+#   - name: amap
+#     transport: http
+#     url: https://mcp.amap.com/mcp
+#     secret_name: key
+#     secret: vault://mcp.amap
 
 # ---------------------------------------------------------------
 # 工具授权边界。对应用户在 App 上批准某个工具时的选择。

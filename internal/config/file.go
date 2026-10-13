@@ -350,24 +350,33 @@ func (r ReplyConfig) LearnVoice() bool { return r.Voice != "off" }
 type MCPConfig struct {
 	Name      string   `yaml:"name"`
 	Transport string   `yaml:"transport"`
-	Command   string   `yaml:"command"`
-	Args      []string `yaml:"args"`
-	// Env 形如 KEY=VALUE。只有这里列出的变量会传给子进程。
-	Env []string `yaml:"env"`
-	URL string   `yaml:"url"`
+	Command   string   `yaml:"command,omitempty"`
+	Args      []string `yaml:"args,omitempty"`
+	// Env 形如 KEY=VALUE。只有这里列出的变量会传给子进程。密钥不要写在这里，用 secret。
+	Env []string `yaml:"env,omitempty"`
+	URL string   `yaml:"url,omitempty"`
+	// Secret 是这个 server 要的密钥在保险库里的句柄（vault://名字），不接受明文。
+	// 保险库里那一条的授权名单要有 mcp.<server 名>。
+	// SecretName 是把它交给 server 时用的名字：远程 server 是网址里的查询参数名
+	// （高德是 key），本地 server 是环境变量名（高德是 AMAP_MAPS_API_KEY）。
+	SecretName string `yaml:"secret_name,omitempty"`
+	Secret     string `yaml:"secret,omitempty"`
 }
+
+// VaultUser 返回这个 MCP server 在保险库授权名单里的名字。
+func (m MCPConfig) VaultUser() string { return "mcp." + m.Name }
 
 // ToolConfig 是一个工具的授权边界，对应用户在 App 上的批准结果。
 type ToolConfig struct {
 	Name string `yaml:"name"`
 	// MaxPrivacy: public / normal / sensitive。secret 不被接受。
-	MaxPrivacy string `yaml:"max_privacy"`
+	MaxPrivacy string `yaml:"max_privacy,omitempty"`
 	// Trust: external / tool_output / connector。
-	Trust string `yaml:"trust"`
+	Trust string `yaml:"trust,omitempty"`
 	// SideEffect: none / read_only / reversible / irreversible。
-	SideEffect    string   `yaml:"side_effect"`
-	EgressDomains []string `yaml:"egress_domains"`
-	AllowedFields []string `yaml:"allowed_fields"`
+	SideEffect    string   `yaml:"side_effect,omitempty"`
+	EgressDomains []string `yaml:"egress_domains,omitempty"`
+	AllowedFields []string `yaml:"allowed_fields,omitempty"`
 }
 
 // ApprovalConfig 是审批策略。
@@ -467,6 +476,9 @@ func (f *File) validate() error {
 		return err
 	}
 	if err := f.validateConnectors(); err != nil {
+		return err
+	}
+	if err := f.validateMCP(); err != nil {
 		return err
 	}
 	for _, t := range f.Tools {
@@ -616,20 +628,57 @@ func (f *File) BuildApprovalPolicy() *policy.Policy {
 	return p
 }
 
+// validateMCP 校验 MCP server 的密钥写法。在加载时就查，理由同 validateChannels。
+func (f *File) validateMCP() error {
+	for _, m := range f.MCP {
+		if m.Secret == "" && m.SecretName == "" {
+			continue
+		}
+		if !strings.HasPrefix(m.Secret, "vault://") {
+			return fmt.Errorf("config: MCP server %s 的 secret 只能写保险库句柄（vault://名字），不能直接写密钥", m.Name)
+		}
+		if m.SecretName == "" {
+			return fmt.Errorf("config: MCP server %s 配了 secret，还要写 secret_name（查询参数名或环境变量名）", m.Name)
+		}
+	}
+	return nil
+}
+
 // MCPServers 返回已批准的 MCP server 列表。
-func (f *File) MCPServers() ([]mcpgw.ServerSpec, error) {
+// 没有任何 server 用到保险库时 secrets 可以为 nil。
+func (f *File) MCPServers(secrets SecretLender) ([]mcpgw.ServerSpec, error) {
 	out := make([]mcpgw.ServerSpec, 0, len(f.MCP))
 	for _, m := range f.MCP {
-		kind := mcpgw.TransportKind(m.Transport)
-		if kind != mcpgw.TransportCommand && kind != mcpgw.TransportHTTP {
-			return nil, fmt.Errorf("config: MCP server %s 的传输方式非法: %q", m.Name, m.Transport)
+		spec, err := m.Spec(secrets)
+		if err != nil {
+			return nil, err
 		}
-		out = append(out, mcpgw.ServerSpec{
-			Name: m.Name, Transport: kind,
-			Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL,
-		})
+		out = append(out, spec)
 	}
 	return out, nil
+}
+
+// Spec 把一个 MCP server 的配置变成连接参数。密钥到连接的那一刻才向保险库取。
+func (m MCPConfig) Spec(secrets SecretLender) (mcpgw.ServerSpec, error) {
+	kind := mcpgw.TransportKind(m.Transport)
+	if kind != mcpgw.TransportCommand && kind != mcpgw.TransportHTTP {
+		return mcpgw.ServerSpec{}, fmt.Errorf("config: MCP server %s 的传输方式非法: %q", m.Name, m.Transport)
+	}
+	spec := mcpgw.ServerSpec{
+		Name: m.Name, Transport: kind,
+		Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL,
+	}
+	if m.Secret != "" {
+		if secrets == nil {
+			return mcpgw.ServerSpec{}, fmt.Errorf("config: MCP server %s 的密钥在保险库里，但保险库不可用", m.Name)
+		}
+		take, err := secrets.Lend(m.Secret, m.VaultUser())
+		if err != nil {
+			return mcpgw.ServerSpec{}, fmt.Errorf("config: MCP server %s 的 secret: %w", m.Name, err)
+		}
+		spec.SecretName, spec.Secret = m.SecretName, take
+	}
+	return spec, nil
 }
 
 func parsePrivacy(s string) (core.PrivacyLevel, error) {

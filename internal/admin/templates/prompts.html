@@ -1,0 +1,21 @@
+{{define "content"}}
+<h1>系统提示词</h1>
+<div class="sub">查看与修改助手每一步决策所使用的系统提示词。保存后立即生效，无需重启服务。回复风格、联网搜索规则、当前时间与工具目录由系统在其后自动附加，不在此处编辑。</div>
+
+<div class="cols even">
+{{range .Data}}
+<form method="post" action="/prompts" class="card" style="margin-top:0">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="key" value="{{.Key}}">
+  <div class="band"><b>{{.Title}}</b>{{if .Custom}}<span class="pill info plain">已修改</span>{{else}}<span class="pill plain">内置</span>{{end}}</div>
+  <textarea class="code" name="text" aria-label="{{.Title}}" spellcheck="false" style="white-space:pre-wrap;min-height:640px">{{.Text}}</textarea>
+  <div class="band foot">
+    <span class="note muted">{{.Help}}</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Custom}}<button class="btn sec" name="reset" value="1">恢复默认</button>{{end}}
+    </div>
+  </div>
+</form>
+{{end}}
+</div>
+{{end}}

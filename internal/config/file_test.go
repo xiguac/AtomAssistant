@@ -192,7 +192,7 @@ func TestMCPServers_传输方式校验(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
-	if servers, err := f.MCPServers(); err != nil || len(servers) != 1 {
+	if servers, err := f.MCPServers(nil); err != nil || len(servers) != 1 {
 		t.Fatalf("解析失败: %v, %+v", err, servers)
 	}
 
@@ -201,7 +201,68 @@ func TestMCPServers_传输方式校验(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加载失败: %v", err)
 	}
-	if _, err := f2.MCPServers(); err == nil {
+	if _, err := f2.MCPServers(nil); err == nil {
 		t.Fatal("非法传输方式应被拒绝")
+	}
+}
+
+func TestMCPServers_密钥只能是保险库句柄(t *testing.T) {
+	for _, bad := range []string{
+		"mcp_servers:\n  - name: amap\n    transport: http\n    url: https://mcp.amap.com/mcp\n    secret_name: key\n    secret: abc123\n",
+		"mcp_servers:\n  - name: amap\n    transport: http\n    url: https://mcp.amap.com/mcp\n    secret: vault://amap\n",
+	} {
+		if _, err := LoadFile(writeConfig(t, bad)); err == nil {
+			t.Fatalf("应被拒绝:\n%s", bad)
+		}
+	}
+
+	f, err := LoadFile(writeConfig(t, "mcp_servers:\n  - name: amap\n    transport: http\n"+
+		"    url: https://mcp.amap.com/mcp\n    secret_name: key\n    secret: vault://mcp.amap\n"))
+	if err != nil {
+		t.Fatalf("加载失败: %v", err)
+	}
+	if _, err := f.MCPServers(nil); err == nil {
+		t.Fatal("密钥在保险库里而保险库不可用时应报错")
+	}
+	lender := &fakeLender{}
+	servers, err := f.MCPServers(lender)
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("解析失败: %v", err)
+	}
+	// 以 mcp.<server 名> 的身份向保险库借，网址里没有密钥。
+	if len(lender.asked) != 1 || lender.asked[0] != "mcp.amap=vault://mcp.amap" {
+		t.Fatalf("借用身份不对: %v", lender.asked)
+	}
+	s := servers[0]
+	if s.SecretName != "key" || s.Secret == nil || s.URL != "https://mcp.amap.com/mcp" {
+		t.Fatalf("连接参数不对: %+v", s)
+	}
+}
+
+func TestWriteToolset_只改MCP与工具两节(t *testing.T) {
+	raw := []byte("# 我的配置\nreply:\n  style: concise\n\nmcp_servers: []\n")
+	out, err := WriteToolset(raw, Toolset{
+		MCP:   []MCPConfig{{Name: "amap", Transport: "http", URL: "https://mcp.amap.com/mcp", SecretName: "key", Secret: "vault://mcp.amap"}},
+		Tools: []ToolConfig{{Name: "amap.maps_weather", MaxPrivacy: "normal", Trust: "tool_output", SideEffect: "read_only", EgressDomains: []string{"mcp.amap.com"}}},
+	})
+	if err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	text := string(out)
+	if !strings.HasPrefix(text, "# 我的配置\nreply:\n  style: concise\n") || strings.Contains(text, "command:") {
+		t.Fatalf("其余内容应原样保留，空字段不写出:\n%s", text)
+	}
+	f, err := LoadFile(writeConfig(t, text))
+	if err != nil {
+		t.Fatalf("写出来的配置应能加载: %v\n%s", err, text)
+	}
+	got, err := ReadToolset(out)
+	if err != nil || len(got.MCP) != 1 || len(got.Tools) != 1 || got.Tools[0].SideEffect != "read_only" || len(f.Tools) != 1 {
+		t.Fatalf("读回来不对: %+v %v", got, err)
+	}
+	// 全部删掉之后两节都不留。
+	out, err = WriteToolset(out, Toolset{})
+	if err != nil || strings.Contains(string(out), "mcp_servers") || strings.Contains(string(out), "tools") {
+		t.Fatalf("清空后不应留下空的小节: %v\n%s", err, out)
 	}
 }

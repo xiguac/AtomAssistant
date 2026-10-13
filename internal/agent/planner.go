@@ -166,6 +166,8 @@ type Planner struct {
 	vault   VaultLister
 	skills  SkillProvider
 	voice   VoiceProvider
+	// prompts 非空时，基础约束与规划说明以用户在后台改写的为准。
+	prompts PromptSource
 	// pay 为真表示接入了付款能力，付款工具对模型可见。
 	pay bool
 	// paidResources 为真表示允许请求付费资源。
@@ -461,7 +463,10 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 	}
 	// 基础约束永远排在最前面，后面才是这一步具体怎么做。
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	system := baseRules + "\n\n" + plannerSystemPrompt
+	system, err := p.corePrompt(ctx)
+	if err != nil {
+		return kernel.Decision{}, err
+	}
 	if p.hasWeb && p.permits(ToolWebSearch) {
 		system += "\n\n" + webRule
 	}

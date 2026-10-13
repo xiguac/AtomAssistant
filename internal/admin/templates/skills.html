@@ -1,0 +1,51 @@
+{{define "content"}}
+<h1>Skill</h1>
+<div class="sub">查看、安装与移除 Skill。Skill 是声明式流程，不含可执行代码；安装不授予任何新权限，按其执行的任务仅可调用其声明且已授权的工具。</div>
+
+{{with .Data}}
+<div class="cols">
+<div>
+<div class="card">
+  <div class="band"><b>已安装的 Skill</b><span class="count">{{len .Skills}}</span></div>
+  {{if .Skills}}<table>
+    <thead><tr><th>名称</th><th>类型</th><th>声明的工具</th><th>安装时间</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Skills}}<tr>
+      <td><b style="font-weight:500">{{.Name}}</b><div class="mono muted">{{.ID}}{{if .Version}} · {{.Version}}{{end}}</div>
+        <div class="note" style="margin-top:4px">{{short .Goal 120}}</div>
+        {{if .Source}}<div class="note muted" style="word-break:break-all">来源：{{.Source}}</div>{{end}}
+        <details><summary>查看原文</summary><pre>{{.Raw}}</pre></details>
+        {{if .ScanReport}}<details><summary>扫描报告</summary><pre>{{.ScanReport}}</pre></details>{{end}}</td>
+      <td>{{if eq .Format "markdown"}}<span class="pill plain">参考文档</span>{{else}}<span class="pill info plain">流程清单</span>{{end}}</td>
+      <td>{{range .RequiredTools}}<span class="chip">{{.}}</span>{{else}}<span class="muted">无</span>{{end}}</td>
+      <td class="time">{{when .InstalledAt}}</td>
+      <td class="r"><form method="post" action="/skills/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+        <button class="btn danger sm">移除</button></form></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">暂无 Skill。可在右侧安装，助手在任务中缺少能力时也可自行查找并安装通过扫描的 Skill。</div>{{end}}
+  <div class="band foot"><span class="note muted">流程清单须由任务指定后生效（atomctl run）；参考文档由助手按需读取，其内容按外部内容处理。</span></div>
+</div>
+</div>
+
+<div>
+<form method="post" action="/skills" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>安装 Skill</b></div>
+  <div class="pad">
+    <label for="sk-manifest">清单内容（skill.yaml）</label>
+    <textarea id="sk-manifest" name="manifest" style="min-height:320px;font:12px/18px var(--mono)" spellcheck="false" placeholder="id: reception.standard
+name: 客户接待标准流程
+version: &quot;1.0&quot;
+goal: 完成一次客户接待的全流程安排
+required_tools:
+  - amap.maps_text_search
+steps:
+  - 确认接待时间与人数
+  - 选择餐厅并规划路线"></textarea>
+    <div class="help">字段仅限 id、name、version、goal、required_tools、steps、author，出现其他字段将被拒绝。同 ID 的 Skill 将被替换</div>
+  </div>
+  <div class="band foot"><span class="note muted">安装前须通过 SkillSpector 扫描，耗时可能达数分钟。扫描未通过或未能执行时不予安装。</span><button class="btn">扫描并安装</button></div>
+</form>
+</div>
+</div>
+{{end}}
+{{end}}

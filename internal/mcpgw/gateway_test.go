@@ -300,7 +300,7 @@ func TestNew_缺少出口管控时拒绝构造(t *testing.T) {
 }
 
 func TestBuildTransport_环境变量不继承主进程(t *testing.T) {
-	tr, err := buildTransport(ServerSpec{
+	tr, err := buildTransport(context.Background(), ServerSpec{
 		Name: "x", Transport: TransportCommand, Command: "echo", Env: []string{"A=1"},
 	})
 	if err != nil {
@@ -323,7 +323,7 @@ func TestBuildTransport_配置缺失时报错(t *testing.T) {
 		{Name: "x", Transport: "ftp"},
 	}
 	for _, spec := range cases {
-		if _, err := buildTransport(spec); err == nil {
+		if _, err := buildTransport(context.Background(), spec); err == nil {
 			t.Fatalf("配置 %+v 应被拒绝", spec)
 		}
 	}

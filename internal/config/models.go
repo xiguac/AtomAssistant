@@ -289,6 +289,34 @@ func ReadToolNames(raw []byte) []string {
 	return out
 }
 
+// Toolset 是配置里和 MCP 有关的两节：server 本身，以及它们的工具各自的授权边界。
+// 管理后台的「MCP」页读写的就是它。
+type Toolset struct {
+	MCP   []MCPConfig  `yaml:"mcp_servers"`
+	Tools []ToolConfig `yaml:"tools"`
+}
+
+// ReadToolset 从配置文件的原文里读出 MCP server 与工具授权两节。
+func ReadToolset(raw []byte) (Toolset, error) {
+	var t Toolset
+	if err := yaml.Unmarshal(raw, &t); err != nil {
+		return t, fmt.Errorf("config: 解析配置失败: %w", err)
+	}
+	return t, nil
+}
+
+// WriteToolset 把 MCP server 与工具授权两节写回配置文件的原文，其余的部分原样保留。
+func WriteToolset(raw []byte, t Toolset) ([]byte, error) {
+	values := map[string]any{}
+	if len(t.MCP) > 0 {
+		values["mcp_servers"] = t.MCP
+	}
+	if len(t.Tools) > 0 {
+		values["tools"] = t.Tools
+	}
+	return writeSections(raw, []string{"mcp_servers", "tools"}, values)
+}
+
 // ReadConnectors 从配置文件的原文里读出连接器一节。
 func ReadConnectors(raw []byte) (ConnectorsConfig, error) {
 	var f struct {

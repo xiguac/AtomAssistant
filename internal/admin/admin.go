@@ -48,6 +48,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomhelper/internal/skill"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
@@ -84,6 +85,8 @@ type Options struct {
 	Vault *vault.Vault
 	// Box 是这台机器的数据密钥，读写工作区里加密存放的文件要用。
 	Box *seal.Box
+	// Scanner 是安装 Skill 之前的扫描器。为空时后台装不了 Skill：没扫过的不装。
+	Scanner skill.Checker
 	// Tasks 用来新建任务、回话、批准和拒绝，与消息渠道走的是同一套入口。
 	Tasks *channel.Kernel
 	// ConfigPath 是 YAML 配置文件的路径，后台可以编辑它。
@@ -342,6 +345,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /connectors/holidays", auth(s.holidaysSave))
 	mux.HandleFunc("POST /connectors/disable", auth(s.connectorDisable))
 	mux.HandleFunc("POST /connectors/test", auth(s.connectorTest))
+	mux.HandleFunc("GET /mcp", auth(s.mcpPage))
+	mux.HandleFunc("POST /mcp/amap", auth(s.mcpAmap))
+	mux.HandleFunc("POST /mcp/server", auth(s.mcpSave))
+	mux.HandleFunc("POST /mcp/server/delete", auth(s.mcpDelete))
+	mux.HandleFunc("POST /mcp/test", auth(s.mcpTest))
+	mux.HandleFunc("POST /mcp/sync", auth(s.mcpSync))
+	mux.HandleFunc("POST /mcp/tools", auth(s.mcpTools))
+	mux.HandleFunc("POST /mcp/installed/delete", auth(s.mcpInstalledDelete))
+	mux.HandleFunc("GET /skills", auth(s.skillsPage))
+	mux.HandleFunc("POST /skills", auth(s.skillInstall))
+	mux.HandleFunc("POST /skills/delete", auth(s.skillDelete))
+	mux.HandleFunc("GET /prompts", auth(s.promptsPage))
+	mux.HandleFunc("POST /prompts", auth(s.promptSave))
 	mux.HandleFunc("GET /security", auth(s.securityPage))
 	mux.HandleFunc("POST /security/methods", auth(s.methodsSave))
 	mux.HandleFunc("POST /security/totp/start", auth(s.totpStart))
@@ -745,6 +761,11 @@ func (s *Server) toolOptions(metas []vault.Meta) []toolOption {
 		if list, err := config.ReadChannels(raw); err == nil {
 			for _, c := range list {
 				add(c.VaultUser(), "消息渠道 "+c.Name)
+			}
+		}
+		if t, err := config.ReadToolset(raw); err == nil {
+			for _, m := range t.MCP {
+				add(m.VaultUser(), "MCP server "+m.Name)
 			}
 		}
 		for _, name := range config.ReadToolNames(raw) {

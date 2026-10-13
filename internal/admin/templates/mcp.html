@@ -1,0 +1,104 @@
+{{define "content"}}
+<h1>MCP</h1>
+<div class="sub">接入 MCP server 并设定各工具的授权范围。接入后其工具进入工具目录，助手在任务规划时可直接调用。密钥保存至保险库，保存后不可查看。修改后需重启服务方可生效。</div>
+
+{{with .Data}}
+<div class="cols">
+<div>
+<h2 style="margin-top:0">已接入的 MCP server <span class="count">{{len .Servers}}</span></h2>
+{{range .Servers}}
+<div class="card">
+  <div class="band">
+    <div><b>{{.Name}}</b> <span class="mono muted" style="word-break:break-all">{{if eq .Transport "http"}}{{.URL}}{{else}}{{.Command}} {{join .Args " "}}{{end}}</span></div>
+    <div class="actions" style="flex-wrap:nowrap">
+      {{if .Secret}}{{if .KeyOK}}<span class="pill ok plain">密钥已配置</span>{{else}}<span class="pill bad plain">密钥未配置</span>{{end}}{{else}}<span class="pill plain">无需密钥</span>{{end}}
+      <form method="post" action="/mcp/sync"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+        <button class="btn sec sm">读取工具</button></form>
+      <form method="post" action="/mcp/server/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+        <button class="btn danger sm">移除</button></form>
+    </div>
+  </div>
+  {{if .Tools}}<form method="post" action="/mcp/tools">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+    <table>
+      <thead><tr><th>工具</th><th style="width:200px">副作用等级</th><th style="width:200px">参数隐私上限</th></tr></thead>
+      <tbody>{{range .Tools}}{{$side := .SideEffect}}{{$privacy := .MaxPrivacy}}<tr>
+        <td><span class="mono" style="color:var(--text)">{{.Short}}</span><input type="hidden" name="tool" value="{{.Name}}"></td>
+        <td><select name="side" aria-label="{{.Short}} 的副作用等级">{{range $.Data.SideEffects}}<option value="{{.Value}}"{{if eq .Value $side}} selected{{end}}>{{.Label}}</option>{{end}}{{if eq $side "none"}}<option value="none" selected>无副作用</option>{{end}}</select></td>
+        <td><select name="privacy" aria-label="{{.Short}} 的参数隐私上限">{{range $.Data.PrivacyLevels}}<option value="{{.Value}}"{{if eq .Value $privacy}} selected{{end}}>{{.Label}}</option>{{end}}</select></td>
+      </tr>{{end}}</tbody>
+    </table>
+    <div class="band foot"><span class="note muted">只读工具可直接调用，其余工具按审批规则处理，默认需经确认。参数中含有超出隐私上限的字段时调用将被拦截。</span><button class="btn">保存授权</button></div>
+  </form>{{else}}<div class="empty">尚未登记工具，未登记的工具无法调用。请点击「读取工具」。</div>{{end}}
+</div>
+{{else}}<div class="card"><div class="empty">暂无 MCP server。可在右侧接入高德地图，或添加其他 MCP server。</div></div>{{end}}
+
+<h2>助手自行安装的 MCP server <span class="count">{{len .Installed}}</span></h2>
+<div class="card">
+  {{if .Installed}}<table>
+    <thead><tr><th>名称</th><th>地址</th><th>说明</th><th>安装时间</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Installed}}<tr>
+      <td><b style="font-weight:500">{{.Name}}</b><div class="note muted">{{.RegistryName}}</div></td>
+      <td><span class="mono" style="word-break:break-all">{{.URL}}</span></td>
+      <td>{{short .Description 80}}</td>
+      <td class="time">{{when .InstalledAt}}</td>
+      <td class="r"><form method="post" action="/mcp/installed/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+        <button class="btn danger sm">移除</button></form></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">暂无。助手在任务中缺少能力时可自行查找并安装通过扫描的远程 MCP server。</div>{{end}}
+  <div class="band foot"><span class="note muted">此类 server 的授权范围固定：仅接收普通级别的参数，返回内容按外部内容处理，无法使用保险库条目。</span></div>
+</div>
+</div>
+
+<div>
+<h2>高德地图 {{if .Amap}}<span class="pill ok plain">已接入</span>{{else}}<span class="pill plain">未接入</span>{{end}}</h2>
+<form method="post" action="/mcp/amap" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad">
+    <div class="note" style="margin-bottom:14px">提供地理编码、天气查询、路径规划（驾车、公交、步行、骑行）、距离测量与地点搜索，供助手在出行类任务的规划中使用。</div>
+    <label for="amap-key">Key</label><input id="amap-key" type="password" name="key" autocomplete="new-password">
+    <div class="help">在高德开放平台（lbs.amap.com）创建应用后获取。保存至保险库，保存后不可查看。{{if .Amap}}留空表示沿用原 Key{{end}}</div>
+  </div>
+  <div class="band foot"><span class="note muted">工具均按只读登记，参数隐私上限为敏感（地图查询需传入地址），可在左侧逐项调整。</span><button class="btn">{{if .Amap}}保存{{else}}接入{{end}}</button></div>
+</form>
+
+<form method="post" action="/mcp/server" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>添加或修改 MCP server</b></div>
+  <div class="pad grid2">
+    <div><label for="mcp-name">名称</label><input id="mcp-name" type="text" name="name" placeholder="flight">
+      <div class="help">同时作为工具名前缀。填写已有名称即为修改该 server</div></div>
+    <div><label for="mcp-transport">连接方式</label>
+      <select id="mcp-transport" name="transport"><option value="http">远程（Streamable HTTP）</option><option value="command">本地进程（stdio）</option></select></div>
+    <div class="full"><label for="mcp-url">服务器地址</label><input id="mcp-url" type="text" name="url" placeholder="https://mcp.example.com/mcp">
+      <div class="help">连接方式为远程时填写，不含密钥等查询参数</div></div>
+    <div><label for="mcp-command">启动命令</label><input id="mcp-command" type="text" name="command" placeholder="npx">
+      <div class="help">连接方式为本地进程时填写</div></div>
+    <div><label for="mcp-args">命令参数</label><input id="mcp-args" type="text" name="args" placeholder="-y @scope/some-mcp-server">
+      <div class="help">以空格分隔</div></div>
+    <div><label for="mcp-secret-name">密钥参数名</label><input id="mcp-secret-name" type="text" name="secret_name" placeholder="key">
+      <div class="help">远程为查询参数名，本地进程为环境变量名。无需密钥时留空</div></div>
+    <div><label for="mcp-key">密钥</label><input id="mcp-key" type="password" name="key" autocomplete="new-password">
+      <div class="help">保存至保险库。修改已有 server 时留空表示沿用原密钥</div></div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">本地进程仅获得此处的密钥与配置中声明的环境变量，不继承服务进程的环境。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      <button class="btn sec" formaction="/mcp/test" data-async>连接测试</button>
+    </div>
+  </div>
+</form>
+
+<div class="card">
+  <div class="band"><b>重启服务</b></div>
+  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
+    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button class="btn sec">重启服务</button></form>
+  </div>
+</div>
+</div>
+</div>
+{{end}}
+{{end}}

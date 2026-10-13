@@ -192,6 +192,7 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 	}
 	srv, err := admin.New(admin.Options{
 		Store: st, Vault: safe, Box: box,
+		Scanner:      skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
 		Tasks:        &channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()},
 		ConfigPath:   cfg.ConfigPath,
 		PasswordHash: cfg.AdminPasswordHash,
@@ -303,7 +304,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		return nil, err
 	}
 
-	servers, err := file.MCPServers()
+	servers, err := file.MCPServers(safe)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +396,8 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	planner := agent.NewPlanner(router, gw, agent.PlannerOptions{
 		ReplyStyle:  file.Reply.Style,
 		ReplyCustom: file.Reply.Custom,
-	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()).WithCapabilities(st.Skills())
+	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()).WithCapabilities(st.Skills()).
+		WithPrompts(agent.SettingPrompts{Store: st})
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills())
 
 	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。
