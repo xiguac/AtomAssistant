@@ -138,6 +138,8 @@ type mcpServerView struct {
 	KeyOK bool
 	// NoKey 为真表示它是不需要密钥的预置服务，页面上不显示填写密钥的那一行。
 	NoKey bool
+	// Title 是预置服务给人看的名字（如"高德地图"），不是预置的为空。
+	Title string
 	// Keys 是它声明的各项密钥，页面上每一项一个输入框。
 	Keys  []mcpKeyView
 	Tools []mcpToolView
@@ -210,6 +212,9 @@ func (s *Server) mcpPage(w http.ResponseWriter, r *http.Request, v *view) {
 	for _, m := range t.MCP {
 		preset := presetOf(m)
 		sv := mcpServerView{MCPConfig: m, NoKey: preset != nil && preset.KeyLabel == "", KeyOK: true}
+		if preset != nil {
+			sv.Title = preset.Title
+		}
 		for _, sec := range m.AllSecrets() {
 			ok := stored[strings.TrimPrefix(sec.Secret, vault.HandlePrefix)]
 			sv.Keys = append(sv.Keys, mcpKeyView{Param: sec.Name, OK: ok})

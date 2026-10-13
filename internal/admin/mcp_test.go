@@ -344,8 +344,13 @@ func TestAdmin_MCP页预置的滴滴与12306按写定的名单登记(t *testing.
 	}
 
 	_, body = e.get("/mcp")
-	if strings.Contains(body, key) || strings.Count(body, "已接入") < 2 || !strings.Contains(body, `value="didi.taxi_create_order"`) {
-		t.Fatal("MCP 页应显示预置服务已接入并列出工具，不显示密钥")
+	if strings.Contains(body, key) || !strings.Contains(body, `value="didi.taxi_create_order"`) {
+		t.Fatal("MCP 页应列出已接入的预置服务的工具，不显示密钥")
+	}
+	// 已接入的预置服务只列一次：左侧的卡片带着它的名字，右侧不再重复出现接入表单；没接入的照旧在右侧。
+	if strings.Count(body, "滴滴出行") != 1 || strings.Contains(body, `action="/mcp/didi"`) || strings.Contains(body, `action="/mcp/12306"`) ||
+		!strings.Contains(body, `action="/mcp/amap"`) {
+		t.Fatal("已接入的预置服务不应在右侧重复列出")
 	}
 	// 再次保存时密钥留空：沿用原密钥，已有的授权不动。
 	if loc := post("/mcp/didi", url.Values{}); !strings.Contains(loc, "新登记 0 个") {

@@ -75,9 +75,9 @@
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="pad grid2">
     <div><label for="qw-host">API Host</label><input id="qw-host" type="text" name="host" value="{{if .Weather}}{{.Weather.Host}}{{end}}" placeholder="abcxyz.qweatherapi.com">
-      <div class="help">和风天气（QWeather）为每个开发者分配的独立地址，在控制台（console.qweather.com）的「设置」中查看</div></div>
+      <div class="help">必填。和风天气（QWeather）为每个开发者分配的独立地址，形如 abcxyz.qweatherapi.com，在控制台（console.qweather.com）左侧菜单的「设置」页查看；凭据页上不显示此项</div></div>
     <div><label for="qw-key">API KEY</label><input id="qw-key" type="password" name="key" autocomplete="new-password">
-      <div class="help">在控制台的「项目管理」中创建凭据，身份认证方式选择 API KEY。已配置时留空表示沿用原密钥</div></div>
+      <div class="help">控制台「项目管理」中凭据的 API KEY；凭据 ID 无需填写。已配置时留空表示沿用原密钥</div></div>
   </div>
   <div class="band foot">
     <span class="note muted">提供实时天气、10 天内逐日预报与气象预警查询。查询时仅发送城市或区县名称。</span>

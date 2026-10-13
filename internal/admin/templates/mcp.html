@@ -9,7 +9,7 @@
 {{range .Servers}}
 <div class="card">
   <div class="band">
-    <div><b>{{.Name}}</b> <span class="mono muted" style="word-break:break-all">{{if eq .Transport "http"}}{{.URL}}{{else}}{{.Command}} {{join .Args " "}}{{end}}</span></div>
+    <div><b>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</b> {{if .Title}}{{if ne .Title .Name}}<span class="chip">{{.Name}}</span> {{end}}{{end}}<span class="mono muted" style="word-break:break-all">{{if eq .Transport "http"}}{{.URL}}{{else}}{{.Command}} {{join .Args " "}}{{end}}</span></div>
     <div class="actions" style="flex-wrap:nowrap">
       {{if .Secret}}{{if .KeyOK}}<span class="pill ok plain">密钥已配置</span>{{else}}<span class="pill bad plain">密钥未配置</span>{{end}}{{else}}<span class="pill plain">无需密钥</span>{{end}}
       <form method="post" action="/mcp/sync"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
@@ -66,18 +66,18 @@
 </div>
 
 <div>
-{{range .Presets}}
-<h2>{{.Title}} {{if .On}}<span class="pill ok plain">已接入</span>{{else}}<span class="pill plain">未接入</span>{{end}}</h2>
+{{/* 已接入的预置服务只在左侧列出一次，这里只列还没接入的。 */}}{{range .Presets}}{{if not .On}}
+<h2>{{.Title}} <span class="pill plain">未接入</span></h2>
 <form method="post" action="/mcp/{{.ID}}" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="pad">
     <div class="note"{{if .KeyLabel}} style="margin-bottom:14px"{{end}}>{{.Intro}}</div>
     {{if .KeyLabel}}<label for="{{.ID}}-key">{{.KeyLabel}}</label><input id="{{.ID}}-key" type="password" name="key" autocomplete="new-password">
-    <div class="help">{{.KeyHelp}}保存至环境变量，保存后不可查看。{{if .On}}留空表示沿用原 {{.KeyLabel}}{{end}}</div>{{end}}
+    <div class="help">{{.KeyHelp}}保存至环境变量，保存后不可查看。</div>{{end}}
   </div>
-  <div class="band foot"><span class="note muted">{{.Foot}}</span><button class="btn">{{if .On}}保存{{else}}接入{{end}}</button></div>
+  <div class="band foot"><span class="note muted">{{.Foot}}</span><button class="btn">接入</button></div>
 </form>
-{{end}}
+{{end}}{{end}}
 
 <form method="post" action="/mcp/server" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
