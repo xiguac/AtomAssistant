@@ -68,6 +68,11 @@ var appJS []byte
 //go:embed static/passkey.js
 var passkeyJS []byte
 
+// favicon 是浏览器标签页上的图标：品牌里的那个原子。
+//
+//go:embed static/favicon.svg
+var favicon []byte
+
 const (
 	cookieName = "atom_session"
 	sessionTTL = 12 * time.Hour
@@ -315,6 +320,14 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(passkeyJS)
 	})
+	icon := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = w.Write(favicon)
+	}
+	mux.HandleFunc("GET /static/favicon.svg", icon)
+	// 浏览器不管页面怎么写都会来取这个地址一次，一并给它。
+	mux.HandleFunc("GET /favicon.ico", icon)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("POST /login/code", s.loginCode)
@@ -403,7 +416,7 @@ func (s *Server) Handler() http.Handler {
 		h := w.Header()
 		// 页面不引用任何外部资源，也不许被别的网页嵌进去。脚本只认自己这一个文件，不许内联：
 		// 就算哪里的转义出了纰漏，混进页面的脚本也不会被执行。脚本只能向后台自己发请求。
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")

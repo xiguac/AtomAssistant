@@ -313,13 +313,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	configured := make(map[string]bool, len(servers))
 	for _, spec := range servers {
 		configured[spec.Name] = true
-		if err := gw.Connect(ctx, spec); err != nil {
-			// 一个 MCP server 连不上不应该拖垮整个进程：其余工具照常可用，
-			// 但必须让用户知道哪些能力现在不可用。
-			log.Error("MCP server 连接失败，相关工具不可用", "server", spec.Name, "err", err)
-			continue
-		}
-		log.Info("已连接 MCP server", "server", spec.Name)
+		// 一个 MCP server 连不上不应该拖垮整个进程：其余工具照常可用，
+		// 但必须让用户知道哪些能力现在不可用。
+		connectMCP(ctx, gw, spec, log, "已连接 MCP server")
 	}
 	// 助手以前自己装上的 server。配置文件里有同名的就让位：用户亲手批准的优先。
 	installed, err := st.MCPInstalls().ListServers(ctx)
@@ -331,11 +327,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 			log.Warn("助手安装的 MCP server 与配置文件里的重名，已跳过", "server", srv.Name)
 			continue
 		}
-		if err := gw.Connect(ctx, unreviewedSpec(srv)); err != nil {
-			log.Error("MCP server 连接失败，相关工具不可用", "server", srv.Name, "err", err)
-			continue
-		}
-		log.Info("已连接助手安装的 MCP server", "server", srv.Name, "地址", srv.URL)
+		connectMCP(ctx, gw, unreviewedSpec(srv), log, "已连接助手安装的 MCP server")
 	}
 	log.Info("工具目录就绪", "工具数", len(gw.Catalog()))
 
@@ -532,6 +524,32 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
+}
+
+// mcpConnectWait 是启动时等一个 MCP server 连上的最长时间。
+const mcpConnectWait = 20 * time.Second
+
+// connectMCP 连接一个 MCP server，最多等 mcpConnectWait；到时还没连上就转到后台继续连，不拖住启动。
+//
+// 本机运行的 server 第一次启动可能要先下载（npx 取包），慢的时候要几分钟；
+// 一个连得慢的 server 不该让整个助手——包括消息源——迟迟起不来。它连上之后工具会自己进目录。
+func connectMCP(ctx context.Context, gw *mcpgw.Gateway, spec mcpgw.ServerSpec, log *slog.Logger, done string) {
+	result := make(chan error, 1)
+	go func() { result <- gw.Connect(ctx, spec) }()
+	report := func(err error) {
+		if err != nil {
+			log.Error("MCP server 连接失败，相关工具不可用", "server", spec.Name, "err", err)
+			return
+		}
+		log.Info(done, "server", spec.Name, "工具数", len(gw.ToolsOf(spec.Name)))
+	}
+	select {
+	case err := <-result:
+		report(err)
+	case <-time.After(mcpConnectWait):
+		log.Warn("MCP server 还没连上，转到后台继续连接，连上之后它的工具才可用", "server", spec.Name, "已等待", mcpConnectWait.String())
+		go func() { report(<-result) }()
+	}
 }
 
 // chatOutbox 把助手要发的文件交给渠道中枢。

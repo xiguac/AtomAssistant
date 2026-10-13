@@ -1035,6 +1035,15 @@ func TestAdmin_连接测试在后台提交不刷新页面(t *testing.T) {
 		strings.Count(string(page), "data-async") < 2 {
 		t.Fatal("页面应只引用后台自己的脚本，连接测试按钮应标记为后台提交")
 	}
+	// 图标不登录也能取，页面引用它，安全策略允许加载本站的图片。
+	if !strings.Contains(string(page), `<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">`) || !strings.Contains(csp, "img-src 'self'") {
+		t.Fatalf("页面应引用图标且安全策略允许加载: %s", csp)
+	}
+	for _, p := range []string{"/static/favicon.svg", "/favicon.ico"} {
+		if code, svg := e.get(p); code != http.StatusOK || !strings.HasPrefix(svg, "<svg") {
+			t.Fatalf("图标 %s 应能取到: %d", p, code)
+		}
+	}
 	if code, js := e.get("/static/app.js"); code != http.StatusOK || !strings.Contains(js, "data-async") {
 		t.Fatalf("脚本应能取到: %d", code)
 	}
