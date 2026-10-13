@@ -30,6 +30,8 @@ const usage = `用法:
   atomctl steps <任务ID>         查看步骤日志
   atomctl approve <任务ID>       批准任务当前等待确认的动作
   atomctl reject <任务ID> [理由] 拒绝该动作，交回规划器另想办法
+  atomctl cancel <任务ID>|all [理由]
+                                 取消一个任务，或者全部还没结束的任务；取消后不会再被调度
   atomctl resolve <任务ID> done|failed
                                  裁决一个执行中断、状态不明的不可逆操作：
                                  done 表示已生效，failed 表示未生效
@@ -182,6 +184,15 @@ func run(args []string) error {
 			reason = args[2]
 		}
 		return kernel.Reject(ctx, st, args[1], reason)
+	case "cancel":
+		if len(args) < 2 {
+			return fmt.Errorf("cancel 需要一个任务 ID，或者 all")
+		}
+		reason := ""
+		if len(args) > 2 {
+			reason = args[2]
+		}
+		return cancelTasks(ctx, st, args[1], reason)
 	case "resolve":
 		if len(args) < 3 || (args[2] != "done" && args[2] != "failed") {
 			return fmt.Errorf("resolve 需要任务 ID 和 done 或 failed")
