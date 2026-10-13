@@ -26,15 +26,29 @@
   </a>{{else}}<div class="empty" style="justify-content:center">暂无进行中的任务。</div>{{end}}
 </div>
 
-<h2>已结束</h2>
-<div class="card rows">
-  {{range .Recent}}<a href="/tasks/{{.ID}}">
-    <span class="t">{{short .Title 30}}</span>
-    <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
-    <span class="d">{{short .Reason 100}}</span>
-    <span class="w">{{when .UpdatedAt}}</span>
-  </a>{{else}}<div class="empty" style="justify-content:center">暂无已结束的任务。</div>{{end}}
-</div>
+<h2>已结束 <span class="count">{{len .Recent}}</span></h2>
+{{if .Recent}}<form method="post" action="/tasks/delete" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band">
+    <label class="check"><input type="checkbox" data-check-all aria-label="全选已结束的任务">全选</label>
+    <div class="actions">
+      <button class="btn danger sm">删除所选</button>
+      <button class="btn danger sm" name="all" value="1">删除全部已结束</button>
+    </div>
+  </div>
+  <div class="rows">
+  {{range .Recent}}<div>
+    <input type="checkbox" name="id" value="{{.ID}}" aria-label="选择任务「{{short .Title 30}}」">
+    <a class="pick" href="/tasks/{{.ID}}">
+      <span class="t">{{short .Title 30}}</span>
+      <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
+      <span class="d">{{short .Reason 100}}</span>
+      <span class="w">{{when .UpdatedAt}}</span>
+    </a>
+  </div>{{end}}
+  </div>
+  <div class="band foot"><span class="note muted">删除任务将移除其步骤记录与收到的图片，不可恢复。任务结束时提炼的记忆、流程及模型评分已单独保存，不受影响。「删除全部已结束」包含未在此列出的更早任务。</span></div>
+</form>{{else}}<div class="card empty">暂无已结束的任务。</div>{{end}}
 </div>
 <div>
 <form method="post" action="/tasks" class="card sticky">

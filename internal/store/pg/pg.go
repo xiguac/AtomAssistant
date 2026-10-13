@@ -143,6 +143,53 @@ func (s *Store) ResetForTest(ctx context.Context) error {
 	return nil
 }
 
+// DeleteFinishedTasks 删除已经结束的任务，返回删掉了几个。ids 为空表示删除全部已结束的。
+//
+// 只删结束了的（完成、失败、取消）：还在跑、还在等的任务不会被删，哪怕它的编号在 ids 里。
+// 跟着任务一起删掉的是它自己的记录——步骤日志、收到的图片、没送达的消息、事件订阅、通知指纹。
+// 留下的是任务办完时已经落下的东西，它们从那一刻起就不依赖任务了：
+// 提炼出的记忆和流程、学到的表达风格、任务模型的评分记录，以及审计日志。
+func (s *Store) DeleteFinishedTasks(ctx context.Context, ids []string) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("pg: 开启事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const finished = `state IN ('done', 'failed', 'cancelled')`
+	sql, args := `DELETE FROM tasks WHERE `+finished+` RETURNING id`, []any{}
+	if len(ids) > 0 {
+		sql, args = `DELETE FROM tasks WHERE id = ANY($1) AND `+finished+` RETURNING id`, []any{ids}
+	}
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return 0, fmt.Errorf("pg: 删除任务失败: %w", err)
+	}
+	var gone []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("pg: 删除任务失败: %w", err)
+		}
+		gone = append(gone, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("pg: 删除任务失败: %w", err)
+	}
+	// 步骤、图片、收件箱和订阅有外键，随任务一起删了；通知指纹没有外键，在这里删。
+	if len(gone) > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM channel_notices WHERE task_id = ANY($1)`, gone); err != nil {
+			return 0, fmt.Errorf("pg: 清理任务通知记录失败: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("pg: 提交删除失败: %w", err)
+	}
+	return len(gone), nil
+}
+
 const taskColumns = `
 	id, parent_id, title, goal, state, reason,
 	domain, visibility, visibility_target, origin_trust,

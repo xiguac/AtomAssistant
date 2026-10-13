@@ -320,6 +320,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /logout", auth(s.logout))
 	mux.HandleFunc("GET /{$}", auth(s.home))
 	mux.HandleFunc("POST /tasks", auth(s.createTask))
+	mux.HandleFunc("POST /tasks/delete", auth(s.deleteTasks))
 	mux.HandleFunc("GET /tasks/{id}", auth(s.taskPage))
 	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
 	mux.HandleFunc("POST /tasks/{id}/reject", auth(s.reject))
@@ -579,6 +580,28 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, _ *view) {
 		return
 	}
 	http.Redirect(w, r, "/tasks/"+id, http.StatusSeeOther)
+}
+
+// deleteTasks 批量删除已经结束的任务。
+//
+// 删掉的是任务自己的记录。任务办完时提炼出的记忆、流程和评分早已另外存下，不受影响——
+// 每个任务办完就把该留的东西落了盘，之后任务本身留不留都无所谓。
+func (s *Server) deleteTasks(w http.ResponseWriter, r *http.Request, _ *view) {
+	ids := r.PostForm["id"]
+	all := r.PostFormValue("all") != ""
+	n, err := 0, error(nil)
+	switch {
+	case all:
+		n, err = s.opts.Store.DeleteFinishedTasks(r.Context(), nil)
+	case len(ids) == 0:
+		err = errors.New("请先勾选要删除的任务")
+	default:
+		n, err = s.opts.Store.DeleteFinishedTasks(r.Context(), ids)
+	}
+	if err == nil {
+		s.opts.Log.Info("已结束的任务已在后台删除", "数量", n, "全部", all, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/", fmt.Sprintf("已删除 %d 个已结束的任务。由这些任务提炼的记忆与评分记录不受影响。", n), err)
 }
 
 type stepView struct {

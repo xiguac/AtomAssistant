@@ -80,6 +80,9 @@ h2 { font-size:16px; line-height:24px; font-weight:600; letter-spacing:-.005em; 
 .rows > * { display:flex; align-items:center; gap:16px; padding:0 20px; min-height:48px; border-bottom:1px solid var(--row); color:inherit; }
 .rows > *:last-child { border-bottom:0; }
 .rows > a:hover { background:var(--canvas); color:inherit; }
+/* 带勾选框的行：勾选框在左，其余部分仍是一个可以点进去的链接。 */
+.rows a.pick { display:flex; align-items:center; gap:16px; flex:1; min-width:0; min-height:48px; color:inherit; }
+.rows > div:hover { background:var(--canvas); }
 .rows .t { width:200px; flex:none; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rows .d { flex:1; min-width:0; color:var(--text-2); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rows .w { flex:none; color:var(--text-2); font:12px/18px var(--mono); }

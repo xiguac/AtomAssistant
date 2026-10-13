@@ -1,6 +1,8 @@
-// 管理后台唯一的一段脚本：让带 data-async 的按钮在后台提交表单，结果显示在按钮所在的表单里，
-// 页面不刷新——点「连接测试」之后，表单里已经填的内容都还在。
-// 脚本不可用时这些按钮照常提交表单并整页跳转，功能不受影响。
+// 管理后台各页共用的一段脚本，做两件事：
+//   - 让带 data-async 的按钮在后台提交表单，结果显示在按钮所在的表单里，页面不刷新——
+//     点「连接测试」之后，表单里已经填的内容都还在。
+//   - 让「全选」勾选框一次勾上表单里的全部条目。
+// 脚本不可用时按钮照常提交表单并整页跳转，条目也可以逐个勾选，功能不受影响。
 (function () {
   "use strict";
 
@@ -14,6 +16,18 @@
     box.className = "async-result " + (ok ? "ok" : "bad");
     box.textContent = text;
   }
+
+  // 「全选」：带 data-check-all 的勾选框控制它所在表单里的全部勾选框。
+  document.addEventListener("change", function (ev) {
+    var all = ev.target;
+    if (!all.matches || !all.matches("input[data-check-all]") || !all.form) {
+      return;
+    }
+    var boxes = all.form.querySelectorAll('input[type="checkbox"][name]');
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].checked = all.checked;
+    }
+  });
 
   document.addEventListener("click", function (ev) {
     var btn = ev.target.closest ? ev.target.closest("button[data-async]") : null;

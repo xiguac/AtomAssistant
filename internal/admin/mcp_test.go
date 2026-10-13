@@ -2,13 +2,18 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/team"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -301,4 +306,99 @@ func TestAdmin_系统提示词页逐段改写停用与恢复默认(t *testing.T)
 	if saved, err := source.Prompts(ctx); err != nil || len(saved) != 0 {
 		t.Fatalf("恢复默认、重新启用之后不应留下任何改动: %v %v", saved, err)
 	}
+}
+
+func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+	post := func(form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post("/tasks/delete", form)
+		return loc
+	}
+	// 四个任务：两个办完了，一个失败了，一个还在排队。
+	mk := func(title string, to core.TaskState) *core.Task {
+		t.Helper()
+		tk := core.NewTask(title, title, core.TrustUser)
+		if err := e.store.CreateTask(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+		for _, hop := range [][2]core.TaskState{{core.StateNew, core.StateReady}, {core.StateReady, core.StateRunning}, {core.StateRunning, to}} {
+			if hop[0] == hop[1] || (to == core.StateReady && hop[0] != core.StateNew) {
+				continue
+			}
+			if err := e.store.Transition(ctx, tk.ID, hop[0], hop[1], "测试"); err != nil {
+				t.Fatalf("推进 %s 失败: %v", title, err)
+			}
+		}
+		return tk
+	}
+	done1, done2 := mk("订餐厅", core.StateDone), mk("查天气", core.StateDone)
+	failed, queued := mk("订机票", core.StateFailed), mk("写周报", core.StateReady)
+
+	// 办完的任务留下了步骤、图片，以及一条提炼出的记忆和一份评分记录。
+	step := core.NewStep(done1.ID, 1, core.StepTool, json.RawMessage(`{"q":"餐厅"}`))
+	step.ToolName, step.SideEffect = "web.search", core.SideEffectReadOnly
+	step.Complete(json.RawMessage(`{"text":"..."}`), core.TrustExternal)
+	if err := e.store.AppendStep(ctx, step); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.PutTaskImage(ctx, done1.ID, "image/png", []byte("PNG")); err != nil {
+		t.Fatal(err)
+	}
+	pipe := memory.NewPipeline(e.store.Memories(), nil)
+	out, err := pipe.Ingest(ctx, []memory.Candidate{{Kind: memory.KindFact, Subject: "user", Domain: "饮食", Value: "不太吃辣",
+		Temporality: memory.TemporalDurable, Source: memory.Source{Kind: memory.SourceTask, Ref: done1.ID, Trust: core.TrustToolOutput}}})
+	if err != nil || len(out) != 1 {
+		t.Fatalf("写入记忆失败: %v", err)
+	}
+	if err := e.store.Team().PutWork(ctx, &team.Work{ID: team.WorkID(done1.ID, 1, 0), TaskID: done1.ID, StepSeq: 1,
+		Worker: "分析师", Category: team.CatAnalysis, Title: "订餐厅", CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, body := e.get("/")
+	if !strings.Contains(body, `name="id" value="`+done1.ID+`"`) || strings.Contains(body, `name="id" value="`+queued.ID+`"`) {
+		t.Fatal("只有已结束的任务可以勾选删除")
+	}
+	if loc := post(url.Values{}); !strings.Contains(loc, "请先勾选") {
+		t.Fatalf("什么都没选应提示: %s", loc)
+	}
+	// 勾选删除：没结束的任务即使编号混在里面也删不掉。
+	if loc := post(url.Values{"id": {done1.ID, queued.ID}}); !strings.Contains(loc, "已删除 1 个") {
+		t.Fatalf("应只删掉结束了的那一个: %s", loc)
+	}
+	if _, err := e.store.GetTask(ctx, done1.ID); err == nil {
+		t.Fatal("勾选的已结束任务应被删除")
+	}
+	if _, err := e.store.GetTask(ctx, queued.ID); err != nil {
+		t.Fatalf("还在排队的任务不应被删: %v", err)
+	}
+	// 任务自己的记录跟着没了。
+	if steps, _ := e.store.ListSteps(ctx, done1.ID); len(steps) != 0 {
+		t.Fatal("任务的步骤应一并删除")
+	}
+	if imgs, _ := e.store.TaskImages(ctx, done1.ID, 4); len(imgs) != 0 {
+		t.Fatal("任务的图片应一并删除")
+	}
+	// 办完时落下的东西还在：记忆、评分记录。
+	if m, err := e.store.Memories().Get(ctx, out[0].MemoryID); err != nil || m.Current.Value != "不太吃辣" || m.Current.Source.Ref != done1.ID {
+		t.Fatalf("由这个任务提炼的记忆应保留: %+v %v", m, err)
+	}
+	if tally, err := e.store.Team().Tally(ctx); err != nil || len(tally) != 1 || tally[0].Runs != 1 {
+		t.Fatalf("任务模型的评分记录应保留: %+v %v", tally, err)
+	}
+
+	// 删除全部已结束的：完成的和失败的都删，排队的留着。
+	if loc := post(url.Values{"all": {"1"}}); !strings.Contains(loc, "已删除 2 个") {
+		t.Fatalf("应删掉剩下两个已结束的任务: %s", loc)
+	}
+	left, err := e.store.ListTasks(ctx, false, 10)
+	if err != nil || len(left) != 1 || left[0].ID != queued.ID {
+		t.Fatalf("只应剩下还在排队的任务: %+v %v", left, err)
+	}
+	_ = done2
+	_ = failed
 }
