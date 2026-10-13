@@ -257,6 +257,11 @@ func (a *Actuator) runPay(ctx context.Context, t *core.Task, s *core.Step) (json
 //
 // 日历的日程 id 同理：它是服务器上的一个路径，里面常常带着一长串编号。
 func classifiable(d kernel.Decision) json.RawMessage {
+	// 指派、方案和审核意见只写进任务自己的日志，不交给任何工具，不参与分级：
+	// 否则方案里提一句"客户海鲜过敏"，这一步就会被当成"含绝密数据的操作"拒掉。
+	if isInternalTool(d.ToolName) {
+		return nil
+	}
 	if isCalendarTool(d.ToolName) {
 		return without(d.Input, "id")
 	}

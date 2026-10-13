@@ -16,7 +16,10 @@ import (
 	"github.com/xiguac/atomhelper/internal/team"
 )
 
-// 多模型协作：主 AI 把能独立完成的脑力活派给协作模型。
+// 多模型协作里"派活"这一种做法：主 AI 把能独立完成的脑力活派给协作模型。
+//
+// 现在的分工是把整件事交给任务模型去办（见 delegate.go），启动时不再向模型开放派活工具；
+// 这里的代码仍然可用，由 Planner.WithTeam 打开。
 //
 // 协作模型只动脑、不动手：它拿不到任何工具，看不到任务的上下文，只看得到主 AI 写给它的
 // 那份交代和材料，交回来的只是一段文字。查资料、发邮件、写文件这些事仍然只有主 AI 能做，
@@ -245,6 +248,10 @@ func (e *Epilogue) judgeWork(ctx context.Context, t *core.Task, history []*core.
 		if s.Seq > first {
 			later = append(later, s)
 		}
+		if s.ToolName == ToolAssign && s.Status == core.StepDone {
+			// 整件事交给任务模型办的：它的成果就是任务最后的结论。
+			texts[s.Seq*maxJobs] = t.Reason
+		}
 		if s.ToolName != ToolDispatch || s.Status != core.StepDone {
 			continue
 		}
@@ -273,7 +280,7 @@ func (e *Epilogue) judgeWork(ctx context.Context, t *core.Task, history []*core.
 	if err != nil {
 		return kernel.Cost{}, err
 	}
-	resp, err := e.model.Complete(ctx, llm.PurposeExtract, llm.Request{Messages: msgs, JSONMode: true})
+	resp, err := e.model.Complete(ctx, llm.PurposePlan, llm.Request{Messages: msgs, JSONMode: true})
 	if err != nil {
 		return kernel.Cost{}, fmt.Errorf("agent: 判断用户对协作成果的评价失败: %w", err)
 	}

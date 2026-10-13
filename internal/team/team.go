@@ -249,6 +249,39 @@ func (b *Board) Pick(ctx context.Context, c Category) (Worker, error) {
 	return rows[0].Worker, nil
 }
 
+// PickExcept 决定某个类别的下一份活派给谁，但不派给 exclude 里的那些。
+//
+// 一件事交给某个模型办了几轮仍不合格、要换人时用：exclude 是已经试过的。
+// 除了它们再没有别人时返回错误。
+func (b *Board) PickExcept(ctx context.Context, c Category, exclude []string) (Worker, error) {
+	if len(b.workers) == 0 {
+		return Worker{}, fmt.Errorf("team: 没有配置协作模型")
+	}
+	if !ValidCategory(c) {
+		return Worker{}, fmt.Errorf("team: 没有 %q 这个类别", c)
+	}
+	rows, err := b.Standings(ctx, c)
+	if err != nil {
+		return Worker{}, err
+	}
+	tried := make(map[string]bool, len(exclude))
+	for _, name := range exclude {
+		tried[name] = true
+	}
+	for _, row := range rows {
+		if !tried[row.Worker.Name] {
+			return row.Worker, nil
+		}
+	}
+	// 这一类里的都试过了：别的类别的模型也可以顶上，总比没人接强。
+	for _, w := range b.workers {
+		if !tried[w.Name] {
+			return w, nil
+		}
+	}
+	return Worker{}, fmt.Errorf("team: 没有别的协作模型可换")
+}
+
 // Record 记下一份派出去的活。
 func (b *Board) Record(ctx context.Context, w *Work) error { return b.store.PutWork(ctx, w) }
 

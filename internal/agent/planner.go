@@ -180,6 +180,12 @@ type Planner struct {
 	hasFiles bool
 	// hasTeam 为真表示配置了协作模型，可以派活。
 	hasTeam bool
+	// team 与 workers 非空时，事情交给任务模型去办，主模型负责指派、评估方案和审核，见 delegate.go。
+	team    TaskAssigner
+	workers WorkerModel
+	// worker 是当前这次决策由哪个任务模型来做。它只存在于 decideDelegated 内部的副本上，
+	// 共享的 Planner 上永远是空的。
+	worker string
 	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
 	canSendFiles bool
 	// hasWeb 为真表示接入了联网搜索。
@@ -444,12 +450,21 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 	if err != nil {
 		return kernel.Decision{}, err
 	}
+	if p.delegating() {
+		return p.decideDelegated(ctx, t, history)
+	}
+	return p.decide(ctx, t, history)
+}
+
+// decide 让当前负责决策的模型（主模型，或者 p.worker 指定的任务模型）决定下一步。
+func (p *Planner) decide(ctx context.Context, t *core.Task, history []*core.Step) (kernel.Decision, error) {
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
 	}
 	style := p.opts.styleRule()
-	if p.voice != nil {
+	// 用户的表达风格只给主模型：任务模型的结论不直接给用户，给用户的答复由主模型在审核时写。
+	if p.voice != nil && p.worker == "" {
 		v, err := p.voice.Voice(ctx)
 		if err != nil {
 			return kernel.Decision{}, fmt.Errorf("agent: 读取表达风格失败: %w", err)
@@ -472,6 +487,9 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 	}
 	if p.library != nil && p.scope == nil {
 		system += "\n\n" + capabilityRule
+	}
+	if p.worker != "" {
+		system += "\n\n" + delegateRule + "\n\n" + workerLanguageRule
 	}
 	system += "\n\n" + style +
 		"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +
@@ -513,7 +531,7 @@ var errBadOutput = errors.New("agent: 模型输出不可用")
 //
 // 回答不可用时返回的 Decision 只带用量，供调用方记账。
 func (p *Planner) ask(ctx context.Context, t *core.Task, msgs []llm.Message) (kernel.Decision, error) {
-	resp, err := p.model.Complete(ctx, llm.PurposePlan, llm.Request{
+	resp, err := p.complete(ctx, llm.Request{
 		Messages: msgs,
 		JSONMode: true,
 	})
@@ -703,6 +721,9 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 			Pinned:  true,
 		})
 	}
+
+	// 主模型的预处理和最近一次审核意见同样钉着。
+	segs = append(segs, delegateSegments(history)...)
 
 	cut := len(history) - p.opts.RecentSteps
 	if cut < 0 {

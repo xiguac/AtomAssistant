@@ -173,7 +173,7 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 	if err != nil {
 		return kernel.Cost{}, err
 	}
-	resp, err := e.model.Complete(ctx, llm.PurposeExtract, llm.Request{Messages: msgs, JSONMode: true})
+	resp, err := e.model.Complete(ctx, llm.PurposePlan, llm.Request{Messages: msgs, JSONMode: true})
 	if err != nil {
 		return kernel.Cost{}, fmt.Errorf("agent: 提炼记忆失败: %w", err)
 	}

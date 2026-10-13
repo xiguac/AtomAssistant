@@ -375,13 +375,18 @@ type workView struct {
 }
 
 // worksOf 列出一个任务里派出去的活，连同交回来的成果。
-func (s *Server) worksOf(ctx context.Context, taskID string, steps []*core.Step) ([]workView, error) {
+func (s *Server) worksOf(ctx context.Context, t *core.Task, steps []*core.Step) ([]workView, error) {
+	taskID := t.ID
 	works, err := s.opts.Store.Team().WorkOfTask(ctx, taskID)
 	if err != nil || len(works) == 0 {
 		return nil, err
 	}
 	texts := map[string]string{}
 	for _, st := range steps {
+		if st.ToolName == agent.ToolAssign && st.Status == core.StepDone && t.State == core.StateDone {
+			// 整件事交给任务模型办的：它的成果就是任务最后的结论。
+			texts[team.WorkID(taskID, st.Seq, 0)] = t.Reason
+		}
 		if st.ToolName != agent.ToolDispatch || st.Status != core.StepDone {
 			continue
 		}

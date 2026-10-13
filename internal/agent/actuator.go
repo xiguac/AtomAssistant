@@ -178,6 +178,10 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
+	if isInternalTool(s.ToolName) {
+		// 指派、方案、审核意见是规划器自己写的记录，原样留在日志里。它们是模型写的，信任等级与模型输出一致。
+		return kernel.Result{Output: s.Input, Trust: core.TrustToolOutput}, nil
+	}
 	if s.ToolName == ToolDispatch {
 		// 协作模型交回来的是模型生成的文本，和主 AI 自己的输出一个等级：
 		// 它可能在复述材料里的话，不具备指令资格。

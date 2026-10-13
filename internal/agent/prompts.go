@@ -48,13 +48,13 @@ func (p *Planner) WithPrompts(s PromptSource) *Planner {
 	return p
 }
 
-// corePrompt 返回系统提示最前面的两段：基础约束与规划说明。
-func (p *Planner) corePrompt(ctx context.Context) (string, error) {
-	base, planner := baseRules, plannerSystemPrompt
+// promptTexts 返回当前生效的基础约束与规划说明：用户改写过的优先，否则是内置的。
+func (p *Planner) promptTexts(ctx context.Context) (base, planner string, err error) {
+	base, planner = baseRules, plannerSystemPrompt
 	if p.prompts != nil {
 		b, pl, err := p.prompts.Prompts(ctx)
 		if err != nil {
-			return "", fmt.Errorf("agent: 读取系统提示失败: %w", err)
+			return "", "", fmt.Errorf("agent: 读取系统提示失败: %w", err)
 		}
 		if strings.TrimSpace(b) != "" {
 			base = b
@@ -62,6 +62,15 @@ func (p *Planner) corePrompt(ctx context.Context) (string, error) {
 		if strings.TrimSpace(pl) != "" {
 			planner = pl
 		}
+	}
+	return base, planner, nil
+}
+
+// corePrompt 返回系统提示最前面的两段：基础约束与规划说明。
+func (p *Planner) corePrompt(ctx context.Context) (string, error) {
+	base, planner, err := p.promptTexts(ctx)
+	if err != nil {
+		return "", err
 	}
 	return base + "\n\n" + planner, nil
 }

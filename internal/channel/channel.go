@@ -351,8 +351,8 @@ const (
 	blameWord  = "/踩"
 )
 
-// rateHint 是办完一件有协作模型参与的事之后，附在结论后面的一句提示。
-const rateHint = "\n\n（这件事有一部分是协作模型做的。回 " + praiseWord + " 或 " + blameWord + " 告诉我做得怎么样，以后同类的活按你的评价来派。）"
+// rateHint 是办完一件交给任务模型办的事之后，附在答复后面的评分邀请。
+const rateHint = "\n\n（请给这次的回答打个分：回 " + praiseWord + " 或 " + blameWord + "。评分会记在办这件事的模型名下，以后同类的事优先交给评分高的。）"
 
 // rate 记下主人对这个会话里最近一件事的协作成果的评价。
 func (h *Hub) rate(ctx context.Context, channel, chat, tag string, good bool) error {

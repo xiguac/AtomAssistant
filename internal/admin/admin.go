@@ -684,7 +684,7 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 	if needsUser(t) && d.Pending == nil && t.State == core.StateWaiting {
 		d.Question = strings.TrimPrefix(t.Reason, "等待你的回复：")
 	}
-	if d.Works, err = s.worksOf(r.Context(), id, steps); err != nil {
+	if d.Works, err = s.worksOf(r.Context(), t, steps); err != nil {
 		v.Error = err.Error()
 	}
 	v.Data = d

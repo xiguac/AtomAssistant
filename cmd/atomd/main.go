@@ -430,10 +430,11 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue = epilogue.WithVoice(voice)
 	}
 
-	// 协作模型：主 AI 可以把成块的脑力活派出去，派给谁看用户以往的评价。
+	// 协作模型：主模型做预处理和审核，事情交给任务模型去办，交给谁看用户以往的评价。
 	if workers := file.Workers(); len(workers) > 0 {
-		planner = planner.WithTeam(true)
-		actuator = actuator.WithTeam(team.NewBoard(st.Team(), workers), router)
+		board := team.NewBoard(st.Team(), workers)
+		planner = planner.WithTaskModels(board, router)
+		actuator = actuator.WithTeam(board, router)
 		epilogue = epilogue.WithTeam(st.Team())
 		log.Info("已启用多模型协作", "协作模型数", len(workers))
 	}

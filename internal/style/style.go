@@ -265,7 +265,7 @@ func (l *Learner) refresh(ctx context.Context, scene string) (Cost, error) {
 	if err != nil {
 		return Cost{}, err
 	}
-	resp, err := l.model.Complete(ctx, llm.PurposeExtract, llm.Request{Messages: msgs, JSONMode: true})
+	resp, err := l.model.Complete(ctx, llm.PurposePlan, llm.Request{Messages: msgs, JSONMode: true})
 	if err != nil {
 		return Cost{}, fmt.Errorf("style: 提炼风格失败: %w", err)
 	}
