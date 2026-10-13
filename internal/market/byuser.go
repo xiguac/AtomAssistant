@@ -104,4 +104,5 @@ var reservedNames = map[string]bool{
 	"calendar": true, "mail": true, "file": true, "sheet": true, "doc": true, "slides": true,
 	"pay": true, "capability": true, "skill": true, "memory": true, "plan": true, "web": true,
 	"team": true, "task": true, "mcp": true, "provider": true, "channel": true, "connector": true,
+	"weather": true,
 }
