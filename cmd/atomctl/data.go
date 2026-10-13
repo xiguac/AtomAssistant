@@ -28,7 +28,9 @@ func memoryCmd(ctx context.Context, st *pg.Store, args []string) error {
 	store := st.Memories()
 	switch args[0] {
 	case "list":
-		list, err := store.List(ctx, memory.Query{})
+		// list all 连已经归档、过期的也列出来，多一栏状态。
+		all := len(args) > 1 && args[1] == "all"
+		list, err := store.List(ctx, memory.Query{IncludeInactive: all})
 		if err != nil {
 			return err
 		}
@@ -37,10 +39,18 @@ func memoryCmd(ctx context.Context, st *pg.Store, args []string) error {
 			return nil
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\t类型\t主体\t领域\t置信\t内容")
+		if all {
+			fmt.Fprintln(w, "ID\t状态\t类型\t主体\t领域\t置信\t内容")
+		} else {
+			fmt.Fprintln(w, "ID\t类型\t主体\t领域\t置信\t内容")
+		}
 		for _, m := range list {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.2f\t%s\n",
-				m.ID, m.Kind, m.Subject, dash(m.Domain), m.Confidence, oneLine(memoryText(m), 80))
+			fmt.Fprintf(w, "%s\t", m.ID)
+			if all {
+				fmt.Fprintf(w, "%s\t", m.Status)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%.2f\t%s\n",
+				m.Kind, m.Subject, dash(m.Domain), m.Confidence, oneLine(memoryText(m), 80))
 		}
 		return w.Flush()
 	case "pending":

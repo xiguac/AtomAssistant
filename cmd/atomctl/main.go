@@ -46,7 +46,7 @@ const usage = `用法:
                                  审计日志、评分记录和从中学到的说话样本）、指定的记忆（连同版本链）和候选。
                                  不带 --yes 只清点不删除；清掉的找不回来
 
-  atomctl memory list            查看全部记忆
+  atomctl memory list [all]      查看生效的记忆；加 all 连已经归档、过期的也列出来
   atomctl memory pending         查看助手提炼出来、等你确认的记忆与流程
   atomctl memory confirm <ID>    确认一条，让它生效
   atomctl memory dismiss <ID>    否决一条
