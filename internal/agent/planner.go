@@ -360,7 +360,14 @@ func (p *Planner) vaultSegment(ctx context.Context) (llm.Segment, bool, error) {
 	if err != nil {
 		return llm.Segment{}, false, fmt.Errorf("agent: 读取保险库目录失败: %w", err)
 	}
-	if len(metas) == 0 {
+	// 服务凭据（模型密钥、渠道凭据、MCP 密钥）是系统自己连接时用的，模型用不上，不列给它。
+	usable := metas[:0:0]
+	for _, m := range metas {
+		if !m.Service() {
+			usable = append(usable, m)
+		}
+	}
+	if metas = usable; len(metas) == 0 {
 		return llm.Segment{}, false, nil
 	}
 	var sb strings.Builder

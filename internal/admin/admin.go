@@ -349,6 +349,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /mcp/amap", auth(s.mcpAmap))
 	mux.HandleFunc("POST /mcp/server", auth(s.mcpSave))
 	mux.HandleFunc("POST /mcp/server/delete", auth(s.mcpDelete))
+	mux.HandleFunc("POST /mcp/key", auth(s.mcpKey))
 	mux.HandleFunc("POST /mcp/test", auth(s.mcpTest))
 	mux.HandleFunc("POST /mcp/sync", auth(s.mcpSync))
 	mux.HandleFunc("POST /mcp/tools", auth(s.mcpTools))
@@ -719,12 +720,60 @@ func (s *Server) vaultPage(w http.ResponseWriter, r *http.Request, v *view) {
 		v.Error = err.Error()
 	}
 	sort.Slice(metas, func(i, j int) bool { return metas[i].Label < metas[j].Label })
-	v.Data = vaultData{Items: metas, Tools: s.toolOptions(metas)}
+	d := vaultData{Tools: s.toolOptions(metas)}
+	for _, m := range metas {
+		if m.Service() {
+			d.Services = append(d.Services, serviceItem{Meta: m, Owners: owners(m.AllowedTools)})
+		} else {
+			d.Items = append(d.Items, m)
+		}
+	}
+	v.Data = d
 	s.render(w, "vault", v)
 }
 
+// serviceItem 是保险库总览里的一条服务凭据。
+type serviceItem struct {
+	vault.Meta
+	Owners []owner
+}
+
+// owner 是一条服务凭据属于哪个配置对象，以及在哪个页面管理它。
+type owner struct {
+	Kind, Name, Page string
+}
+
+// owners 把授权名单里的服务名字翻成给人看的归属。
+func owners(users []string) []owner {
+	kinds := []struct{ prefix, kind, page string }{
+		{"provider.", "模型服务", "/models"},
+		{"channel.", "消息渠道", "/channels"},
+		{"mcp.", "MCP server", "/mcp"},
+	}
+	out := make([]owner, 0, len(users))
+	for _, u := range users {
+		switch u {
+		case config.VaultUserCalendar:
+			out = append(out, owner{"连接器", "日历", "/connectors"})
+			continue
+		case config.VaultUserMail:
+			out = append(out, owner{"连接器", "邮件", "/connectors"})
+			continue
+		}
+		for _, k := range kinds {
+			if name, ok := strings.CutPrefix(u, k.prefix); ok {
+				out = append(out, owner{k.kind, name, k.page})
+			}
+		}
+	}
+	return out
+}
+
 type vaultData struct {
+	// Items 是个人信息：授权给工具、由模型用句柄引用的条目。
 	Items []vault.Meta
+	// Services 是服务凭据：在各自的管理页面里填写、由系统连接时取用的条目。
+	Services []serviceItem
 	// Tools 是可以被授权使用保险库条目的对象，供页面勾选。
 	Tools []toolOption
 }

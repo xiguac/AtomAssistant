@@ -138,18 +138,21 @@ func (s *Server) channelSave(w http.ResponseWriter, r *http.Request, _ *view) {
 
 func (s *Server) channelDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	name := r.PostFormValue("name")
+	var gone config.ChannelConfig
 	err := s.editChannels(func(list []config.ChannelConfig) ([]config.ChannelConfig, error) {
 		for i := range list {
 			if list[i].Name == name {
+				gone = list[i]
 				return append(list[:i], list[i+1:]...), nil
 			}
 		}
 		return nil, fmt.Errorf("渠道 %s 不存在", name)
 	})
 	if err == nil {
+		s.dropCredential(r.Context(), gone.Secret, gone.VaultUser())
 		s.opts.Log.Info("消息渠道已在后台删除", "渠道", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/channels", "渠道「"+name+"」已删除，重启服务后生效。其凭据仍保留在保险库中，可在「保险库」页删除。", err)
+	back(w, r, "/channels", "渠道「"+name+"」及其凭据已删除，重启服务后生效。", err)
 }
 
 // channelOwner 给一个渠道添加或移除主人。

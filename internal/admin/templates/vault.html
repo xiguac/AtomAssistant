@@ -1,13 +1,13 @@
 {{define "content"}}
 <h1>保险库</h1>
-<div class="sub">用于存放密码、密钥、证件号等敏感信息。条目保存后不可读取，仅授权的工具可在调用时使用。</div>
+<div class="sub">所有敏感信息均加密存放于此，保存后不可读取。个人信息在本页添加并授权给工具；模型密钥、渠道凭据、MCP 密钥、日历与邮箱密码属于服务凭据，在各自的管理页面填写，本页提供总览。</div>
 
 <div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>保险库不提供查看功能，已保存的值对任何人均不可见。如需修改，请以相同名称重新保存。</div></div>
 
 <div class="cols">
 <div>
 <div class="card">
-  <div class="band"><b>条目列表</b><span class="count">{{len .Data.Items}}</span></div>
+  <div class="band"><b>个人信息</b><span class="count">{{len .Data.Items}}</span></div>
   {{if .Data.Items}}<table>
     <thead><tr><th>名称</th><th>用途</th><th>授权工具</th><th>创建时间</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Data.Items}}<tr>
@@ -19,7 +19,25 @@
         <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
         <button class="btn danger sm">删除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无条目。模型的 API Key 可在「模型」页直接填写。</div>{{end}}
+  </table>{{else}}<div class="empty">暂无个人信息。证件号、卡号等需由工具使用的敏感信息可在右侧添加。</div>{{end}}
+  <div class="band foot"><span class="note muted">助手仅可见条目的名称与用途，通过句柄引用，无法获取其内容。</span></div>
+</div>
+
+<div class="card">
+  <div class="band"><b>服务凭据</b><span class="count">{{len .Data.Services}}</span></div>
+  {{if .Data.Services}}<table>
+    <thead><tr><th>名称</th><th>归属</th><th>用途</th><th>创建时间</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Data.Services}}<tr>
+      <td><span class="mono" style="color:var(--text)">vault://{{.Label}}</span></td>
+      <td>{{range .Owners}}<a class="chip" href="{{.Page}}">{{.Kind}} {{.Name}}</a>{{end}}</td>
+      <td>{{.Note}}</td>
+      <td class="time">{{when .CreatedAt}}</td>
+      <td class="r"><form method="post" action="/vault/delete">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
+        <button class="btn danger sm">删除</button></form></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">暂无服务凭据。请在「模型」「渠道」「连接器」「MCP」页填写对应的密钥或密码。</div>{{end}}
+  <div class="band foot"><span class="note muted">服务凭据由系统在连接时取用，对助手不可见。更换请前往归属对象的管理页面；删除归属对象时其凭据一并删除。</span></div>
 </div>
 
 </div>

@@ -18,6 +18,12 @@
         <button class="btn danger sm">移除</button></form>
     </div>
   </div>
+  <form method="post" action="/mcp/key" autocomplete="off" class="pad" style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line)">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+    <div style="width:200px"><label for="key-name-{{.Name}}">密钥参数名</label><input id="key-name-{{.Name}}" type="text" name="secret_name" value="{{.SecretName}}" placeholder="key"></div>
+    <div class="grow"><label for="key-{{.Name}}">密钥</label><input id="key-{{.Name}}" type="password" name="key" autocomplete="new-password" placeholder="{{if .KeyOK}}{{if .Secret}}已保存，填写后将替换{{end}}{{end}}"></div>
+    <button class="btn sec">保存密钥</button>
+  </form>
   {{if .Tools}}<form method="post" action="/mcp/tools">
     <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
     <table>

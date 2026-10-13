@@ -246,20 +246,25 @@ func loopback(host string) bool {
 
 func (s *Server) providerDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	name := r.PostFormValue("name")
+	var gone config.ProviderConfig
 	err := s.editModels(func(m *config.Models) error {
 		if used := m.UsedBy(name); len(used) > 0 {
 			return fmt.Errorf("模型服务「%s」正在使用中（%s），请先将其改用其他服务", name, strings.Join(used, "、"))
 		}
 		for i, p := range m.Providers {
 			if p.Name == name {
+				gone = p
 				m.Providers = append(m.Providers[:i], m.Providers[i+1:]...)
 				return nil
 			}
 		}
 		return fmt.Errorf("模型服务 %s 不存在", name)
 	})
-	// 保险库里的密钥不跟着删：它可能还被别处用着，要删去「保险库」页删。
-	back(w, r, "/models", "模型服务「"+name+"」已删除。其密钥仍保留在保险库中，可在「保险库」页删除。", err)
+	if err == nil {
+		// 只删它独占的那一条；用户另外授权给了别处的不动。
+		s.dropCredential(r.Context(), gone.APIKey, gone.VaultUser())
+	}
+	back(w, r, "/models", "模型服务「"+name+"」及其密钥已删除。", err)
 }
 
 func (s *Server) mainSave(w http.ResponseWriter, r *http.Request, _ *view) {

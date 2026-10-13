@@ -144,6 +144,10 @@ func checkMCP(m config.MCPConfig) error {
 	if !vault.ValidLabel(m.Name) || strings.ContainsAny(m.Name, " /.") {
 		return errors.New("名称仅支持字母、数字、中文及 _ -")
 	}
+	// 名称是工具名的前缀。叫这几个名字的话，它的工具会和保险库里"服务"的名字分不开。
+	if vault.ServiceUser(m.Name + ".") {
+		return errors.New("名称不可使用 provider、channel、mcp、connector")
+	}
 	switch mcpgw.TransportKind(m.Transport) {
 	case mcpgw.TransportHTTP:
 		u, err := url.Parse(m.URL)
@@ -322,6 +326,35 @@ func (s *Server) mcpSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/mcp", notice, err)
 }
 
+// mcpKey 给一个已接入的 server 填写或更换密钥。
+func (s *Server) mcpKey(w http.ResponseWriter, r *http.Request, _ *view) {
+	name := r.PostFormValue("name")
+	key := strings.TrimRight(r.PostFormValue("key"), "\r\n")
+	notice, err := func() (string, error) {
+		if key == "" {
+			return "", errors.New("请填写密钥")
+		}
+		_, cur, err := s.readToolset()
+		if err != nil {
+			return "", err
+		}
+		for _, m := range cur.MCP {
+			if m.Name != name {
+				continue
+			}
+			if secretName := strings.TrimSpace(r.PostFormValue("secret_name")); secretName != "" {
+				m.SecretName = secretName
+			}
+			return s.saveMCP(r.Context(), m, key)
+		}
+		return "", errors.New("MCP server 不存在")
+	}()
+	if err == nil {
+		s.opts.Log.Info("MCP server 的密钥已在后台更换", "server", name, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/mcp", notice, err)
+}
+
 // mcpTest 用表单里当前填写的内容连接一次，列出它提供的工具。测试不保存任何东西。
 // 密钥一栏留空时用保险库里已保存的那个。
 func (s *Server) mcpTest(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -429,14 +462,17 @@ func (s *Server) mcpTools(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/mcp", "工具授权已保存，重启服务后生效。", err)
 }
 
-// mcpDelete 移除一个 server，连同它的工具的授权。保险库里的密钥不跟着删。
+// mcpDelete 移除一个 server，连同它的工具的授权和它的密钥。
 func (s *Server) mcpDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	name := r.PostFormValue("name")
+	var gone config.MCPConfig
 	err := s.editToolset(func(t *config.Toolset) error {
 		kept := t.MCP[:0]
 		for _, m := range t.MCP {
 			if m.Name != name {
 				kept = append(kept, m)
+			} else {
+				gone = m
 			}
 		}
 		if len(kept) == len(t.MCP) {
@@ -453,9 +489,10 @@ func (s *Server) mcpDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 		return nil
 	})
 	if err == nil {
+		s.dropCredential(r.Context(), gone.Secret, gone.VaultUser())
 		s.opts.Log.Info("MCP server 已在后台移除", "server", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/mcp", "MCP server「"+name+"」已移除，重启服务后生效。保险库中的密钥仍保留，可在「保险库」页删除。", err)
+	back(w, r, "/mcp", "MCP server「"+name+"」及其密钥已移除，重启服务后生效。", err)
 }
 
 // mcpInstalledDelete 移除一个助手自己装上的 server。

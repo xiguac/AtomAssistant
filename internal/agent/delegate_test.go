@@ -12,6 +12,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/style"
 	"github.com/xiguac/atomhelper/internal/team"
+	"github.com/xiguac/atomhelper/internal/vault"
 )
 
 // scriptedWorkers 模拟任务模型：按顺序给出事先写好的回答，记下是谁被叫到、看到了什么。
@@ -406,5 +407,28 @@ func TestDelegate_方案里提到敏感内容不会被审批拒掉(t *testing.T)
 		if _, err := p.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil); err == nil {
 			t.Fatalf("%s 不是给模型选的工具", name)
 		}
+	}
+}
+
+type listedVault []vault.Meta
+
+func (l listedVault) List(context.Context) ([]vault.Meta, error) { return l, nil }
+
+func TestPlanner_保险库目录只列个人信息不列服务凭据(t *testing.T) {
+	m := &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
+	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithVault(listedVault{
+		{Label: "mcp.amap", Note: "MCP server amap 的密钥", AllowedTools: []string{"mcp.amap"}},
+		{Label: "deepseek", AllowedTools: []string{"provider.deepseek"}},
+		{Label: "身份证", Note: "本人身份证号", AllowedTools: []string{"demo.book"}},
+		// 既给了服务又给了工具的，模型用得上，照常列出。
+		{Label: "共用", AllowedTools: []string{"connector.mail", "demo.book"}},
+	})
+	if _, err := p.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil); err != nil {
+		t.Fatal(err)
+	}
+	seen := text(m.lastReq)
+	if !strings.Contains(seen, "vault://身份证") || !strings.Contains(seen, "vault://共用") ||
+		strings.Contains(seen, "vault://mcp.amap") || strings.Contains(seen, "vault://deepseek") {
+		t.Fatal("模型只应看到它用得上的条目，服务凭据不列给它")
 	}
 }

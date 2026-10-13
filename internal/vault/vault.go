@@ -112,6 +112,37 @@ func Open(store Store, key string) (*Vault, error) {
 	return v, nil
 }
 
+// servicePrefixes 是"服务"在授权名单里的名字的前缀：模型服务、消息渠道、MCP server、内建连接器。
+// 它们是系统自己去连的对象，不是模型能选的工具。
+var servicePrefixes = []string{"provider.", "channel.", "mcp.", "connector."}
+
+// ServiceUser 报告授权名单里的一个名字是不是服务，而不是工具。
+func ServiceUser(user string) bool {
+	for _, p := range servicePrefixes {
+		if strings.HasPrefix(user, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Service 报告这一条是不是服务凭据：只授权给了服务，没有授权给任何工具。
+//
+// 保险库里存着两种东西。服务凭据（模型的 API Key、渠道的 AppSecret、MCP 的密钥、日历和邮箱的密码）
+// 属于某个配置对象，在各自的管理页面里填，由系统在连接时取用；个人信息（证件号、卡号）由用户授权给工具，
+// 模型用句柄引用。两种存法一样，区别只在谁用——所以按授权名单来分，不另设标记。
+func (m Meta) Service() bool {
+	if len(m.AllowedTools) == 0 {
+		return false
+	}
+	for _, t := range m.AllowedTools {
+		if !ServiceUser(t) {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidLabel 校验条目名：字母、数字、下划线、连字符、点，以及中文。
 //
 // 名字会出现在句柄里、会被模型照抄，所以不允许空白和引号这类容易抄错的字符。

@@ -134,11 +134,37 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 		t.Fatalf("已有的授权应保留: %v %+v", err, file)
 	}
 
+	// 保险库是总览：服务凭据和个人信息分开列，服务凭据标明归属。
+	if err := e.vault.Seal(context.Background(), "身份证", "110101199001011234", "本人身份证号", []string{"maps.share"}); err != nil {
+		t.Fatal(err)
+	}
+	_, body = e.get("/vault")
+	personal, services, ok := strings.Cut(body, "<b>服务凭据</b>")
+	if !ok || !strings.Contains(personal, "vault://身份证") || strings.Contains(personal, "vault://mcp.maps") ||
+		!strings.Contains(services, "vault://mcp.maps") || !strings.Contains(services, `href="/mcp">MCP server maps</a>`) {
+		t.Fatal("保险库页应把个人信息和服务凭据分开列，服务凭据链接到它的管理页面")
+	}
+	// 在 server 自己的卡片上换密钥：换的是保险库里的同一条。
+	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "key": {"wrong-key"}}); !strings.Contains(loc, "读取工具列表失败") {
+		t.Fatalf("换成错的密钥后应连不上: %s", loc)
+	}
+	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "key": {key}}); !strings.Contains(loc, "共 2 个工具") {
+		t.Fatalf("换回密钥失败: %s", loc)
+	}
+	if loc := post("/mcp/server", url.Values{"name": {"mcp"}, "transport": {"http"}, "url": {ts.URL}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("会和服务名字混淆的名称应被拒绝: %s", loc)
+	}
+
 	if loc := post("/mcp/server/delete", url.Values{"name": {"maps"}}); !strings.Contains(loc, "已移除") {
 		t.Fatalf("移除失败: %s", loc)
 	}
 	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
 		t.Fatalf("移除后 server 与它的工具授权都不应留下:\n%s", now)
+	}
+	// server 没了，它独占的密钥也不留；个人信息不受影响。
+	metas, err := e.vault.List(context.Background())
+	if err != nil || len(metas) != 1 || metas[0].Label != "身份证" {
+		t.Fatalf("移除 server 后它的密钥应一并删除: %+v %v", metas, err)
 	}
 }
 

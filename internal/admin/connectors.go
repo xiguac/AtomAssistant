@@ -197,15 +197,47 @@ func (s *Server) holidaysSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/connectors", "节假日订阅已保存，重启服务后生效。", err)
 }
 
-// connectorDisable 停用一个连接器。保险库里的密码不跟着删。
+// dropCredential 删掉一个配置对象独占的凭据：对象没了，它的密钥不该留在保险库里没人管。
+//
+// 只删"只授权给了这一个对象"的条目。用户另外把它授权给了别的对象或工具的，说明它还有别的用处，不动。
+func (s *Server) dropCredential(ctx context.Context, handle, user string) {
+	label, ok := strings.CutPrefix(handle, vault.HandlePrefix)
+	if !ok {
+		return
+	}
+	metas, err := s.opts.Vault.List(ctx)
+	if err != nil {
+		s.opts.Log.Error("清理凭据时读取保险库失败", "条目", label, "err", err)
+		return
+	}
+	for _, meta := range metas {
+		if meta.Label != label || len(meta.AllowedTools) != 1 || meta.AllowedTools[0] != user {
+			continue
+		}
+		if err := s.opts.Vault.Remove(ctx, label); err != nil {
+			s.opts.Log.Error("清理凭据失败", "条目", label, "err", err)
+			return
+		}
+		s.opts.Log.Info("凭据已随所属对象一并删除", "条目", label, "属于", user)
+	}
+}
+
+// connectorDisable 停用一个连接器，它的密码一并从保险库里删除。
 func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
 	names := map[string]string{"calendar": "日历", "mail": "邮件", "holidays": "节假日订阅"}
+	var handle, user string
 	err := s.editConnectors(func(all *config.ConnectorsConfig) error {
 		switch which {
 		case "calendar":
+			if all.Calendar != nil {
+				handle, user = all.Calendar.Password, config.VaultUserCalendar
+			}
 			all.Calendar = nil
 		case "mail":
+			if all.Mail != nil {
+				handle, user = all.Mail.Password, config.VaultUserMail
+			}
 			all.Mail = nil
 		case "holidays":
 			all.Holidays = nil
@@ -215,9 +247,10 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 		return nil
 	})
 	if err == nil {
+		s.dropCredential(r.Context(), handle, user)
 		s.opts.Log.Info("连接器已在后台停用", "连接器", which, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/connectors", names[which]+"已停用，重启服务后生效。保险库中的密码仍保留，可在「保险库」页删除。", err)
+	back(w, r, "/connectors", names[which]+"已停用，重启服务后生效。", err)
 }
 
 // connectorTest 用表单里当前填写的内容登录一次，确认服务器地址、账号、密码是否正确。
