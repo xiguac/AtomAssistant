@@ -24,14 +24,17 @@ var _ market.ServerStore = (*MCPInstallStore)(nil)
 func (s *MCPInstallStore) PutServer(ctx context.Context, srv *market.Server) error {
 	z := s.z
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO mcp_installs (name, url, registry_name, description, payload, scan_report, installed_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		INSERT INTO mcp_installs (name, url, registry_name, description, payload, scan_report, installed_at,
+		                          by_user, secret_name, secret)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		ON CONFLICT (name) DO UPDATE
 		   SET url = EXCLUDED.url, registry_name = EXCLUDED.registry_name, description = EXCLUDED.description,
-		       payload = EXCLUDED.payload, scan_report = EXCLUDED.scan_report, installed_at = EXCLUDED.installed_at`,
+		       payload = EXCLUDED.payload, scan_report = EXCLUDED.scan_report, installed_at = EXCLUDED.installed_at,
+		       by_user = EXCLUDED.by_user, secret_name = EXCLUDED.secret_name, secret = EXCLUDED.secret`,
 		srv.Name, z.str("mcp_installs.url", srv.URL), z.str("mcp_installs.registry_name", srv.RegistryName),
 		z.str("mcp_installs.description", srv.Description), z.str("mcp_installs.payload", srv.Payload),
-		z.str("mcp_installs.scan_report", srv.ScanReport), srv.InstalledAt)
+		z.str("mcp_installs.scan_report", srv.ScanReport), srv.InstalledAt,
+		srv.ByUser, z.str("mcp_installs.secret_name", srv.SecretName), z.str("mcp_installs.secret", srv.Secret))
 	if err != nil {
 		return fmt.Errorf("pg: 写入 MCP server 失败: %w", err)
 	}
@@ -40,7 +43,8 @@ func (s *MCPInstallStore) PutServer(ctx context.Context, srv *market.Server) err
 
 func (s *MCPInstallStore) ListServers(ctx context.Context) ([]*market.Server, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT name, url, registry_name, description, payload, scan_report, installed_at
+		SELECT name, url, registry_name, description, payload, scan_report, installed_at,
+		       by_user, secret_name, secret
 		  FROM mcp_installs ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("pg: 读取 MCP server 失败: %w", err)
@@ -51,12 +55,13 @@ func (s *MCPInstallStore) ListServers(ctx context.Context) ([]*market.Server, er
 	for rows.Next() {
 		var srv market.Server
 		if err := rows.Scan(&srv.Name, &srv.URL, &srv.RegistryName, &srv.Description,
-			&srv.Payload, &srv.ScanReport, &srv.InstalledAt); err != nil {
+			&srv.Payload, &srv.ScanReport, &srv.InstalledAt, &srv.ByUser, &srv.SecretName, &srv.Secret); err != nil {
 			return nil, fmt.Errorf("pg: 解析 MCP server 失败: %w", err)
 		}
 		if err := s.z.opens("mcp_installs.url", &srv.URL, "mcp_installs.registry_name", &srv.RegistryName,
 			"mcp_installs.description", &srv.Description, "mcp_installs.payload", &srv.Payload,
-			"mcp_installs.scan_report", &srv.ScanReport); err != nil {
+			"mcp_installs.scan_report", &srv.ScanReport,
+			"mcp_installs.secret_name", &srv.SecretName, "mcp_installs.secret", &srv.Secret); err != nil {
 			return nil, fmt.Errorf("pg: 解析 MCP server 失败: %w", err)
 		}
 		out = append(out, &srv)

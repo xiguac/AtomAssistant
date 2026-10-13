@@ -369,6 +369,9 @@ func (m MCPConfig) VaultUser() string { return "mcp." + m.Name }
 // ToolConfig 是一个工具的授权边界，对应用户在 App 上的批准结果。
 type ToolConfig struct {
 	Name string `yaml:"name"`
+	// Description 是 server 给这个工具写的说明，只用来在管理后台里展示，不影响授权。
+	// 它是别人写的文字，不会交给模型（模型看到的说明每次连接时现取）。
+	Description string `yaml:"description,omitempty"`
 	// MaxPrivacy: public / normal / sensitive。secret 不被接受。
 	MaxPrivacy string `yaml:"max_privacy,omitempty"`
 	// Trust: external / tool_output / connector。

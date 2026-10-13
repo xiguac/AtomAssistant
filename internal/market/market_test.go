@@ -408,3 +408,62 @@ func TestInstallServer_只读的直接装会提交内容的要批准(t *testing.
 		}
 	}
 }
+
+type memSecrets map[string]string
+
+func (m memSecrets) Seal(_ context.Context, label, value, _ string, tools []string) error {
+	m[label] = value + "|" + strings.Join(tools, ",")
+	return nil
+}
+
+func TestInstallUserServer_用户给的地址不扫描直接接入密钥进保险库(t *testing.T) {
+	ctx := context.Background()
+	servers, secrets := memServers{}, memSecrets{}
+	var connected *Server
+	in := &Installer{Servers: servers, Secrets: secrets,
+		Connect: func(_ context.Context, s *Server) ([]string, error) {
+			connected = s
+			return []string{s.Name + ".maps_weather"}, nil
+		}}
+
+	// 高德的地址：参数里的 key 是密钥。没有扫描器也能装——这是用户的决定，不是助手自己找来的。
+	srv, tools, err := in.InstallUserServer(ctx, "AMap", "https://mcp.amap.com/mcp?key=k-123456")
+	if err != nil || len(tools) != 1 || tools[0] != "amap.maps_weather" {
+		t.Fatalf("安装失败: %v %v", tools, err)
+	}
+	if !srv.ByUser || srv.Name != "amap" || srv.URL != "https://mcp.amap.com/mcp" || srv.SecretName != "key" || srv.Secret != "vault://mcp.amap" {
+		t.Fatalf("存下来的地址不应带密钥，密钥只留句柄: %+v", srv)
+	}
+	if secrets["mcp.amap"] != "k-123456|mcp.amap" || servers["amap"] != srv || connected != srv {
+		t.Fatalf("密钥应进保险库并只授权给这个 server: %v", secrets)
+	}
+
+	// 不带参数的地址没有密钥；没给名字就从域名里取，撞上内建名字空间的加前缀。
+	srv, _, err = in.InstallUserServer(ctx, "", "https://mcp.example.com/sse")
+	if err != nil || srv.Name != "example" || srv.Secret != "" || len(secrets) != 1 {
+		t.Fatalf("不带参数的地址不对: %+v %v", srv, err)
+	}
+	if srv, _, err = in.InstallUserServer(ctx, "mail", "https://mail.example.com/mcp"); err != nil || srv.Name != "mcp-mail" {
+		t.Fatalf("撞上内建名字的应加前缀: %+v %v", srv, err)
+	}
+
+	// 用不了的地址：明文、带账号密码、多个参数分不清谁是密钥、带密钥却没有保险库。
+	for _, bad := range []string{
+		"http://mcp.example.com/mcp", "https://user:pw@mcp.example.com/mcp",
+		"https://mcp.example.com/mcp?a=1&b=2", "not a url", "https://mcp.example.com/mcp?key=",
+	} {
+		if _, _, err := in.InstallUserServer(ctx, "x", bad); !errors.Is(err, ErrBadAddress) {
+			t.Fatalf("%q 应被拒绝: %v", bad, err)
+		}
+	}
+	in.Secrets = nil
+	if _, _, err := in.InstallUserServer(ctx, "x", "https://mcp.example.com/mcp?key=k"); !errors.Is(err, ErrBadAddress) {
+		t.Fatalf("没有保险库时带密钥的地址应被拒绝: %v", err)
+	}
+	// 连不上就不算装上，也不留在库里。
+	in.Secrets = secrets
+	in.Connect = func(context.Context, *Server) ([]string, error) { return nil, errors.New("连接超时") }
+	if _, _, err := in.InstallUserServer(ctx, "down", "https://down.example.com/mcp"); err == nil || servers["down"] != nil {
+		t.Fatal("连不上的不应留在库里")
+	}
+}

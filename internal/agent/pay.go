@@ -262,6 +262,11 @@ func classifiable(d kernel.Decision) json.RawMessage {
 	if isInternalTool(d.ToolName) {
 		return nil
 	}
+	// 用户给的 MCP 地址里常常带着一长串密钥。它是要存进保险库的，不是要交给哪个工具的参数；
+	// 照常分级的话这次安装会被当成"含绝密数据的操作"直接拒掉。
+	if d.ToolName == ToolCapabilityInstall {
+		return without(d.Input, "url")
+	}
 	if isCalendarTool(d.ToolName) {
 		return without(d.Input, "id")
 	}

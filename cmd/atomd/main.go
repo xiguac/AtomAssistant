@@ -283,6 +283,8 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		log.Warn("未设置 ATOM_VAULT_KEY，保险库处于锁定状态，引用保险库条目的工具调用会被拒绝")
 	}
 
+	secretLender = safe
+
 	// 模型密钥可以放在保险库里，所以路由排在保险库之后。
 	router, err := file.BuildRouter(ctx, safe)
 	if err != nil {
@@ -361,6 +363,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		Scanner: skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
 		Skills:  st.Skills(),
 		Servers: st.MCPInstalls(),
+		Secrets: safe,
 		Probe: func(ctx context.Context, srv *market.Server) ([]market.ToolBrief, error) {
 			tools, err := gw.Probe(ctx, unreviewedSpec(srv))
 			if err != nil {
@@ -528,10 +531,28 @@ func (c *chatOutbox) SendFile(ctx context.Context, tags []string, name string, d
 	return hub.SendFile(ctx, tags, name, data)
 }
 
-// unreviewedSpec 是助手自己装上的远程 server 的连接参数。
+// unreviewedSpec 是对话里装上的远程 server 的连接参数。
+//
+// 助手自己找来装的按固定的保守边界对待；用户亲口给出地址的按用户接入的对待，
+// 它要的密钥连接时从保险库取。
 func unreviewedSpec(srv *market.Server) mcpgw.ServerSpec {
-	return mcpgw.ServerSpec{Name: srv.Name, Transport: mcpgw.TransportHTTP, URL: srv.URL, Unreviewed: true}
+	spec := mcpgw.ServerSpec{Name: srv.Name, Transport: mcpgw.TransportHTTP, URL: srv.URL}
+	if !srv.ByUser {
+		spec.Unreviewed = true
+		return spec
+	}
+	spec.UserAdded = true
+	if srv.Secret != "" && secretLender != nil {
+		// 句柄不合规矩时留空：连接会因为缺密钥失败并报出来，不会带着错的东西连出去。
+		if take, err := secretLender.Lend(srv.Secret, "mcp."+srv.Name); err == nil {
+			spec.SecretName, spec.Secret = srv.SecretName, take
+		}
+	}
+	return spec
 }
+
+// secretLender 是保险库，build 里装好之后填进来，供 unreviewedSpec 取用户给的 server 的密钥。
+var secretLender config.SecretLender
 
 func newLogger(level string) *slog.Logger {
 	var lv slog.Level

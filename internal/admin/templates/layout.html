@@ -186,6 +186,15 @@ details[open] { display:block; }
 details summary { cursor:pointer; color:var(--primary); font-size:12px; display:inline-block; margin-right:14px; }
 details[open] summary { color:var(--text-2); }
 
+/* 整块可折叠的区域：卡片里的工具列表等。收起时只占一行。 */
+details.fold { display:block; }
+details.fold > summary { display:flex; align-items:center; justify-content:space-between; margin:0; padding:12px 20px; color:var(--text); font-size:13px; font-weight:500; list-style:none; cursor:pointer; }
+details.fold > summary::-webkit-details-marker { display:none; }
+details.fold > summary::after { content:""; width:7px; height:7px; border-right:1.5px solid var(--text-2); border-bottom:1.5px solid var(--text-2); transform:rotate(45deg) translateY(-2px); transition:transform .15s; }
+details.fold[open] > summary { color:var(--text); border-bottom:1px solid var(--line); }
+details.fold[open] > summary::after { transform:rotate(-135deg) translateY(-2px); }
+details.fold > summary:hover { background:var(--canvas); }
+
 /* 步骤时间线 */
 .steps { list-style:none; margin:0; padding:6px 20px; }
 .steps li { display:grid; grid-template-columns:28px 1fr; gap:12px; padding:12px 0; border-bottom:1px solid var(--row); }

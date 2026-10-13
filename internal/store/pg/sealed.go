@@ -60,7 +60,8 @@ var sealedColumns = map[string]map[string]colKind{
 	"channel_chats":       {"chat": colTextEq, "last_msg_id": colText},
 	"channel_notices":     {"fingerprint": colText},
 	"team_work":           {"title": colText},
-	"mcp_installs":        {"url": colText, "registry_name": colText, "description": colText, "payload": colText, "scan_report": colText},
+	"mcp_installs": {"url": colText, "registry_name": colText, "description": colText, "payload": colText, "scan_report": colText,
+		"secret_name": colText, "secret": colText},
 	// 保险库的值本来就由保险库自己的密钥加密，这里管的是名字和用途说明。
 	"vault_items": {"label": colTextEq, "note": colText},
 	"settings":    {"value": colText},

@@ -27,6 +27,12 @@ type Server struct {
 	Payload     string
 	ScanReport  string
 	InstalledAt time.Time
+
+	// ByUser 为真表示地址是用户在对话里亲口给的，不是助手自己找来的。见 InstallUserServer。
+	ByUser bool
+	// SecretName 与 Secret 是它要的密钥：参数名，以及密钥在保险库里的句柄。只有用户给的才可能有。
+	SecretName string
+	Secret     string
 }
 
 // ServerStore 是助手安装的 MCP server 的持久化接口。
@@ -67,6 +73,8 @@ type Installer struct {
 	Scanner Scanner
 	Skills  skill.Store
 	Servers ServerStore
+	// Secrets 用来存用户给的地址里带的密钥。为空时带密钥的地址装不了。
+	Secrets SecretKeeper
 	// Probe 连上一个 server 看它有哪些工具，看完就断开，什么都不登记。
 	Probe func(ctx context.Context, s *Server) ([]ToolBrief, error)
 	// Connect 连接一个 server 并登记它的工具，返回工具全名。连不上就不算装上。

@@ -111,6 +111,10 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 	if strings.Contains(body, key) || !strings.Contains(body, "密钥已配置") || !strings.Contains(body, `value="maps.share"`) {
 		t.Fatal("MCP 页应列出 server 与工具，不显示密钥")
 	}
+	// 工具列表可以折叠，并带着 server 给每个工具写的说明。
+	if !strings.Contains(body, `<details class="fold">`) || !strings.Contains(body, "查天气") || !strings.Contains(body, "分享位置") {
+		t.Fatal("工具列表应可折叠并显示工具说明")
+	}
 
 	// 逐个调整工具的副作用等级；别的 server 的工具改不了。
 	if loc := post("/mcp/tools", url.Values{"name": {"maps"}, "tool": {"maps.share"}, "side": {"read_only"}, "privacy": {"sensitive"}}); !strings.Contains(loc, "已保存") {

@@ -24,35 +24,38 @@
     <div class="grow"><label for="key-{{.Name}}">密钥</label><input id="key-{{.Name}}" type="password" name="key" autocomplete="new-password" placeholder="{{if .KeyOK}}{{if .Secret}}已保存，填写后将替换{{end}}{{end}}"></div>
     <button class="btn sec">保存密钥</button>
   </form>
-  {{if .Tools}}<form method="post" action="/mcp/tools">
+  {{if .Tools}}<details class="fold"><summary><span>工具 <span class="count">{{len .Tools}}</span></span></summary>
+  <form method="post" action="/mcp/tools">
     <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
     <table>
       <thead><tr><th>工具</th><th style="width:200px">副作用等级</th><th style="width:200px">参数隐私上限</th></tr></thead>
       <tbody>{{range .Tools}}{{$side := .SideEffect}}{{$privacy := .MaxPrivacy}}<tr>
-        <td><span class="mono" style="color:var(--text)">{{.Short}}</span><input type="hidden" name="tool" value="{{.Name}}"></td>
+        <td><span class="mono" style="color:var(--text)">{{.Short}}</span><input type="hidden" name="tool" value="{{.Name}}">
+          {{if .Description}}<div class="note muted" style="margin-top:4px">{{.Description}}</div>{{end}}</td>
         <td><select name="side" aria-label="{{.Short}} 的副作用等级">{{range $.Data.SideEffects}}<option value="{{.Value}}"{{if eq .Value $side}} selected{{end}}>{{.Label}}</option>{{end}}{{if eq $side "none"}}<option value="none" selected>无副作用</option>{{end}}</select></td>
         <td><select name="privacy" aria-label="{{.Short}} 的参数隐私上限">{{range $.Data.PrivacyLevels}}<option value="{{.Value}}"{{if eq .Value $privacy}} selected{{end}}>{{.Label}}</option>{{end}}</select></td>
       </tr>{{end}}</tbody>
     </table>
     <div class="band foot"><span class="note muted">只读工具可直接调用，其余工具按审批规则处理，默认需经确认。参数中含有超出隐私上限的字段时调用将被拦截。</span><button class="btn">保存授权</button></div>
-  </form>{{else}}<div class="empty">尚未登记工具，未登记的工具无法调用。请点击「读取工具」。</div>{{end}}
+  </form></details>{{else}}<div class="empty">尚未登记工具，未登记的工具无法调用。请点击「读取工具」。</div>{{end}}
 </div>
 {{else}}<div class="card"><div class="empty">暂无 MCP server。可在右侧接入高德地图，或添加其他 MCP server。</div></div>{{end}}
 
-<h2>助手自行安装的 MCP server <span class="count">{{len .Installed}}</span></h2>
+<h2>对话中安装的 MCP server <span class="count">{{len .Installed}}</span></h2>
 <div class="card">
   {{if .Installed}}<table>
-    <thead><tr><th>名称</th><th>地址</th><th>说明</th><th>安装时间</th><th class="r">操作</th></tr></thead>
+    <thead><tr><th>名称</th><th>来源</th><th>地址</th><th>说明</th><th>安装时间</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Installed}}<tr>
       <td><b style="font-weight:500">{{.Name}}</b><div class="note muted">{{.RegistryName}}</div></td>
+      <td>{{if .ByUser}}<span class="pill ok plain">用户提供地址</span>{{if .Secret}}<div class="note muted" style="margin-top:4px">密钥已存入保险库</div>{{end}}{{else}}<span class="pill plain">助手自行查找</span>{{end}}</td>
       <td><span class="mono" style="word-break:break-all">{{.URL}}</span></td>
       <td>{{short .Description 80}}</td>
       <td class="time">{{when .InstalledAt}}</td>
       <td class="r"><form method="post" action="/mcp/installed/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
         <button class="btn danger sm">移除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无。助手在任务中缺少能力时可自行查找并安装通过扫描的远程 MCP server。</div>{{end}}
-  <div class="band foot"><span class="note muted">此类 server 的授权范围固定：仅接收普通级别的参数，返回内容按外部内容处理，无法使用保险库条目。</span></div>
+  </table>{{else}}<div class="empty">暂无。可在对话中直接提供 MCP server 的地址由助手安装；助手在任务中缺少能力时也可自行查找并安装通过扫描的远程 MCP server。</div>{{end}}
+  <div class="band foot"><span class="note muted">用户提供地址的 server 视为用户接入：只读工具直接调用，其余工具调用时需经确认。助手自行查找的 server 授权范围固定：返回内容按外部内容处理，无法使用保险库条目。两者均仅接收普通级别的参数。</span></div>
 </div>
 </div>
 

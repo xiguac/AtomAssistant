@@ -31,6 +31,9 @@ const (
 	amapSecretName = "key"
 )
 
+// maxToolDescRunes 是存下来展示用的工具说明的长度上限。
+const maxToolDescRunes = 400
+
 // sideEffects 是工具的副作用等级在页面上的选项，按从轻到重排。
 var sideEffects = []toolOption{
 	{string(core.SideEffectReadOnly), "只读"},
@@ -49,6 +52,8 @@ var privacyLevels = []toolOption{
 type mcpToolView struct {
 	// Name 是带 server 名前缀的全名，Short 是去掉前缀的部分。
 	Name, Short, SideEffect, MaxPrivacy string
+	// Description 是 server 给它写的说明，没有则为空。
+	Description string
 }
 
 // mcpServerView 是页面上的一个 MCP server。
@@ -124,7 +129,8 @@ func (s *Server) mcpPage(w http.ResponseWriter, r *http.Request, v *view) {
 				if privacy == "" {
 					privacy = "normal"
 				}
-				sv.Tools = append(sv.Tools, mcpToolView{Name: tool.Name, Short: short, SideEffect: side, MaxPrivacy: privacy})
+				sv.Tools = append(sv.Tools, mcpToolView{Name: tool.Name, Short: short, SideEffect: side, MaxPrivacy: privacy,
+					Description: tool.Description})
 			}
 		}
 		d.Servers = append(d.Servers, sv)
@@ -263,12 +269,19 @@ func (s *Server) syncTools(ctx context.Context, m config.MCPConfig) (added, tota
 		egress = []string{u.Hostname()}
 	}
 	err = s.editToolset(func(t *config.Toolset) error {
-		have := map[string]bool{}
-		for _, tool := range t.Tools {
-			have[tool.Name] = true
+		have := map[string]int{}
+		for i, tool := range t.Tools {
+			have[tool.Name] = i + 1
 		}
 		for _, tool := range tools {
-			if have[tool.Name] {
+			// 说明只用来展示，限个长度：有的 server 会把整篇文档塞在里面。
+			desc := strings.Join(strings.Fields(tool.Description), " ")
+			if r := []rune(desc); len(r) > maxToolDescRunes {
+				desc = string(r[:maxToolDescRunes]) + "…"
+			}
+			if at := have[tool.Name]; at > 0 {
+				// 已有的授权不动，只把说明更新成 server 现在给的。
+				t.Tools[at-1].Description = desc
 				continue
 			}
 			side, privacy := core.SideEffectIrreversible, "normal"
@@ -279,7 +292,7 @@ func (s *Server) syncTools(ctx context.Context, m config.MCPConfig) (added, tota
 				privacy = "sensitive"
 			}
 			t.Tools = append(t.Tools, config.ToolConfig{
-				Name: tool.Name, MaxPrivacy: privacy, Trust: "tool_output",
+				Name: tool.Name, Description: desc, MaxPrivacy: privacy, Trust: "tool_output",
 				SideEffect: string(side), EgressDomains: egress,
 			})
 			added++
@@ -495,11 +508,20 @@ func (s *Server) mcpDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/mcp", "MCP server「"+name+"」及其密钥已移除，重启服务后生效。", err)
 }
 
-// mcpInstalledDelete 移除一个助手自己装上的 server。
+// mcpInstalledDelete 移除一个在对话里装上的 server。用户给的地址里带的密钥一并从保险库删除。
 func (s *Server) mcpInstalledDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 	name := r.PostFormValue("name")
+	handle := ""
+	if list, err := s.opts.Store.MCPInstalls().ListServers(r.Context()); err == nil {
+		for _, srv := range list {
+			if srv.Name == name {
+				handle = srv.Secret
+			}
+		}
+	}
 	err := s.opts.Store.MCPInstalls().RemoveServer(r.Context(), name)
 	if err == nil {
+		s.dropCredential(r.Context(), handle, "mcp."+name)
 		s.opts.Log.Info("助手安装的 MCP server 已在后台移除", "server", name, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/mcp", "MCP server「"+name+"」已移除，重启服务后断开连接。", err)

@@ -72,6 +72,9 @@ type ServerSpec struct {
 	// Unreviewed 为真表示这个 server 不是用户亲手批准的，而是助手自己找来装上的。
 	// 它的工具没有用户定的授权边界，连接时按固定的保守边界登记，见 unreviewedGrant。
 	Unreviewed bool
+	// UserAdded 为真表示这个 server 是用户在对话里给出地址、让助手装上的。
+	// 它和用户在配置里亲手加的一样是用户的决定，只是工具的授权没有人逐个定过，连接时按默认的登记，见 userGrant。
+	UserAdded bool
 }
 
 // ToolInfo 是目录里的一个工具，供 Planner 选择使用。
@@ -236,8 +239,12 @@ func (g *Gateway) ConnectTransport(ctx context.Context, spec ServerSpec, transpo
 			// 让工具自己声明"我是只读的"等于没有管控。
 			SideEffect: core.SideEffectIrreversible,
 		}
-		if _, err := g.registry.Grant(full); err != nil && spec.Unreviewed {
-			if err := g.registry.Register(unreviewedGrant(full, spec.URL, t)); err != nil {
+		if _, err := g.registry.Grant(full); err != nil && (spec.Unreviewed || spec.UserAdded) {
+			grant := unreviewedGrant(full, spec.URL, t)
+			if spec.UserAdded {
+				grant = userGrant(full, spec.URL, t)
+			}
+			if err := g.registry.Register(grant); err != nil {
 				// 登记不上就保持未授权：目录里看得见，调用时会被拒绝。
 				g.auditCall(ctx, CallRequest{Tool: full}, core.TrustSystem, fmt.Sprintf("登记授权失败: %v", err))
 			}
@@ -276,6 +283,15 @@ func unreviewedGrant(name, rawURL string, t *mcp.Tool) policy.ToolGrant {
 	return g
 }
 
+// userGrant 是用户在对话里给出地址的 server 的工具所得到的授权，和他在管理后台里添加时的默认值一样：
+// 自称只读的按只读，其余按不可逆（调用时要用户确认）；参数最高到普通级别；出站只到它自己的域名。
+// 与 unreviewedGrant 的差别在于返回内容：这是用户选的服务，结构化的返回按工具输出对待，而不是外部内容。
+func userGrant(name, rawURL string, t *mcp.Tool) policy.ToolGrant {
+	g := unreviewedGrant(name, rawURL, t)
+	g.TrustCeiling = core.TrustToolOutput
+	return g
+}
+
 // ProbedTool 是 Probe 看到的一个工具。
 type ProbedTool struct {
 	// Name 是带命名空间的全名。
@@ -284,6 +300,8 @@ type ProbedTool struct {
 	ReadOnly bool
 	// Params 是它的入参名。
 	Params []string
+	// Description 是 server 给这个工具写的说明，没有则为空。
+	Description string
 }
 
 // Probe 连上一个 server 看它提供哪些工具，看完就断开。
@@ -323,7 +341,8 @@ func probed(server string, tools []*mcp.Tool) []ProbedTool {
 		if t == nil || t.Name == "" {
 			continue
 		}
-		p := ProbedTool{Name: server + "." + t.Name, ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint}
+		p := ProbedTool{Name: server + "." + t.Name, Description: t.Description,
+			ReadOnly: t.Annotations != nil && t.Annotations.ReadOnlyHint}
 		// 入参名从 schema 的 properties 里取；schema 写得不规范就留空，不影响风险判断。
 		var schema struct {
 			Properties map[string]json.RawMessage `json:"properties"`

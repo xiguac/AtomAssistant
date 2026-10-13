@@ -154,6 +154,39 @@ func (a *Approver) drivenBy(ctx context.Context, t *core.Task, d kernel.Decision
 	return t.Origin, "", nil
 }
 
+// strangerAddress 判断一次"按地址装 MCP server"用的地址是不是用户没有亲口说过的。
+//
+// 核对的办法是逐字比对：地址必须原样出现在用户说过的话里（任务的目标，或者他后来的回话）。
+// 模型把地址改写过、或者任务不是用户发起的，都对不上，交给用户确认。
+func (a *Approver) strangerAddress(ctx context.Context, t *core.Task, d kernel.Decision) (string, bool) {
+	if d.ToolName != ToolCapabilityInstall {
+		return "", false
+	}
+	var in capabilityInput
+	if err := json.Unmarshal(d.Input, &in); err != nil {
+		return "", false
+	}
+	addr := strings.TrimSpace(in.URL)
+	if addr == "" {
+		return "", false
+	}
+	const ask = "要按一个地址接入 MCP server，而这个地址不是你亲口给的（或者核对不了），是否接入由你确认"
+	var history []*core.Step
+	if a.history != nil {
+		steps, err := a.history.ListSteps(ctx, t.ID)
+		if err != nil {
+			return ask, true
+		}
+		history = steps
+	}
+	for _, said := range userStatements(t, history) {
+		if strings.Contains(said, addr) {
+			return "", false
+		}
+	}
+	return ask, true
+}
+
 // inHouse 是会改动东西、但改的是用户自己地盘上的东西的内置工具：他的日历、他的邮箱、本机的工作区。
 // 它们不把内容交给任何第三方。
 var inHouse = map[string]bool{
@@ -198,6 +231,12 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 
 	// 有外传风险的安装必须由用户批准，没有任何规则能放行它。
 	if reason, risky := a.installRisk(d); risky {
+		return kernel.ApprovalManual, reason, nil
+	}
+
+	// 按地址装 MCP server 只对用户亲口给的地址直接放行。地址是助手从别处读来的（网页、邮件、搜索结果），
+	// 或者核对不了，就交给用户确认——否则一封邮件写一句"装一下这个 MCP"就能让助手接上别人的服务。
+	if reason, ask := a.strangerAddress(ctx, t, d); ask {
 		return kernel.ApprovalManual, reason, nil
 	}
 
