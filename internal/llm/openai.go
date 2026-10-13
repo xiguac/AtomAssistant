@@ -64,11 +64,11 @@ func NewOpenAICompatible(cfg OpenAIConfig) (*OpenAICompatible, error) {
 func (p *OpenAICompatible) Name() string { return p.name }
 
 type chatRequest struct {
-	Model          string    `json:"model"`
-	Messages       []Message `json:"messages"`
-	MaxTokens      int       `json:"max_tokens,omitempty"`
-	Temperature    float64   `json:"temperature,omitempty"`
-	ResponseFormat *respFmt  `json:"response_format,omitempty"`
+	Model          string   `json:"model"`
+	Messages       []any    `json:"messages"`
+	MaxTokens      int      `json:"max_tokens,omitempty"`
+	Temperature    float64  `json:"temperature,omitempty"`
+	ResponseFormat *respFmt `json:"response_format,omitempty"`
 	// 以下两项是阿里云百炼的联网搜索开关，只在请求联网搜索时带上。
 	EnableSearch  bool           `json:"enable_search,omitempty"`
 	SearchOptions *searchOptions `json:"search_options,omitempty"`
@@ -108,7 +108,7 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 	}
 	body := chatRequest{
 		Model:       req.Model,
-		Messages:    req.Messages,
+		Messages:    openAIMessages(req.Messages),
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 	}

@@ -347,3 +347,20 @@ func TestSend_文件先上传再作为富媒体消息发出(t *testing.T) {
 		t.Fatalf("空文件应被拒绝且不发请求: %v", err)
 	}
 }
+
+func TestDispatch_消息里的图片附件带给上层(t *testing.T) {
+	b := &Bot{Label: "qq"}
+	var got []channel.Message
+	data := `{"id":"m1","content":"看看这个","timestamp":"2026-10-13T10:00:00+08:00","author":{"user_openid":"OPENID1"},` +
+		`"attachments":[{"content_type":"image/jpeg","filename":"a.jpg","url":"https://multimedia.nt.qq.com.cn/a.jpg"},` +
+		`{"content_type":"voice","url":"https://multimedia.nt.qq.com.cn/b.silk"},{"content_type":"image/png","url":""}]}`
+	b.dispatch(payload{Op: opDispatch, Type: eventC2C, Data: json.RawMessage(data)}, &session{}, newRecent(8),
+		func(m channel.Message) { got = append(got, m) })
+	if len(got) != 1 || got[0].Text != "看看这个" {
+		t.Fatalf("消息没有交给上层: %+v", got)
+	}
+	// 只认图片，而且要有地址；语音先不处理。
+	if imgs := got[0].Images; len(imgs) != 1 || imgs[0].URL != "https://multimedia.nt.qq.com.cn/a.jpg" || imgs[0].ContentType != "image/jpeg" {
+		t.Fatalf("图片附件不对: %+v", got[0].Images)
+	}
+}

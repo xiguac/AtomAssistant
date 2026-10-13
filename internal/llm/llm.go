@@ -25,6 +25,8 @@ const (
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
+	// Images 是随这条消息一起给模型看的图片，只有多模态模型看得懂。绝大多数消息没有。
+	Images []Image `json:"-"`
 }
 
 // Request 是一次补全请求。

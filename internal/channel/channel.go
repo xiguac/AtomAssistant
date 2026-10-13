@@ -23,7 +23,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -42,9 +44,29 @@ type Message struct {
 	// Sender 是发消息的人在这个渠道里的账号标识。
 	Sender string
 	Text   string
+	// Images 是随消息发来的图片。
+	Images []Attachment
 	// ID 是渠道给这条消息的编号，有的渠道回复时要带上它。
 	ID string
 	At time.Time
+}
+
+// Attachment 是消息里带的一个附件：渠道给的下载地址和类型。
+type Attachment struct {
+	URL string
+	// ContentType 形如 image/jpeg。
+	ContentType string
+}
+
+// Picture 是已经取回来的一张图片。
+type Picture struct {
+	MIME string
+	Data []byte
+}
+
+// Viewer 把图片看成文字：逐字转写图里的字，说明图是什么。由多模态模型提供。
+type Viewer interface {
+	Describe(ctx context.Context, pictures []Picture, caption string) (string, error)
 }
 
 // Outgoing 是要发到渠道里的一条消息。
@@ -124,6 +146,8 @@ type Tasks interface {
 	Create(ctx context.Context, title, goal string, tags []string) (string, error)
 	// Reply 把用户的话送给一个任务。
 	Reply(ctx context.Context, taskID, text, source string) error
+	// Attach 把用户发来的图片的内容送给一个任务。内容是从图片里读出来的，按外部内容对待。
+	Attach(ctx context.Context, taskID, content, source string) error
 	Approve(ctx context.Context, taskID string) error
 	Reject(ctx context.Context, taskID, reason string) error
 	// ByTag 返回带有某个标签的任务，新的在前。activeOnly 为真时不含已结束的。
@@ -217,8 +241,11 @@ type Hub struct {
 	tasks    Tasks
 	state    State
 	feedback Feedback
-	log      *slog.Logger
-	now      func() time.Time
+	// viewer 非空时看得懂图片；fetch 按地址取回图片，测试里可以换掉。
+	viewer Viewer
+	fetch  func(ctx context.Context, a Attachment) (Picture, error)
+	log    *slog.Logger
+	now    func() time.Time
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -227,7 +254,7 @@ type Hub struct {
 // NewHub 构造渠道中枢。
 func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hub, error) {
 	h := &Hub{
-		bindings: make(map[string]Binding), tasks: tasks, state: state, log: log,
+		bindings: make(map[string]Binding), tasks: tasks, state: state, log: log, fetch: fetchPicture,
 		now:    func() time.Time { return time.Now().UTC() },
 		hinted: make(map[string]time.Time),
 	}
@@ -242,6 +269,12 @@ func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hu
 		h.bindings[name] = b
 	}
 	return h, nil
+}
+
+// WithViewer 让助手看得懂主人发来的图片。
+func (h *Hub) WithViewer(v Viewer) *Hub {
+	h.viewer = v
+	return h
 }
 
 // WithFeedback 让主人能在聊天里用 /赞 和 /踩 评价协作模型交的活。
@@ -383,14 +416,17 @@ func (h *Hub) rate(ctx context.Context, channel, chat, tag string, good bool) er
 // route 决定一条消息该去哪。
 func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	text := strings.TrimSpace(m.Text)
-	if text == "" {
-		h.say(ctx, channel, m.Chat, "目前我只看得懂文字。")
-		return nil
-	}
 	if utf8.RuneCountInString(text) > maxTextRunes {
 		text = string([]rune(text)[:maxTextRunes])
 	}
 	tag := Tag(channel, m.Chat)
+	if len(m.Images) > 0 {
+		return h.routeImages(ctx, channel, m, text, tag)
+	}
+	if text == "" {
+		h.say(ctx, channel, m.Chat, "这条消息里没有我能处理的内容：目前我看得懂文字和图片。")
+		return nil
+	}
 
 	if rest, forced := strings.CutPrefix(text, newPrefix); forced {
 		if text = strings.TrimSpace(rest); text == "" {
@@ -435,15 +471,19 @@ func asking(t *core.Task) bool {
 }
 
 func (h *Hub) create(ctx context.Context, text, tag string) error {
-	title := text
+	_, err := h.createTask(ctx, text, text, tag)
+	return err
+}
+
+// createTask 新建一个任务，标题取 title 的头一句。
+func (h *Hub) createTask(ctx context.Context, title, goal, tag string) (string, error) {
 	if i := strings.IndexAny(title, "\n。"); i > 0 {
 		title = title[:i]
 	}
 	if r := []rune(title); len(r) > 24 {
 		title = string(r[:24]) + "…"
 	}
-	_, err := h.tasks.Create(ctx, title, text, []string{tag})
-	return err
+	return h.tasks.Create(ctx, title, goal, []string{tag})
 }
 
 // askPrefix 是内核在任务提问时写进原因里的前缀。
@@ -635,4 +675,117 @@ func chunk(text string, max int) []string {
 		out = append(out, rest)
 	}
 	return out
+}
+
+// 图片的几个上限：一条消息最多看几张、单张多大、取回一张最多等多久。
+const (
+	maxPictures     = 4
+	maxPictureBytes = 10 << 20
+	pictureTimeout  = 30 * time.Second
+	viewTimeout     = 2 * time.Minute
+)
+
+// imageOnlyGoal 是用户只发了图片、没有说话时任务的目标。
+const imageOnlyGoal = "用户发来了图片，没有附文字说明。图片的内容见随后的消息：看明白它是什么，" +
+	"能判断出用户想让你做什么就去办，判断不出就问用户。"
+
+// routeImages 处理一条带图片的消息：先把图片看成文字，再把它和用户说的话一起交给任务。
+//
+// 图片的内容和用户的话分开送：用户的话是他亲口说的，图片里的字是别人写的，两者的信任等级不一样。
+func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, tag string) error {
+	if h.viewer == nil {
+		h.say(ctx, channel, m.Chat, "目前我看不了图片：还没有接通能看图的模型。")
+		return nil
+	}
+	images := m.Images
+	if len(images) > maxPictures {
+		images = images[:maxPictures]
+	}
+	pictures := make([]Picture, 0, len(images))
+	for _, a := range images {
+		fetchCtx, cancel := context.WithTimeout(ctx, pictureTimeout)
+		p, err := h.fetch(fetchCtx, a)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("取回图片失败: %w", err)
+		}
+		pictures = append(pictures, p)
+	}
+	viewCtx, cancel := context.WithTimeout(ctx, viewTimeout)
+	seen, err := h.viewer.Describe(viewCtx, pictures, text)
+	cancel()
+	if err != nil {
+		return err
+	}
+	// 图片交给了模型服务，这是数据离开这台机器的时刻，留一条记录。
+	h.log.Info("图片已交给模型识别", "渠道", channel, "张数", len(pictures))
+	if len(m.Images) > maxPictures {
+		seen += fmt.Sprintf("\n（用户共发来 %d 张图片，只看了前 %d 张。）", len(m.Images), maxPictures)
+	}
+
+	active, err := h.tasks.ByTag(ctx, tag, true, 20)
+	if err != nil {
+		return err
+	}
+	// 有任务在等用户回话：这张图是给它的。先送图片的内容，再送用户的话。
+	for _, t := range active {
+		if !asking(t) {
+			continue
+		}
+		if err := h.tasks.Attach(ctx, t.ID, seen, channel); err != nil {
+			return err
+		}
+		if text == "" {
+			return nil
+		}
+		return h.tasks.Reply(ctx, t.ID, text, channel)
+	}
+	goal, title := text, text
+	if goal == "" {
+		goal, title = imageOnlyGoal, "处理图片"
+	}
+	id, err := h.createTask(ctx, title, goal, tag)
+	if err != nil {
+		return err
+	}
+	return h.tasks.Attach(ctx, id, seen, channel)
+}
+
+// fetchPicture 按渠道给的地址取回一张图片。
+//
+// 地址是渠道平台给的，不是用户或模型写的；即便如此也只认 https，并且限制大小。
+func fetchPicture(ctx context.Context, a Attachment) (Picture, error) {
+	url := a.URL
+	if !strings.Contains(url, "://") {
+		// 有的平台给的地址不带协议。
+		url = "https://" + url
+	}
+	if !strings.HasPrefix(url, "https://") {
+		return Picture{}, fmt.Errorf("channel: 图片地址不是 https")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return Picture{}, fmt.Errorf("channel: 图片地址不合法: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Picture{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Picture{}, fmt.Errorf("channel: 图片服务器返回 %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPictureBytes+1))
+	if err != nil {
+		return Picture{}, err
+	}
+	if len(data) > maxPictureBytes {
+		return Picture{}, fmt.Errorf("channel: 图片超过 %d MB", maxPictureBytes>>20)
+	}
+	// 类型以内容为准：平台报的类型不一定对，而模型服务对类型很挑剔。
+	mime := http.DetectContentType(data)
+	if !strings.HasPrefix(mime, "image/") {
+		return Picture{}, fmt.Errorf("channel: 取回来的不是图片（%s）", mime)
+	}
+	return Picture{MIME: mime, Data: data}, nil
 }

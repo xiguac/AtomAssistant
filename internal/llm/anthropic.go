@@ -65,12 +65,12 @@ func (p *AnthropicCompatible) endpoint() string {
 }
 
 type anthropicRequest struct {
-	Model       string    `json:"model"`
-	MaxTokens   int       `json:"max_tokens"`
-	System      string    `json:"system,omitempty"`
-	Messages    []Message `json:"messages"`
-	Temperature float64   `json:"temperature,omitempty"`
-	Tools       []any     `json:"tools,omitempty"`
+	Model       string  `json:"model"`
+	MaxTokens   int     `json:"max_tokens"`
+	System      string  `json:"system,omitempty"`
+	Messages    []any   `json:"messages"`
+	Temperature float64 `json:"temperature,omitempty"`
+	Tools       []any   `json:"tools,omitempty"`
 }
 
 // webSearchTool 是服务端执行的联网搜索工具：搜索由模型服务自己完成，我们只拿结果。
@@ -110,9 +110,9 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 		case RoleSystem:
 			system = append(system, m.Content)
 		case RoleAssistant:
-			body.Messages = append(body.Messages, Message{Role: RoleAssistant, Content: m.Content})
+			body.Messages = append(body.Messages, anthropicMessage(RoleAssistant, m))
 		default:
-			body.Messages = append(body.Messages, Message{Role: RoleUser, Content: m.Content})
+			body.Messages = append(body.Messages, anthropicMessage(RoleUser, m))
 		}
 	}
 	body.System = strings.Join(system, "\n\n")

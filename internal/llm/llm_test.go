@@ -415,7 +415,7 @@ func TestAnthropicCompatible_按Messages接口收发(t *testing.T) {
 		}
 		// 系统提示单列；没给长度上限时补默认值；只剩 user / assistant 两种角色。
 		if gotBody.System != "只输出 JSON" || gotBody.MaxTokens != anthropicDefaultMaxTokens || len(gotBody.Messages) != 3 ||
-			gotBody.Messages[0].Role != RoleUser || gotBody.Messages[1].Role != RoleAssistant || gotBody.Messages[2].Role != RoleUser {
+			roleOf(gotBody.Messages[0]) != RoleUser || roleOf(gotBody.Messages[1]) != RoleAssistant || roleOf(gotBody.Messages[2]) != RoleUser {
 			t.Fatalf("请求体不对: %+v", gotBody)
 		}
 		// 思考过程不算进答案。
@@ -439,5 +439,67 @@ func TestAnthropicCompatible_按Messages接口收发(t *testing.T) {
 	}
 	if _, err := NewAnthropicCompatible(OpenAIConfig{Name: "x", BaseURL: "https://x"}); err == nil {
 		t.Fatal("缺少密钥应报错")
+	}
+}
+
+// roleOf 取出一条已经序列化过又读回来的消息的角色。
+func roleOf(m any) Role {
+	if obj, ok := m.(map[string]any); ok {
+		if r, ok := obj["role"].(string); ok {
+			return Role(r)
+		}
+	}
+	return ""
+}
+
+func TestProviders_带图片的消息按多模态格式发出(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		if strings.HasSuffix(r.URL.Path, "/messages") {
+			_, _ = w.Write([]byte(`{"model":"m","content":[{"type":"text","text":"一张票据"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"model":"m","choices":[{"message":{"content":"一张票据"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
+	}))
+	defer srv.Close()
+	req := Request{Model: "m", Messages: []Message{
+		{Role: RoleSystem, Content: "转写图片"},
+		{Role: RoleUser, Content: "共 1 张", Images: []Image{{MIME: "image/png", Data: []byte("PNGDATA")}}},
+	}}
+	b64 := "UE5HREFUQQ==" // "PNGDATA"
+
+	openai, err := NewOpenAICompatible(OpenAIConfig{Name: "o", BaseURL: srv.URL, APIKey: "k", Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := openai.Complete(context.Background(), req); err != nil || resp.Content != "一张票据" {
+		t.Fatalf("调用失败: %v", err)
+	}
+	msgs := got["messages"].([]any)
+	// 没带图片的消息仍是纯文本；带图片的内容是文字加图片的数组。
+	if _, plain := msgs[0].(map[string]any)["content"].(string); !plain {
+		t.Fatalf("没带图片的消息应保持纯文本: %v", msgs[0])
+	}
+	parts := msgs[1].(map[string]any)["content"].([]any)
+	img := parts[1].(map[string]any)
+	if parts[0].(map[string]any)["text"] != "共 1 张" || img["type"] != "image_url" ||
+		img["image_url"].(map[string]any)["url"] != "data:image/png;base64,"+b64 {
+		t.Fatalf("OpenAI 协议的图片格式不对: %v", parts)
+	}
+
+	anth, err := NewAnthropicCompatible(OpenAIConfig{Name: "a", BaseURL: srv.URL, APIKey: "k", Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp, err := anth.Complete(context.Background(), req); err != nil || resp.Content != "一张票据" {
+		t.Fatalf("调用失败: %v", err)
+	}
+	parts = got["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	src := parts[0].(map[string]any)["source"].(map[string]any)
+	if parts[0].(map[string]any)["type"] != "image" || src["type"] != "base64" || src["media_type"] != "image/png" ||
+		src["data"] != b64 || parts[1].(map[string]any)["text"] != "共 1 张" {
+		t.Fatalf("Anthropic 协议的图片格式不对: %v", parts)
 	}
 }

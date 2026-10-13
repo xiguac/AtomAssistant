@@ -26,6 +26,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/demo"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
@@ -149,6 +150,9 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.team {
 			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
 		}
+		if parts.viewer != nil {
+			hub = hub.WithViewer(parts.viewer)
+		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
 		}
@@ -263,8 +267,10 @@ type parts struct {
 	// outbox 非空时助手可以往聊天窗口里发文件，渠道中枢建好后要填进去。
 	outbox *chatOutbox
 	// team 为真表示配置了协作模型。
-	team  bool
-	close func()
+	team bool
+	// viewer 用多模态模型看用户发来的图片。
+	viewer channel.Viewer
+	close  func()
 }
 
 // build 按配置装出各个部件。
@@ -500,6 +506,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	return &parts{
 		team:     len(file.Workers()) > 0,
+		viewer:   pictureViewer{model: router},
 		channels: channels,
 		outbox:   outbox,
 		planner:  planner,
@@ -509,6 +516,19 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
+}
+
+// pictureViewer 用模型路由里看图的那个模型（没单独配就是主模型）把图片看成文字。
+type pictureViewer struct {
+	model agent.Completer
+}
+
+func (v pictureViewer) Describe(ctx context.Context, pictures []channel.Picture, caption string) (string, error) {
+	images := make([]llm.Image, 0, len(pictures))
+	for _, p := range pictures {
+		images = append(images, llm.Image{MIME: p.MIME, Data: p.Data})
+	}
+	return agent.DescribeImages(ctx, v.model, images, caption)
 }
 
 // chatOutbox 把助手要发的文件交给渠道中枢。

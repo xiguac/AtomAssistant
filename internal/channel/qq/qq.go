@@ -486,6 +486,11 @@ func (b *Bot) dispatch(p payload, sess *session, seen *recent, handle func(chann
 				ID         string `json:"id"`
 				UserOpenID string `json:"user_openid"`
 			} `json:"author"`
+			// 附件的字段照官方 Go SDK 的 dto.MessageAttachment 核对过。
+			Attachments []struct {
+				URL         string `json:"url"`
+				ContentType string `json:"content_type"`
+			} `json:"attachments"`
 		}
 		if err := json.Unmarshal(p.Data, &m); err != nil {
 			b.logger().Warn("QQ 消息解析失败", "渠道", b.Label, "err", err)
@@ -502,7 +507,14 @@ func (b *Bot) dispatch(p payload, sess *session, seen *recent, handle func(chann
 		if err != nil {
 			at = time.Now()
 		}
-		handle(channel.Message{Chat: chatPrefix + openid, Sender: openid, Text: m.Content, ID: m.ID, At: at})
+		msg := channel.Message{Chat: chatPrefix + openid, Sender: openid, Text: m.Content, ID: m.ID, At: at}
+		for _, a := range m.Attachments {
+			// 目前只认图片；语音、视频、文件先不处理。
+			if a.URL != "" && strings.HasPrefix(a.ContentType, "image/") {
+				msg.Images = append(msg.Images, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
+			}
+		}
+		handle(msg)
 	}
 }
 

@@ -52,6 +52,10 @@ func (f *fakeTasks) Reply(_ context.Context, id, text, source string) error {
 	f.log = append(f.log, "reply:"+f.title(id)+"|"+text+"|"+source)
 	return nil
 }
+func (f *fakeTasks) Attach(_ context.Context, id, content, source string) error {
+	f.log = append(f.log, "attach:"+f.title(id)+"|"+content+"|"+source)
+	return nil
+}
 func (f *fakeTasks) Approve(_ context.Context, id string) error {
 	f.log = append(f.log, "approve:"+f.title(id))
 	return nil
@@ -459,5 +463,82 @@ func TestSendFile_只发回任务所来自的会话(t *testing.T) {
 	}
 	if len(qq.sent) != sent {
 		t.Fatal("被拒绝的文件不该发出去")
+	}
+}
+
+// fakeViewer 假装看图：记下看了几张、用户随图说了什么，返回一段固定的内容。
+type fakeViewer struct {
+	pictures int
+	caption  string
+	err      error
+}
+
+func (v *fakeViewer) Describe(_ context.Context, pictures []Picture, caption string) (string, error) {
+	v.pictures, v.caption = len(pictures), caption
+	return "聊天截图：周五三点开会", v.err
+}
+
+func withPictures(m Message, n int) Message {
+	for i := 0; i < n; i++ {
+		m.Images = append(m.Images, Attachment{URL: fmt.Sprintf("https://img.example.com/%d.jpg", i), ContentType: "image/jpeg"})
+	}
+	return m
+}
+
+func TestHandle_图片先看成文字再按外部内容交给任务(t *testing.T) {
+	h, qq, tasks := hub(t)
+	ctx := context.Background()
+	h.fetch = func(context.Context, Attachment) (Picture, error) {
+		return Picture{MIME: "image/jpeg", Data: []byte("x")}, nil
+	}
+
+	// 没接看图的模型：如实说看不了，不建任务。
+	h.Handle(ctx, "qq", withPictures(from("OWNER", "", "m1"), 1))
+	if len(tasks.log) != 0 || len(qq.sent) != 1 || !strings.Contains(qq.sent[0].Text, "看不了图片") {
+		t.Fatalf("没有看图能力时应如实告知: %v %+v", tasks.log, qq.sent)
+	}
+
+	v := &fakeViewer{}
+	h.WithViewer(v)
+	// 图片配一句话：话是任务的目标，图片的内容单独送进去。
+	h.Handle(ctx, "qq", withPictures(from("OWNER", "把这个记到日历上", "m2"), 1))
+	if len(tasks.log) != 2 || tasks.log[0] != "create:把这个记到日历上|把这个记到日历上" ||
+		tasks.log[1] != "attach:把这个记到日历上|聊天截图：周五三点开会|qq" || v.caption != "把这个记到日历上" {
+		t.Fatalf("应新建任务并把图片内容单独交给它: %v", tasks.log)
+	}
+	// 只有图片没有话：照样建任务，由助手看了再说。
+	tasks.log = nil
+	h.Handle(ctx, "qq", withPictures(from("OWNER", "", "m3"), 6))
+	if len(tasks.log) != 2 || !strings.HasPrefix(tasks.log[0], "create:处理图片|用户发来了图片") ||
+		!strings.Contains(tasks.log[1], "只看了前 4 张") || v.pictures != maxPictures {
+		t.Fatalf("只发图片也应处理，超出张数上限的要说明: %v", tasks.log)
+	}
+
+	// 有任务在等回话：图片是给它的。先送图片内容，再送用户的话。
+	tasks.log = nil
+	waiting := tasks.add("订餐厅", Tag("qq", "c2c:OWNER"))
+	ask(waiting, "订哪一家？")
+	h.Handle(ctx, "qq", withPictures(from("OWNER", "就这家", "m4"), 1))
+	if len(tasks.log) != 2 || tasks.log[0] != "attach:订餐厅|聊天截图：周五三点开会|qq" || tasks.log[1] != "reply:订餐厅|就这家|qq" {
+		t.Fatalf("图片应送给正在等回话的任务: %v", tasks.log)
+	}
+
+	// 取不回图片：告诉用户没处理成，不建任务。
+	tasks.log = nil
+	sent := len(qq.sent)
+	h.fetch = func(context.Context, Attachment) (Picture, error) { return Picture{}, errors.New("超时") }
+	h.Handle(ctx, "qq", withPictures(from("OWNER", "看看", "m5"), 1))
+	if len(tasks.log) != 0 || len(qq.sent) != sent+1 || !strings.Contains(qq.sent[sent].Text, "取回图片失败") {
+		t.Fatalf("取不回图片时应告知用户: %v", tasks.log)
+	}
+}
+
+func TestFetchPicture_只认https和真正的图片(t *testing.T) {
+	ctx := context.Background()
+	if _, err := fetchPicture(ctx, Attachment{URL: "http://img.example.com/a.jpg"}); err == nil {
+		t.Fatal("明文地址应被拒绝")
+	}
+	if _, err := fetchPicture(ctx, Attachment{URL: "file:///etc/passwd"}); err == nil {
+		t.Fatal("不是 https 的地址应被拒绝")
 	}
 }
