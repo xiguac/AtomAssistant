@@ -249,8 +249,13 @@ type Hub struct {
 	log   *slog.Logger
 	now   func() time.Time
 
+	// triage 非空时，一句话归给哪件事由主模型判断，见 triage.go。
+	triage Triager
+
 	mu     sync.Mutex
 	hinted map[string]time.Time
+	// asked 是一句拿不准归给谁、正在问用户的话。所有消息源共用一个会话，所以只有一个。
+	asked *pendingAsk
 }
 
 // NewHub 构造渠道中枢。
@@ -442,23 +447,59 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	if err != nil {
 		return err
 	}
-	// 有动作在等确认：这句话就是对它的表态。单纯的同意就放行；
-	// 其他任何话都当作"不行，要这样改"，原话交回给任务，让它照着重新来。
-	for _, t := range active {
-		if t.State != core.StateWaiting || t.Wake == nil || t.Wake.Kind != core.WakeApproval {
-			continue
-		}
-		h.follow(ctx, t, channel, m.Chat)
-		if isApproval(text) {
-			return h.tasks.Approve(ctx, t.ID)
-		}
-		return h.tasks.Reject(ctx, t.ID, text)
+	// 上一句话拿不准归给谁、正在问用户：这一句先当作对那个问题的回答。
+	if handled, err := h.answerAsk(ctx, channel, m.Chat, text, active); err != nil || handled {
+		return err
 	}
-	// 有任务在等用户回话：这句话是给它的。
+	if len(active) == 0 {
+		return h.create(ctx, text, tag)
+	}
+	// 有动作在等确认，而这句话就是一个"同意"：放行。这不需要判断。
+	if isApproval(text) {
+		for _, t := range active {
+			if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
+				h.follow(ctx, t, channel, m.Chat)
+				return h.tasks.Approve(ctx, t.ID)
+			}
+		}
+	}
+	if h.triage == nil {
+		return h.routeByRule(ctx, channel, m.Chat, text, tag, active)
+	}
+	// 手头有事在办：这句话是说其中哪一件，还是另起一件新的，由主模型判断。
+	cands := candidatesOf(active)
+	verdict, err := h.triage.Triage(ctx, text, cands)
+	if err != nil {
+		// 判断不了不能把话丢了：退回老办法，并留下痕迹。
+		h.log.Error("判断消息归属失败，按规则处理", "err", err)
+		return h.routeByRule(ctx, channel, m.Chat, text, tag, active)
+	}
+	switch {
+	case verdict.New:
+		return h.create(ctx, text, tag)
+	case verdict.TaskID != "":
+		for _, t := range active {
+			if t.ID == verdict.TaskID {
+				return h.deliver(ctx, t, channel, m.Chat, text)
+			}
+		}
+	}
+	// 模型也拿不准：问用户。
+	h.askWhich(ctx, channel, m.Chat, tag, text, cands)
+	return nil
+}
+
+// routeByRule 是没有模型可用时的老办法：有动作在等确认，这句话就是对它的表态；
+// 有任务在等用户回话，这句话是给它的；否则是一件新的事。
+func (h *Hub) routeByRule(ctx context.Context, channel, chat, text, tag string, active []*core.Task) error {
+	for _, t := range active {
+		if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
+			return h.deliver(ctx, t, channel, chat, text)
+		}
+	}
 	for _, t := range active {
 		if asking(t) {
-			h.follow(ctx, t, channel, m.Chat)
-			return h.tasks.Reply(ctx, t.ID, text, channel)
+			return h.deliver(ctx, t, channel, chat, text)
 		}
 	}
 	return h.create(ctx, text, tag)

@@ -149,6 +149,10 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.team {
 			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
 		}
+		// 手头有事在办时，新来的一句话归给哪件事由主模型判断。
+		if parts.triage != nil {
+			hub = hub.WithTriage(parts.triage)
+		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
 		}
@@ -263,8 +267,10 @@ type parts struct {
 	// outbox 非空时助手可以往聊天窗口里发文件，渠道中枢建好后要填进去。
 	outbox *chatOutbox
 	// team 为真表示配置了协作模型。
-	team  bool
-	close func()
+	team bool
+	// triage 用主模型判断聊天里的一句话该归给哪件事。
+	triage channel.Triager
+	close  func()
 }
 
 // build 按配置装出各个部件。
@@ -517,6 +523,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	return &parts{
 		team:     len(file.Workers()) > 0,
+		triage:   agent.NewTriager(router),
 		channels: channels,
 		outbox:   outbox,
 		planner:  planner,

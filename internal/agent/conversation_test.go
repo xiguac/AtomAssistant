@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xiguac/atomhelper/internal/channel"
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/llm"
 )
 
 type fakeConversation struct{ tasks []*core.Task }
@@ -81,5 +83,33 @@ func TestConversation_新任务带上同一个会话里最近的对话(t *testin
 	lone := &fakeConversation{tasks: []*core.Task{cur}}
 	if _, ok, _ := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithConversation(lone).conversationSegment(context.Background(), cur); ok {
 		t.Fatal("会话里的第一句话没有此前的对话")
+	}
+}
+
+func TestTriager_按模型的回答定出归属(t *testing.T) {
+	cands := []channel.Candidate{
+		{ID: "A", Title: "订高铁", Goal: "周五去苏州", Status: "正在办"},
+		{ID: "B", Title: "订酒店", Goal: "苏州住一晚", Status: "正在等用户回答：住哪一带？"},
+	}
+	for reply, want := range map[string]channel.Verdict{
+		`{"target": "2"}`:      {TaskID: "B"},
+		`{"target": 1}`:        {TaskID: "A"},
+		`{"target": "new"}`:    {New: true},
+		`{"target": "unsure"}`: {},
+		`{"target": "7"}`:      {},
+	} {
+		m := &fakeModel{replies: []string{reply}}
+		got, err := NewTriager(m).Triage(context.Background(), "住观前街附近", cands)
+		if err != nil || got != want {
+			t.Fatalf("回答 %s 应得到 %+v: %+v %v", reply, want, got, err)
+		}
+		// 候选和这句话都交给了主模型，要求只输出 JSON。
+		user := m.lastReq.Messages[len(m.lastReq.Messages)-1].Content
+		if m.lastPurp != llm.PurposePlan || !m.lastReq.JSONMode || !strings.Contains(user, "订酒店") || !strings.Contains(user, "住观前街附近") {
+			t.Fatalf("交给模型的内容不对: %s", user)
+		}
+	}
+	if _, err := NewTriager(&fakeModel{replies: []string{"不是 JSON"}}).Triage(context.Background(), "x", cands); err == nil {
+		t.Fatal("看不懂的输出应报错，由调用方退回按规则处理")
 	}
 }

@@ -579,3 +579,119 @@ func TestRoute_换一个消息源也能回答进展跟着走(t *testing.T) {
 		t.Fatalf("不是主人的话不应送给任务: %v", tasks.log[before:])
 	}
 }
+
+// fakeTriage 按预先写好的话回答：pick 是第几个候选（从 1 起），0 表示新的事，-1 表示拿不准。
+type fakeTriage struct {
+	pick  int
+	err   error
+	asked []string
+	seen  []Candidate
+}
+
+func (f *fakeTriage) Triage(_ context.Context, text string, cands []Candidate) (Verdict, error) {
+	f.asked, f.seen = append(f.asked, text), cands
+	switch {
+	case f.err != nil:
+		return Verdict{}, f.err
+	case f.pick == 0:
+		return Verdict{New: true}, nil
+	case f.pick > 0 && f.pick <= len(cands):
+		return Verdict{TaskID: cands[f.pick-1].ID}, nil
+	}
+	return Verdict{}, nil
+}
+
+func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t *testing.T) {
+	h, qq, tasks := hub(t)
+	tri := &fakeTriage{}
+	h = h.WithTriage(tri)
+	ctx := context.Background()
+	tag := Tag("qq", "c2c:OWNER")
+	say := func(text string) { h.Handle(ctx, "qq", from("OWNER", text, "m")) }
+	last := func() string { return tasks.log[len(tasks.log)-1] }
+
+	// 手头没有事在办：直接是新的事，不用问模型。
+	say("帮我订周五去苏州的高铁")
+	if last() != "create:帮我订周五去苏州的高铁|帮我订周五去苏州的高铁" || len(tri.asked) != 0 {
+		t.Fatalf("没有进行中的任务时应直接新建: %s（问了模型 %d 次）", last(), len(tri.asked))
+	}
+	trip := tasks.tasks[0]
+	trip.State = core.StateRunning
+
+	// 任务还在办的时候补了一句：模型判断是说它的，就作为补充送过去，不另开任务。
+	tri.pick = 1
+	say("要靠窗的")
+	if last() != "reply:帮我订周五去苏州的高铁|要靠窗的|qq" {
+		t.Fatalf("补充的话应送给正在办的任务: %s", last())
+	}
+	if len(tri.seen) != 1 || tri.seen[0].Status != "正在办" {
+		t.Fatalf("交给模型的候选不对: %+v", tri.seen)
+	}
+	// 模型判断是另一件事：新建。
+	tri.pick = 0
+	say("今天天气怎么样")
+	if last() != "create:今天天气怎么样|今天天气怎么样" {
+		t.Fatalf("不相干的话应新建任务: %s", last())
+	}
+	weather := tasks.tasks[0]
+	weather.State = core.StateRunning
+
+	// 模型拿不准：问用户，这句话先不办。
+	tri.pick = -1
+	before, sent := len(tasks.log), len(qq.sent)
+	say("再便宜点的")
+	if len(tasks.log) != before || len(qq.sent) != sent+1 {
+		t.Fatalf("拿不准时应先问用户，不建任务也不送给谁: %v", tasks.log[before:])
+	}
+	if q := qq.sent[len(qq.sent)-1].Text; !strings.Contains(q, "再便宜点的") || !strings.Contains(q, "1. ") || !strings.Contains(q, "2. ") || !strings.Contains(q, "0. ") {
+		t.Fatalf("问题应列出进行中的事和\"新的事\"这个选项: %s", q)
+	}
+	// 用户回个序号：之前那句话送给选中的那件事。回答本身不问模型。
+	asked := len(tri.asked)
+	say("2")
+	if last() != "reply:帮我订周五去苏州的高铁|再便宜点的|qq" || len(tri.asked) != asked {
+		t.Fatalf("回序号后应把之前那句话送给选中的任务: %s", last())
+	}
+	// 回 0：之前那句话算一件新的事。
+	say("另外一件说不清的事")
+	say("0")
+	if last() != "create:另外一件说不清的事|另外一件说不清的事" {
+		t.Fatalf("回 0 应新建任务: %s", last())
+	}
+	tasks.tasks[0].State = core.StateDone
+	// 没回答、说了别的：之前那句话不能丢，按新的事办；这一句照常判断。
+	say("又一件说不清的事")
+	tri.pick = 1
+	say("对了靠过道也行")
+	n := len(tasks.log)
+	if n < 2 || tasks.log[n-2] != "create:又一件说不清的事|又一件说不清的事" || !strings.HasPrefix(tasks.log[n-1], "reply:") {
+		t.Fatalf("没回答时之前那句话应新建，这一句照常处理: %v", tasks.log[n-2:])
+	}
+
+	// 用户明确说了是新的事：不问模型。
+	asked = len(tri.asked)
+	say("/new 查一下明天的航班")
+	if last() != "create:查一下明天的航班|查一下明天的航班" || len(tri.asked) != asked {
+		t.Fatalf("明确说了是新的事就不用判断: %s", last())
+	}
+	// 等确认的动作：一句"同意"直接放行，不问模型；别的话交给模型，判给它就是"要这样改"。
+	pay := tasks.add("付款", tag)
+	awaitApproval(tasks, pay, "s1", "pay.send", `{"amount":"10"}`, "")
+	say("同意")
+	if last() != "approve:付款" || len(tri.asked) != asked {
+		t.Fatalf("同意应直接放行: %s", last())
+	}
+	awaitApproval(tasks, pay, "s2", "pay.send", `{"amount":"10"}`, "")
+	tri.pick = 1
+	say("金额改成 8 块")
+	if last() != "reject:付款|金额改成 8 块" {
+		t.Fatalf("判给等确认的任务时这句话是修改意见: %s", last())
+	}
+	// 模型出错：话不能丢，退回按规则处理（有等确认的就归它）。
+	awaitApproval(tasks, pay, "s3", "pay.send", `{"amount":"8"}`, "")
+	tri.err = errors.New("模型不可用")
+	say("还是算了")
+	if last() != "reject:付款|还是算了" {
+		t.Fatalf("模型出错时应按规则处理: %s", last())
+	}
+}
