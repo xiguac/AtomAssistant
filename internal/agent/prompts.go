@@ -16,14 +16,11 @@ const (
 	PromptWeb        = "web"
 	PromptCapability = "capability"
 	PromptVoice      = "voice"
-	PromptMainLang   = "main_lang"
 	PromptAssign     = "assign"
 	PromptDraft      = "draft"
 	PromptPlanReview = "plan_review"
 	PromptWorker     = "worker"
-	PromptWorkerLang = "worker_lang"
 	PromptReview     = "review"
-	PromptTakeover   = "takeover"
 	PromptGuard      = "guard"
 )
 
@@ -41,19 +38,16 @@ type PromptSpec struct {
 // PromptSpecs 列出全部可以在后台查看、改写的段落，按它们在系统提示里出现的大致先后。
 func PromptSpecs() []PromptSpec {
 	return []PromptSpec{
-		{PromptBase, "基础约束", "每一次模型调用都加载，位于系统提示最前面，优先级高于其余各段。", baseRules, false},
-		{PromptPlanner, "规划说明", "模型决定任务的下一步时加载。规定输出的 JSON 格式与决策方法。", plannerSystemPrompt, true},
+		{PromptBase, "基础约束", "每一次模型调用都加载，位于系统提示最前面，优先级高于其余各段。含语言要求。", baseRules, false},
+		{PromptPlanner, "规划说明", "模型决定任务的下一步时加载。规定输出的 JSON 格式与决策方法，含主模型接手任务后的要求。", plannerSystemPrompt, true},
 		{PromptWeb, "联网搜索", "已接入联网搜索时加载。规定何时搜索、如何节省搜索次数。", webRule, false},
 		{PromptCapability, "查找与安装能力", "模型可自行查找、安装 Skill 与 MCP server 时加载。", capabilityRule, false},
 		{PromptVoice, "表达风格", "已学到用户的表达风格时加载，仅主模型使用。", voiceRule, false},
-		{PromptMainLang, "主模型语言", "主模型指派任务、评估方案、审核结果、把关动作时加载。", mainLanguageRule, false},
 		{PromptAssign, "指派任务", "配置了协作模型时，主模型判断任务类别以选出任务模型。", assignPrompt, true},
 		{PromptDraft, "起草方案", "配置了协作模型时，任务模型在动手之前起草方案。", draftPrompt, true},
 		{PromptPlanReview, "评估方案", "配置了协作模型时，主模型评估任务模型起草的方案。", planReviewPrompt, true},
-		{PromptWorker, "任务模型职责", "任务模型执行任务的每一步时加载。", delegateRule, false},
-		{PromptWorkerLang, "任务模型语言", "任务模型起草方案与执行任务时加载。", workerLanguageRule, false},
+		{PromptWorker, "任务模型", "任务模型执行任务的每一步时加载。规定其职责与语言。", delegateRule, false},
 		{PromptReview, "审核结果", "配置了协作模型时，主模型审核任务模型交回的结果。", reviewPrompt, true},
-		{PromptTakeover, "主模型接手", "主模型审核后决定自己接手任务时加载。", takeoverRule, false},
 		{PromptGuard, "动作把关", "自主模式下，修改或删除已有内容的动作执行前由主模型把关。", guardPrompt, true},
 	}
 }

@@ -116,8 +116,6 @@ type Planner struct {
 	// worker 是当前这次决策由哪个任务模型来做。它只存在于 decideDelegated 内部的副本上，
 	// 共享的 Planner 上永远是空的。
 	worker string
-	// takeover 为真表示主模型已经接手了这件事，同样只存在于副本上。
-	takeover bool
 	// reviewActions 为真时，会修改、删除已有东西的动作在执行前先由主模型把关，见 guard。
 	reviewActions bool
 	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
@@ -441,10 +439,7 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 		parts = append(parts, ps.get(PromptCapability))
 	}
 	if p.worker != "" {
-		parts = append(parts, ps.get(PromptWorker), ps.get(PromptWorkerLang))
-	}
-	if p.takeover {
-		parts = append(parts, ps.get(PromptTakeover))
+		parts = append(parts, ps.get(PromptWorker))
 	}
 	system := sections(append(parts, style)...) + p.clock() + "\n\nAvailable tools:\n" + p.toolList()
 	msgs, err := llm.Build(segs, llm.BuildOptions{

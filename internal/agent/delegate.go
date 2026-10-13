@@ -259,9 +259,8 @@ func (p *Planner) decideDelegated(ctx context.Context, t *core.Task, history []*
 	}
 	if state.takeover != nil {
 		// 主模型接手之后自己一步步办，可以用全部工具；它说办完了就是办完了，不用再审自己。
-		main := *p
-		main.takeover = true
-		d, err := main.decide(ctx, t, history)
+		// 接手之后该怎么办写在规划说明里，认的是上下文里的「接手说明」。
+		d, err := p.decide(ctx, t, history)
 		if err != nil || d.Kind != kernel.DecideFinish {
 			return d, err
 		}
@@ -361,7 +360,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	for _, c := range team.Categories {
 		cats = append(cats, fmt.Sprintf("- %s (%s): %s", c.ID, c.Name, c.Hint))
 	}
-	system := sections(ps.get(PromptBase), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n"), ps.get(PromptMainLang)) + p.clock()
+	system := sections(ps.get(PromptBase), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n")) + p.clock()
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -403,7 +402,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 	}
 	var spent kernel.Decision
 	var plan briefRecord
-	if err := p.askJSON(ctx, t, false, sections(ps.get(PromptBase), ps.get(PromptDraft), ps.get(PromptWorkerLang))+tools,
+	if err := p.askJSON(ctx, t, false, sections(ps.get(PromptBase), ps.get(PromptDraft))+tools,
 		segs, &spent, "方案", &plan); err != nil {
 		return spent, err
 	}
@@ -419,7 +418,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 		Role: llm.RoleUser, Content: "任务模型起草的方案：\n" + plan.render(),
 		Trust: core.TrustToolOutput, Source: "任务模型的方案", Pinned: true,
 	})
-	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptPlanReview), ps.get(PromptMainLang))+tools,
+	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptPlanReview))+tools,
 		review, &spent, "方案评估结果", &verdict); err != nil {
 		return spent, err
 	}
@@ -494,7 +493,7 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 		body += "\n{{rules}}"
 	}
 	body = strings.NewReplacer("{{verdicts}}", verdicts, "{{rules}}", extra).Replace(body)
-	system := sections(ps.get(PromptBase), body, ps.get(PromptMainLang), style) + p.clock()
+	system := sections(ps.get(PromptBase), body, style) + p.clock()
 	var out struct {
 		Verdict  string `json:"verdict"`
 		Answer   string `json:"answer"`
@@ -595,7 +594,7 @@ func (p *Planner) guard(ctx context.Context, t *core.Task, history []*core.Step,
 		Verdict string `json:"verdict"`
 		Reason  string `json:"reason"`
 	}
-	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptGuard), ps.get(PromptMainLang))+p.clock(), segs, &spent, "把关结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptGuard))+p.clock(), segs, &spent, "把关结果", &out); err != nil {
 		return spent, err
 	}
 	switch out.Verdict {

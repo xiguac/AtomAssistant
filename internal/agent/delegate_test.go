@@ -132,7 +132,7 @@ func TestDelegate_指派方案执行审核的完整流程(t *testing.T) {
 		t.Fatalf("第二步应定下方案: %+v %v", d, err)
 	}
 	if workers.names[0] != "分析师" || !strings.Contains(text(workers.reqs[0]), "这个周末适合出门吗") ||
-		!strings.Contains(workers.reqs[0].Messages[0].Content, "all written in English") {
+		!strings.Contains(workers.reqs[0].Messages[0].Content, "written in English") {
 		t.Fatal("方案应由选出的任务模型起草，它看得到原始任务，并被要求用英文")
 	}
 	if !strings.Contains(text(main.lastReq), "Check Saturday weather") {
@@ -155,7 +155,7 @@ func TestDelegate_指派方案执行审核的完整流程(t *testing.T) {
 		t.Fatalf("任务模型应调工具，副作用等级取自目录: %+v %v", d, err)
 	}
 	seen := text(workers.reqs[len(workers.reqs)-1])
-	for _, want := range []string{"这个周末适合出门吗", "Check Saturday and Sunday weather", "Sunday was missing", "You are the task model", "all written in English"} {
+	for _, want := range []string{"这个周末适合出门吗", "Check Saturday and Sunday weather", "Sunday was missing", "You are the task model", "written in English"} {
 		if !strings.Contains(seen, want) {
 			t.Fatalf("任务模型应看到原始任务和定下来的方案，缺 %q", want)
 		}
@@ -465,7 +465,7 @@ func TestDelegate_主模型可以接手自己调工具办完(t *testing.T) {
 		t.Fatalf("接手后应由主模型自己调工具: %+v %v", d, err)
 	}
 	seen := text(main.lastReq)
-	if !strings.Contains(seen, "you have taken over this task") || !strings.Contains(seen, "go on Saturday") || !strings.Contains(seen, "I will verify Sunday weather myself") {
+	if !strings.Contains(seen, "have taken over this task") || !strings.Contains(seen, "go on Saturday") || !strings.Contains(seen, "I will verify Sunday weather myself") {
 		t.Fatal("主模型接手后应看到任务模型交回的结果和自己指出的问题")
 	}
 	history = append(history, weatherStep(task.ID, len(history)+1, "demo.weather", `{"city":"上海"}`, `{"temp":21}`))
