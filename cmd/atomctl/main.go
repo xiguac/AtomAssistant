@@ -41,6 +41,11 @@ const usage = `用法:
   atomctl schedule list          列出定时任务
   atomctl schedule rm <ID>       删除定时任务
 
+  atomctl purge [--yes] [tasks=ID,ID] [memories=ID,ID] [pending=ID,ID]
+                                 把一件事在库里的痕迹彻底清掉，好从头再来一遍：指定的已结束任务（连同步骤、图片、
+                                 审计日志、评分记录和从中学到的说话样本）、指定的记忆（连同版本链）和候选。
+                                 不带 --yes 只清点不删除；清掉的找不回来
+
   atomctl memory list            查看全部记忆
   atomctl memory pending         查看助手提炼出来、等你确认的记忆与流程
   atomctl memory confirm <ID>    确认一条，让它生效
@@ -214,6 +219,8 @@ func run(args []string) error {
 			goal = args[3]
 		}
 		return runSkill(ctx, st, args[1], args[2], goal)
+	case "purge":
+		return purgeCmd(ctx, st, args[1:])
 	case "memory":
 		return memoryCmd(ctx, st, args[1:])
 	case "vault":
