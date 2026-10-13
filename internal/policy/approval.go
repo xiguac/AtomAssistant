@@ -113,8 +113,10 @@ func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
 		return Decision{OutcomeDeny, "参数含绝密数据（L3），此类操作不可执行"}
 	}
 
-	// 2. 无副作用或只读操作不需要审批。
-	if req.SideEffect == core.SideEffectNone || req.SideEffect == core.SideEffectReadOnly {
+	// 2. 无副作用或只读操作不需要审批。例外是自主模式下被认定为对外发送的：
+	//    它不改动东西，但会把模型写的内容带到外部，走下面对外发送的那一条。
+	readOnly := req.SideEffect == core.SideEffectNone || req.SideEffect == core.SideEffectReadOnly
+	if readOnly && !(p.Autonomous && req.Outbound) {
 		return Decision{OutcomeAuto, "只读操作"}
 	}
 

@@ -571,6 +571,8 @@ func TestApprover_自主模式下内部的事直接做对外发送由用户确�
 	for tool, side := range map[string]core.SideEffect{
 		ToolMailSend: core.SideEffectIrreversible, ToolPaySubmit: core.SideEffectIrreversible,
 		"forms.submit": core.SideEffectReversible, "demo.book": core.SideEffectIrreversible,
+		// 助手自己拼网址发的 HTTP 请求虽然标的是只读，也算。
+		ToolResourceRequest: core.SideEffectReadOnly, ToolResourceFetch: core.SideEffectReadOnly,
 	} {
 		got, why := check(auto, task, tool, side, `{"body":"你好"}`)
 		if got != kernel.ApprovalManual || !strings.Contains(why, "发到外部") {

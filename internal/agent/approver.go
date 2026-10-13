@@ -169,6 +169,11 @@ var inHouse = map[string]bool{
 // 其余会产生副作用的一律算。新接的 MCP 工具因此默认按对外发送对待——宁可多问一次，
 // 也不要让一个没人认得的工具悄悄把东西带出去。
 func outbound(tool string, side core.SideEffect) bool {
+	// 这两个是助手自己拼出网址去发的 HTTP 请求。它们不改动任何东西，所以副作用等级是只读，
+	// 但网址和参数是模型写的，能把任何东西带出去——不能当成普通的查询。
+	if tool == ToolResourceRequest || tool == ToolResourceFetch {
+		return true
+	}
 	if side == core.SideEffectNone || side == core.SideEffectReadOnly {
 		return false
 	}
