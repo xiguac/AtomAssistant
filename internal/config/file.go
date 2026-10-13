@@ -53,6 +53,59 @@ type File struct {
 	Channels []ChannelConfig `yaml:"channels"`
 	// Files 是文件处理的配置。不写这一节，助手没有任何读写文件的工具。
 	Files *FilesConfig `yaml:"files"`
+	// Budget 是每个任务的预算上限。不写按内置的默认值。
+	Budget *BudgetConfig `yaml:"budget,omitempty"`
+}
+
+// BudgetConfig 是每个任务的预算上限。任一项不写（或写 0）就用内置的默认值；用到上限任务会暂停，不会接着花。
+type BudgetConfig struct {
+	// MaxTokens 是一个任务最多用多少 token（输入加输出）。
+	MaxTokens int64 `yaml:"max_tokens,omitempty"`
+	// MaxCostYuan 是一个任务最多花多少钱（元），按模型路由里填的单价算。
+	MaxCostYuan float64 `yaml:"max_cost_yuan,omitempty"`
+	// MaxHours 是一个任务最多真正执行多少小时，等待的时间不算。
+	MaxHours float64 `yaml:"max_hours,omitempty"`
+}
+
+// 预算各项允许的上限：写错一位数不至于让一个跑飞的任务把钱花光。
+const (
+	MaxBudgetTokens = 50_000_000
+	MaxBudgetYuan   = 10_000
+	MaxBudgetHours  = 24 * 30
+)
+
+// Check 校验预算。
+func (b *BudgetConfig) Check() error {
+	if b == nil {
+		return nil
+	}
+	if b.MaxTokens < 0 || b.MaxCostYuan < 0 || b.MaxHours < 0 {
+		return fmt.Errorf("config: budget 里的各项不能为负")
+	}
+	if b.MaxTokens > MaxBudgetTokens || b.MaxCostYuan > MaxBudgetYuan || b.MaxHours > MaxBudgetHours {
+		return fmt.Errorf("config: budget 超出允许的范围（token 至多 %d，金额至多 %d 元，时长至多 %d 小时）",
+			MaxBudgetTokens, MaxBudgetYuan, MaxBudgetHours)
+	}
+	return nil
+}
+
+// TaskBudget 返回每个任务的预算：配置里写了的用配置的，没写的用内置的默认值。
+// f 为 nil（没有配置文件）时就是默认值。
+func (f *File) TaskBudget() core.Budget {
+	b := core.DefaultBudget()
+	if f == nil || f.Budget == nil {
+		return b
+	}
+	if f.Budget.MaxTokens > 0 {
+		b.MaxTokens = f.Budget.MaxTokens
+	}
+	if f.Budget.MaxCostYuan > 0 {
+		b.MaxCostCents = yuanToCents(f.Budget.MaxCostYuan)
+	}
+	if f.Budget.MaxHours > 0 {
+		b.MaxWallClock = time.Duration(f.Budget.MaxHours * float64(time.Hour))
+	}
+	return b
 }
 
 // FilesConfig 是文件处理的配置。
@@ -585,6 +638,9 @@ func (f *File) validate() error {
 		return err
 	}
 	if err := f.validateMCP(); err != nil {
+		return err
+	}
+	if err := f.Budget.Check(); err != nil {
 		return err
 	}
 	for _, t := range f.Tools {

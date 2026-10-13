@@ -158,7 +158,9 @@ func TestHandle_只听主人的(t *testing.T) {
 	if len(tasks.log) != 1 || tasks.log[0] != "create:帮我看下周五去苏州的高铁，早上的|帮我看下周五去苏州的高铁，早上的。要靠窗" {
 		t.Fatalf("主人的话应建成任务，标题取第一句: %v", tasks.log)
 	}
-	if got := tasks.tasks[0].Tags; len(got) != 1 || got[0] != "chat:qq/c2c:OWNER" {
+	// 第一个标签是它来自哪个消息源的哪个会话（进展推回那里），第二个标明它属于用户与助手的会话——
+	// 所有消息源共用这一个，新任务靠它看到最近的对话。
+	if got := tasks.tasks[0].Tags; len(got) != 2 || got[0] != "chat:qq/c2c:OWNER" || got[1] != ConversationTag {
 		t.Fatalf("任务应记下它来自哪个会话: %v", got)
 	}
 }

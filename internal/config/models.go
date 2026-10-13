@@ -252,6 +252,26 @@ func WriteModels(raw []byte, m Models) ([]byte, error) {
 	return writeSections(raw, modelKeys, values)
 }
 
+// ReadBudget 从配置文件的原文里读出任务预算一节，没写时返回 nil。
+func ReadBudget(raw []byte) (*BudgetConfig, error) {
+	var f struct {
+		Budget *BudgetConfig `yaml:"budget"`
+	}
+	if err := yaml.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("config: 解析配置失败: %w", err)
+	}
+	return f.Budget, nil
+}
+
+// WriteBudget 把任务预算一节写回配置文件的原文，其余的部分原样保留。b 为 nil 表示删掉这一节。
+func WriteBudget(raw []byte, b *BudgetConfig) ([]byte, error) {
+	values := map[string]any{}
+	if b != nil && (b.MaxTokens > 0 || b.MaxCostYuan > 0 || b.MaxHours > 0) {
+		values["budget"] = b
+	}
+	return writeSections(raw, []string{"budget"}, values)
+}
+
 // ReadChannels 从配置文件的原文里读出消息渠道一节。
 func ReadChannels(raw []byte) ([]ChannelConfig, error) {
 	var f struct {

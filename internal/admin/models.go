@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +50,49 @@ type modelsData struct {
 	Agents     []config.AgentConfig
 	Categories []team.CategoryInfo
 	Standings  []standingRow
+	// Budget 是每个任务的预算上限：已经生效的值（没设置的项是内置的默认值）。
+	BudgetTokens int64
+	BudgetYuan   float64
+	BudgetHours  float64
+}
+
+// budgetSave 保存每个任务的预算上限。
+func (s *Server) budgetSave(w http.ResponseWriter, r *http.Request, _ *view) {
+	err := func() error {
+		var b config.BudgetConfig
+		var err error
+		if v := strings.TrimSpace(r.PostFormValue("max_tokens")); v != "" {
+			if b.MaxTokens, err = strconv.ParseInt(v, 10, 64); err != nil {
+				return errors.New("token 上限须为整数")
+			}
+		}
+		if v := strings.TrimSpace(r.PostFormValue("max_cost_yuan")); v != "" {
+			if b.MaxCostYuan, err = strconv.ParseFloat(v, 64); err != nil {
+				return errors.New("金额上限须为数字")
+			}
+		}
+		if v := strings.TrimSpace(r.PostFormValue("max_hours")); v != "" {
+			if b.MaxHours, err = strconv.ParseFloat(v, 64); err != nil {
+				return errors.New("执行时长上限须为数字")
+			}
+		}
+		if err := b.Check(); err != nil {
+			return errors.New(strings.TrimPrefix(err.Error(), "config: "))
+		}
+		raw, _, err := s.readModels()
+		if err != nil {
+			return err
+		}
+		out, err := config.WriteBudget(raw, &b)
+		if err != nil {
+			return err
+		}
+		return s.writeConfig(string(out))
+	}()
+	if err == nil {
+		s.opts.Log.Info("任务预算已在后台修改", "来自", r.RemoteAddr)
+	}
+	back(w, r, "/models", "任务预算已保存，重启服务后对新建的任务生效。", err)
 }
 
 // readModels 读出配置文件的原文和其中模型相关的几节。文件还不存在时当作空的。
@@ -82,10 +126,15 @@ func (s *Server) editModels(change func(m *config.Models) error) error {
 
 func (s *Server) modelsPage(w http.ResponseWriter, r *http.Request, v *view) {
 	d := modelsData{Categories: team.Categories}
-	_, m, err := s.readModels()
+	raw, m, err := s.readModels()
 	if err != nil {
 		v.Error = err.Error()
 	}
+	budget := (&config.File{}).TaskBudget()
+	if b, err := config.ReadBudget(raw); err == nil {
+		budget = (&config.File{Budget: b}).TaskBudget()
+	}
+	d.BudgetTokens, d.BudgetYuan, d.BudgetHours = budget.MaxTokens, float64(budget.MaxCostCents)/100, budget.MaxWallClock.Hours()
 	stored := map[string]bool{}
 	if metas, err := s.opts.Vault.List(r.Context()); err != nil {
 		v.Error = err.Error()

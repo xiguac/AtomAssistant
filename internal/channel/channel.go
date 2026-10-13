@@ -185,6 +185,10 @@ type State interface {
 	PutNotice(ctx context.Context, taskID, fingerprint string) error
 }
 
+// ConversationTag 标明一个任务属于用户与助手的会话，与 agent.ConversationTag 一致。
+// 这里不引用 agent 包：渠道层在它下面。
+const ConversationTag = "conversation:owner"
+
 // TagPrefix 是任务上标明它来自哪个会话的标签前缀，完整形式为 chat:渠道名/会话标识。
 const TagPrefix = "chat:"
 
@@ -475,7 +479,8 @@ func (h *Hub) createTask(ctx context.Context, title, goal, tag string) (string, 
 	if r := []rune(title); len(r) > 24 {
 		title = string(r[:24]) + "…"
 	}
-	return h.tasks.Create(ctx, title, goal, []string{tag})
+	// 第二个标签标明它属于用户与助手的会话：所有消息源共用一个，新任务靠它看到最近的对话。
+	return h.tasks.Create(ctx, title, goal, []string{tag, ConversationTag})
 }
 
 // askPrefix 是内核在任务提问时写进原因里的前缀。

@@ -1139,3 +1139,49 @@ func TestAdmin_环境变量页填写助手登记的待填写条目(t *testing.T)
 		t.Fatal("填好的条目应归入服务凭据，页面上不显示值")
 	}
 }
+
+func TestAdmin_模型页设置任务预算(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post("/models/budget", form)
+		return loc
+	}
+	before, _ := os.ReadFile(e.cfg)
+	// 没设置过时页面上显示的是内置的默认值。
+	if _, body := e.get("/models"); !strings.Contains(body, "任务预算") || !strings.Contains(body, `name="max_tokens" inputmode="numeric" value="600000"`) {
+		t.Fatal("模型页应有任务预算并显示默认的 token 上限")
+	}
+	for form, want := range map[*url.Values]string{
+		{"max_tokens": {"abc"}}:         "整数",
+		{"max_tokens": {"-5"}}:          "不能为负",
+		{"max_tokens": {"99999999999"}}: "超出允许的范围",
+		{"max_cost_yuan": {"x"}}:        "数字",
+	} {
+		if loc := post(*form); !strings.Contains(loc, want) {
+			t.Fatalf("应提示 %q: %s", want, loc)
+		}
+	}
+	if loc := post(url.Values{"max_tokens": {"2000000"}, "max_cost_yuan": {"20"}, "max_hours": {""}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存预算失败: %s", loc)
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil {
+		t.Fatalf("保存出来的配置应能加载: %v", err)
+	}
+	if b := file.TaskBudget(); b.MaxTokens != 2_000_000 || b.MaxCostCents != 2000 || b.MaxWallClock != core.DefaultBudget().MaxWallClock {
+		t.Fatalf("预算不对: %+v", b)
+	}
+	if _, body := e.get("/models"); !strings.Contains(body, `value="2000000"`) {
+		t.Fatal("页面应显示保存的预算")
+	}
+	// 全部清空：回到默认值，配置回到原样。
+	if loc := post(url.Values{}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("清空预算失败: %s", loc)
+	}
+	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
+		t.Fatalf("清空后配置应回到原样")
+	}
+}

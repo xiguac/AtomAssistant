@@ -85,6 +85,20 @@
   </div>{{end}}
 </div>
 
+<form method="post" action="/models/budget" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>任务预算</b></div>
+  <div class="pad grid2">
+    <div><label for="b-tokens">token 上限</label><input id="b-tokens" type="text" name="max_tokens" inputmode="numeric" value="{{.BudgetTokens}}">
+      <div class="help">单个任务可使用的 token 总量（输入与输出合计）</div></div>
+    <div><label for="b-yuan">金额上限（元）</label><input id="b-yuan" type="text" name="max_cost_yuan" inputmode="decimal" value="{{.BudgetYuan}}">
+      <div class="help">按模型单价计算；未填写单价的模型不计费</div></div>
+    <div><label for="b-hours">执行时长上限（小时）</label><input id="b-hours" type="text" name="max_hours" inputmode="decimal" value="{{.BudgetHours}}">
+      <div class="help">仅累计实际执行时间，等待时间不计</div></div>
+  </div>
+  <div class="band foot"><span class="note muted">任一项达到上限时任务即暂停，不再继续消耗。留空或填 0 表示使用默认值。对保存并重启之后新建的任务生效。</span><button class="btn">保存</button></div>
+</form>
+
 <form method="post" action="/models/provider" autocomplete="off" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="band"><b>添加或修改模型服务</b></div>

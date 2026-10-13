@@ -343,6 +343,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
 	mux.HandleFunc("POST /tasks/{id}/reject", auth(s.reject))
 	mux.HandleFunc("POST /tasks/{id}/reply", auth(s.reply))
+	mux.HandleFunc("POST /models/budget", auth(s.budgetSave))
 	mux.HandleFunc("GET /vault", auth(s.vaultPage))
 	mux.HandleFunc("POST /vault", auth(s.vaultPut))
 	mux.HandleFunc("POST /vault/delete", auth(s.vaultDelete))

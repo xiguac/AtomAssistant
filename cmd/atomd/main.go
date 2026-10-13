@@ -137,12 +137,12 @@ func run(migrateOnly, checkOnly bool) error {
 		PollInterval:     cfg.PollInterval,
 		LeaseDuration:    cfg.LeaseDuration,
 		MaxStepsPerClaim: cfg.MaxStepsPerClaim,
-	}, log).WithCron(schedule.NewRunner(st.Schedules(), st, core.DefaultBudget()))
+	}, log).WithCron(schedule.NewRunner(st.Schedules(), st, taskBudget(cfg, log)))
 
 	// 消息渠道：主人在聊天软件里发来的话变成任务，任务的进展推回去。
 	if len(parts.channels) > 0 {
 		hub, err := channel.NewHub(parts.channels,
-			&channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget(), Images: st}, st.Channels(), log)
+			&channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log), Images: st}, st.Channels(), log)
 		if err != nil {
 			return err
 		}
@@ -193,7 +193,7 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 	srv, err := admin.New(admin.Options{
 		Store: st, Vault: safe, Box: box,
 		Scanner:      skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
-		Tasks:        &channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()},
+		Tasks:        &channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log)},
 		ConfigPath:   cfg.ConfigPath,
 		PasswordHash: cfg.AdminPasswordHash,
 		TLS:          tls,
@@ -401,7 +401,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		// 自主模式下改动不再等用户确认，会修改、删除已有东西的动作改由主模型把关。
 		WithActionReview(approval.Autonomous).
 		// 用户发来的图片原样随上下文交给模型看。
-		WithImages(st)
+		WithImages(st).
+		// 聊天里一句接一句地说：新任务带上同一个会话里最近的对话。
+		WithConversation(st)
 	planner = planner.WithSecretRequests(true)
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills()).
 		WithSecretRequests(requests)
@@ -524,6 +526,16 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
+}
+
+// taskBudget 定出每个任务的预算：配置里写了的用配置的，没写或配置读不出来就用内置的默认值。
+func taskBudget(cfg *config.Config, log *slog.Logger) core.Budget {
+	file, err := config.LoadFile(cfg.ConfigPath)
+	if err != nil {
+		// 配置有别的问题时助手本来就起不来，那边会报；这里不重复报。
+		return core.DefaultBudget()
+	}
+	return file.TaskBudget()
 }
 
 // mcpConnectWait 是启动时等一个 MCP server 连上的最长时间。

@@ -106,6 +106,8 @@ type Planner struct {
 	hasCalendar, hasMail, canSend bool
 	// hasHolidays 为真表示接入了节假日数据。
 	hasHolidays bool
+	// conversation 非空时，属于会话的任务看得到同一个会话里最近的对话，见 conversation.go。
+	conversation ConversationStore
 	// canRequestSecrets 为真表示助手可以在后台登记待用户填写的环境变量。
 	canRequestSecrets bool
 	// hasWeather 为真表示接入了天气数据。
@@ -642,6 +644,11 @@ func (p *Planner) contextSegments(ctx context.Context, t *core.Task, history []*
 		return nil, err
 	} else if ok {
 		// 紧跟在任务定义之后。
+		segs = append(segs[:1], append([]llm.Segment{seg}, segs[1:]...)...)
+	}
+	if seg, ok, err := p.conversationSegment(ctx, t); err != nil {
+		return nil, err
+	} else if ok {
 		segs = append(segs[:1], append([]llm.Segment{seg}, segs[1:]...)...)
 	}
 	if p.memory == nil {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
 )
@@ -264,5 +265,34 @@ func TestWriteToolset_只改MCP与工具两节(t *testing.T) {
 	out, err = WriteToolset(out, Toolset{})
 	if err != nil || strings.Contains(string(out), "mcp_servers") || strings.Contains(string(out), "tools") {
 		t.Fatalf("清空后不应留下空的小节: %v\n%s", err, out)
+	}
+}
+
+func TestTaskBudget_配置里写了的用配置的没写的用默认值(t *testing.T) {
+	def := core.DefaultBudget()
+	if got := (*File)(nil).TaskBudget(); got != def {
+		t.Fatalf("没有配置文件时应是默认值: %+v", got)
+	}
+	f := &File{Budget: &BudgetConfig{MaxTokens: 2_000_000, MaxHours: 1.5}}
+	got := f.TaskBudget()
+	if got.MaxTokens != 2_000_000 || got.MaxWallClock != 90*time.Minute || got.MaxCostCents != def.MaxCostCents {
+		t.Fatalf("预算不对: %+v", got)
+	}
+	for _, bad := range []*BudgetConfig{{MaxTokens: -1}, {MaxTokens: MaxBudgetTokens + 1}, {MaxCostYuan: MaxBudgetYuan + 1}, {MaxHours: -2}} {
+		if err := bad.Check(); err == nil {
+			t.Fatalf("%+v 应被拒绝", bad)
+		}
+	}
+	// 只改 budget 一节，其余原样；全部清空就删掉这一节。
+	raw := []byte("# 注释\ntools: []\n")
+	out, err := WriteBudget(raw, &BudgetConfig{MaxTokens: 900000})
+	if err != nil || !strings.HasPrefix(string(out), string(raw)) || !strings.Contains(string(out), "max_tokens: 900000") {
+		t.Fatalf("写入预算不对: %v %s", err, out)
+	}
+	if b, err := ReadBudget(out); err != nil || b == nil || b.MaxTokens != 900000 {
+		t.Fatalf("读回预算不对: %v %+v", err, b)
+	}
+	if back, err := WriteBudget(out, &BudgetConfig{}); err != nil || string(back) != string(raw) {
+		t.Fatalf("清空后应回到原样: %v %q", err, back)
 	}
 }
