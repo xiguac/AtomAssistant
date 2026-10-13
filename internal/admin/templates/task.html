@@ -10,6 +10,8 @@
     {{if .Pending}}<span class="pill warn">待确认</span>
     {{else if .Question}}<span class="pill warn">待回复</span>
     {{else}}<span class="pill {{stateClass .Task.State}}">{{stateName .Task.State}}</span>{{end}}
+    {{if .Live}}<form method="post" action="/tasks/{{.Task.ID}}/cancel" style="margin-left:auto">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn danger sm">取消任务</button></form>{{end}}
   </div>
   {{if and .Task.Goal (ne .Task.Goal .Task.Title)}}<div class="quote" style="margin-top:14px">{{.Task.Goal}}</div>{{end}}
   {{if and .Task.Reason (not .Pending) (not .Question)}}<div style="margin-top:14px;white-space:pre-wrap;word-break:break-word">{{.Task.Reason}}</div>{{end}}

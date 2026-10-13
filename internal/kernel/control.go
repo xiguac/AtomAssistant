@@ -158,3 +158,33 @@ func SplitApprovalReason(reason string) (policy, why string) {
 	policy, why, _ = strings.Cut(inner, assistantWhy)
 	return policy, why
 }
+
+// ErrAlreadyEnded 表示任务已经结束，没有什么可取消的。
+var ErrAlreadyEnded = errors.New("kernel: 任务已经结束")
+
+// Cancel 取消一个还没结束的任务：直接迁到终态，之后不会再被调度。
+//
+// 正在执行的那一步如果已经发出去了收不回来，但不会再有下一步：
+// 执行者提交下一步的结果时会发现状态已经变了。返回取消之前的状态。
+func Cancel(ctx context.Context, s store.TaskStore, taskID, reason string) (core.TaskState, error) {
+	if reason == "" {
+		reason = "用户取消"
+	}
+	// 刚好在这一瞬间被执行者改了状态的话，按新的状态再来一次。
+	for attempt := 0; ; attempt++ {
+		t, err := s.GetTask(ctx, taskID)
+		if err != nil {
+			return "", err
+		}
+		if t.State.Terminal() {
+			return t.State, ErrAlreadyEnded
+		}
+		err = s.Transition(ctx, taskID, t.State, core.StateCancelled, reason)
+		if err == nil {
+			return t.State, nil
+		}
+		if !errors.Is(err, store.ErrStateConflict) || attempt >= 3 {
+			return t.State, err
+		}
+	}
+}

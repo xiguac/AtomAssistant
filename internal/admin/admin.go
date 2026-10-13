@@ -342,6 +342,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /tasks/{id}", auth(s.taskPage))
 	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
 	mux.HandleFunc("POST /tasks/{id}/reject", auth(s.reject))
+	mux.HandleFunc("POST /tasks/{id}/cancel", auth(s.cancel))
 	mux.HandleFunc("POST /tasks/{id}/reply", auth(s.reply))
 	mux.HandleFunc("POST /models/budget", auth(s.budgetSave))
 	mux.HandleFunc("GET /vault", auth(s.vaultPage))
@@ -660,6 +661,8 @@ type taskData struct {
 	Question string
 	// Works 是这个任务里派给协作模型的活，等用户评价。
 	Works []workView
+	// Live 为真表示任务还没结束，可以取消。
+	Live bool
 }
 
 // fields 把动作的参数拆成一项一项，方便核对。
@@ -717,7 +720,7 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 	if err != nil {
 		v.Error = err.Error()
 	}
-	d := taskData{Task: t, Asking: !t.State.Terminal()}
+	d := taskData{Task: t, Asking: !t.State.Terminal(), Live: !t.State.Terminal()}
 	for _, st := range steps {
 		d.Steps = append(d.Steps, stepView{Step: st, In: pretty(st.Input, 4000), Out: pretty(st.Output, 4000)})
 	}
@@ -753,6 +756,19 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request, _ *view) {
 func (s *Server) reject(w http.ResponseWriter, r *http.Request, _ *view) {
 	id := r.PathValue("id")
 	back(w, r, "/tasks/"+id, "已驳回，助手将按修改意见重新处理。", s.opts.Tasks.Reject(r.Context(), id, strings.TrimSpace(r.PostFormValue("reason"))))
+}
+
+// cancel 取消一个还没结束的任务。
+func (s *Server) cancel(w http.ResponseWriter, r *http.Request, _ *view) {
+	id := r.PathValue("id")
+	_, err := kernel.Cancel(r.Context(), s.opts.Store, id, "用户在后台取消")
+	if errors.Is(err, kernel.ErrAlreadyEnded) {
+		err = errors.New("任务已结束，无需取消")
+	}
+	if err == nil {
+		s.opts.Log.Info("任务已在后台取消", "任务", id, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/tasks/"+id, "任务已取消。", err)
 }
 
 func (s *Server) reply(w http.ResponseWriter, r *http.Request, _ *view) {

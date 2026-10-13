@@ -1185,3 +1185,37 @@ func TestAdmin_模型页设置任务预算(t *testing.T) {
 		t.Fatalf("清空后配置应回到原样")
 	}
 }
+
+func TestAdmin_任务页取消还没结束的任务(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+	task := core.NewTask("订机票", "订机票", core.TrustUser)
+	if err := e.store.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.Transition(ctx, task.ID, core.StateNew, core.StateReady, "入队"); err != nil {
+		t.Fatal(err)
+	}
+	// 还没结束的任务，页面上有取消按钮。
+	if _, body := e.get("/tasks/" + task.ID); !strings.Contains(body, `action="/tasks/`+task.ID+`/cancel"`) {
+		t.Fatal("进行中的任务页应有取消按钮")
+	}
+	if _, loc := e.post("/tasks/"+task.ID+"/cancel", url.Values{"csrf": {e.csrf}}); !strings.Contains(loc, "已取消") {
+		t.Fatalf("取消失败: %s", loc)
+	}
+	got, err := e.store.GetTask(ctx, task.ID)
+	if err != nil || got.State != core.StateCancelled {
+		t.Fatalf("任务应进入已取消: %v %+v", err, got)
+	}
+	// 结束了的任务没有取消按钮，再取消会说明白。
+	if _, body := e.get("/tasks/" + task.ID); strings.Contains(body, "/cancel\"") {
+		t.Fatal("已结束的任务页不应有取消按钮")
+	}
+	if _, loc := e.post("/tasks/"+task.ID+"/cancel", url.Values{"csrf": {e.csrf}}); !strings.Contains(loc, "无需取消") {
+		t.Fatalf("重复取消应说明任务已结束: %s", loc)
+	}
+	if _, loc := e.post("/tasks/没有这个任务/cancel", url.Values{"csrf": {e.csrf}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("不存在的任务应报错: %s", loc)
+	}
+}
