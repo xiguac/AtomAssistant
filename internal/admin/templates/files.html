@@ -12,14 +12,18 @@
     {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">返回上级目录</a>{{end}}
   </div>
   {{if .Entries}}<table>
-    <thead><tr><th>名称</th><th class="r" style="width:120px">大小</th><th class="r" style="width:130px">修改时间</th></tr></thead>
+    <thead><tr><th>名称</th><th class="r" style="width:120px">大小</th><th class="r" style="width:130px">修改时间</th><th class="r" style="width:90px">操作</th></tr></thead>
     <tbody>{{range .Entries}}<tr>
       <td>{{if .Dir}}<a href="/files?dir={{.Path}}" style="display:inline-flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>{{.Path}}</a>
         {{else}}<a href="/files/download?path={{.Path}}" style="display:inline-flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg>{{.Path}}</a>{{end}}</td>
       <td class="time r">{{if not .Dir}}{{size .Size}}{{end}}</td>
       <td class="time r">{{when .Modified}}</td>
+      <td class="r"><form method="post" action="/files/delete">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="dir" value="{{$.Data.Dir}}"><input type="hidden" name="path" value="{{.Path}}">
+        <button class="btn danger sm">删除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">当前目录暂无文件。</div>{{end}}
+  </table>
+  <div class="band foot"><span class="note muted">删除后不可恢复。目录须先清空方可删除；被替换文件的历史版本不受影响。</span></div>{{else}}<div class="empty">当前目录暂无文件。</div>{{end}}
 </div>
 
 </div>

@@ -205,6 +205,37 @@ func (w *Workspace) List(dir string) ([]Entry, error) {
 	return out, nil
 }
 
+// Delete 删掉工作区里的一个文件，或者一个空目录。
+//
+// 这是给用户在管理后台用的，助手没有删除文件的工具。删掉的不留底：用户亲手删的就是不要了。
+// 目录只能删空的——一下子删掉一整棵目录树的操作不放在一个按钮上。留底目录里的旧版本不受影响。
+func (w *Workspace) Delete(rel string) error {
+	abs, norm, err := w.resolve(rel, true)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(abs)
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w: %s", ErrNotFound, rel)
+	}
+	if err != nil {
+		return fmt.Errorf("files: 读取文件信息失败: %w", err)
+	}
+	if info.IsDir() {
+		items, err := os.ReadDir(abs)
+		if err != nil {
+			return fmt.Errorf("files: 读取目录失败: %w", err)
+		}
+		if len(items) > 0 {
+			return fmt.Errorf("%w: 目录 %s 不是空的，请先删除其中的文件", ErrInvalid, norm)
+		}
+	}
+	if err := os.Remove(abs); err != nil {
+		return fmt.Errorf("files: 删除 %s 失败: %w", norm, err)
+	}
+	return nil
+}
+
 // existing 解析一个必须已经存在的文件，并检查大小。
 func (w *Workspace) existing(rel string) (abs, norm string, err error) {
 	abs, norm, err = w.resolve(rel, false)

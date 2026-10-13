@@ -397,6 +397,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /files", auth(s.filesPage))
 	mux.HandleFunc("POST /files", auth(s.filesUpload))
 	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
+	mux.HandleFunc("POST /files/delete", auth(s.filesDelete))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -1172,6 +1173,22 @@ func (s *Server) filesUpload(w http.ResponseWriter, r *http.Request, _ *view) {
 		return
 	}
 	http.Redirect(w, r, to+"&ok="+template.URLQueryEscaper("文件已保存至工作区: "+saved.Path), http.StatusSeeOther)
+}
+
+// filesDelete 删掉工作区里的一个文件或空目录。
+func (s *Server) filesDelete(w http.ResponseWriter, r *http.Request, _ *view) {
+	rel := r.PostFormValue("path")
+	ws, err := s.workspace()
+	if err == nil {
+		err = ws.Delete(rel)
+	}
+	to := "/files?dir=" + template.URLQueryEscaper(r.PostFormValue("dir"))
+	if err != nil {
+		http.Redirect(w, r, to+"&e="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
+		return
+	}
+	s.opts.Log.Info("工作区的文件已在后台删除", "路径", rel, "来自", r.RemoteAddr)
+	http.Redirect(w, r, to+"&ok="+template.URLQueryEscaper("已删除: "+rel), http.StatusSeeOther)
 }
 
 func (s *Server) filesDownload(w http.ResponseWriter, r *http.Request, _ *view) {

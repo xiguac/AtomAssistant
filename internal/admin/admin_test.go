@@ -442,6 +442,30 @@ func TestAdmin_配置校验与文件(t *testing.T) {
 	if code, _ := e.get("/files/download?path=" + url.QueryEscape("../config.yaml")); code != http.StatusNotFound {
 		t.Fatalf("下载工作区之外的文件应被拒绝: %d", code)
 	}
+
+	// 删除：页面上每一行有删除按钮。目录要先清空；工作区之外的、留底目录里的删不了。
+	del := func(p string) string {
+		t.Helper()
+		_, loc := e.post("/files/delete", url.Values{"csrf": {e.csrf}, "dir": {"报表"}, "path": {p}})
+		return loc
+	}
+	if _, body := e.get("/files?dir=报表"); !strings.Contains(body, `action="/files/delete"`) {
+		t.Fatal("文件页应有删除按钮")
+	}
+	for _, bad := range []string{"报表", "../config.yaml", ".versions", "", "没有这个文件.txt"} {
+		if loc := del(bad); !strings.Contains(loc, "e=") {
+			t.Fatalf("删除 %q 应被拒绝: %s", bad, loc)
+		}
+	}
+	if loc := del("报表/销售.csv"); !strings.Contains(loc, "已删除") || !strings.HasPrefix(loc, "/files?dir=") {
+		t.Fatalf("删除文件失败: %s", loc)
+	}
+	if code, _ := e.get("/files/download?path=" + url.QueryEscape("报表/销售.csv")); code != http.StatusNotFound {
+		t.Fatalf("删掉的文件不应还能下载: %d", code)
+	}
+	if loc := del("报表"); !strings.Contains(loc, "已删除") {
+		t.Fatalf("空目录应能删除: %s", loc)
+	}
 }
 
 func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T) {
