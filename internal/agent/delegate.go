@@ -407,9 +407,12 @@ func spend(d *kernel.Decision, resp llm.Response) {
 
 // askJSON 让一个模型按给定的系统提示看一遍上下文，把它的回答解析进 out。
 // main 为真问主模型，否则问 p.worker 指定的任务模型。用量记在 spent 上，不管回答能不能用。
-func (p *Planner) askJSON(ctx context.Context, main bool, system string, segs []llm.Segment, spent *kernel.Decision, what string, out any) error {
+func (p *Planner) askJSON(ctx context.Context, t *core.Task, main bool, system string, segs []llm.Segment, spent *kernel.Decision, what string, out any) error {
 	msgs, err := llm.Build(segs, llm.BuildOptions{SystemPrompt: system, MaxChars: p.opts.MaxChars + len(system)})
 	if err != nil {
+		return err
+	}
+	if msgs, err = p.withImages(ctx, t, msgs); err != nil {
 		return err
 	}
 	req := llm.Request{Messages: msgs, JSONMode: true}
@@ -478,7 +481,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 		Category string `json:"category"`
 		Title    string `json:"title"`
 	}
-	if err := p.askJSON(ctx, true, system, segs, &spent, "指派结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, system, segs, &spent, "指派结果", &out); err != nil {
 		return spent, err
 	}
 	// 类别写错了不值得为它重来一次：归到"其他"，照样有人接。
@@ -510,7 +513,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 	}
 	var spent kernel.Decision
 	var plan briefRecord
-	if err := p.askJSON(ctx, false, base+"\n\n"+draftPrompt+"\n\n"+workerLanguageRule+p.clock()+tools,
+	if err := p.askJSON(ctx, t, false, base+"\n\n"+draftPrompt+"\n\n"+workerLanguageRule+p.clock()+tools,
 		segs, &spent, "方案", &plan); err != nil {
 		return spent, err
 	}
@@ -526,7 +529,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 		Role: llm.RoleUser, Content: "任务模型起草的方案：\n" + plan.render(),
 		Trust: core.TrustToolOutput, Source: "任务模型的方案", Pinned: true,
 	})
-	if err := p.askJSON(ctx, true, base+"\n\n"+planReviewPrompt+"\n\n"+mainLanguageRule+p.clock()+tools,
+	if err := p.askJSON(ctx, t, true, base+"\n\n"+planReviewPrompt+"\n\n"+mainLanguageRule+p.clock()+tools,
 		review, &spent, "方案评估结果", &verdict); err != nil {
 		return spent, err
 	}
@@ -598,7 +601,7 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 		Answer   string `json:"answer"`
 		Feedback string `json:"feedback"`
 	}
-	if err := p.askJSON(ctx, true, system, segs, &spent, "审核结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, system, segs, &spent, "审核结果", &out); err != nil {
 		return spent, err
 	}
 	feedback := strings.TrimSpace(out.Feedback)
@@ -693,7 +696,7 @@ func (p *Planner) guard(ctx context.Context, t *core.Task, history []*core.Step,
 		Verdict string `json:"verdict"`
 		Reason  string `json:"reason"`
 	}
-	if err := p.askJSON(ctx, true, base+"\n\n"+guardPrompt+"\n\n"+mainLanguageRule+p.clock(), segs, &spent, "把关结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, base+"\n\n"+guardPrompt+"\n\n"+mainLanguageRule+p.clock(), segs, &spent, "把关结果", &out); err != nil {
 		return spent, err
 	}
 	switch out.Verdict {

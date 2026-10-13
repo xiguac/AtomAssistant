@@ -64,6 +64,8 @@ var sealedColumns = map[string]map[string]colKind{
 	// 保险库的值本来就由保险库自己的密钥加密，这里管的是名字和用途说明。
 	"vault_items": {"label": colTextEq, "note": colText},
 	"settings":    {"value": colText},
+	// 用户发给任务的图片，存的是 Base64 文字。
+	"task_images": {"data": colText},
 }
 
 // sealer 是各个存储共用的加解密入口。

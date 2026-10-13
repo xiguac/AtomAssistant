@@ -72,6 +72,7 @@ var plainColumns = map[string][]string{
 	"mcp_installs":        {"name"},
 	"vault_items":         {"id", "allowed_tools"},
 	"settings":            {"key"},
+	"task_images":         {"id", "task_id", "mime"},
 	"seal_state":          {"key_id"},
 	"schema_migrations":   {"version"},
 }
@@ -189,6 +190,9 @@ func TestSealed_写进去的都是密文(t *testing.T) {
 	must(s.Vault().PutItem(ctx, &vault.Item{ID: core.NewID(), Label: "银行卡", Note: "工资卡卡号",
 		AllowedTools: []string{"pay.alipay_submit"}, Sealed: []byte{1}, Nonce: []byte{2}, CreatedAt: now}))
 	must(s.PutSetting(ctx, "admin.totp", `{"secret":"JBSWY3DPEHPK3PXP"}`))
+	if _, err := s.PutTaskImage(ctx, task.ID, "image/png", []byte("PNG 图片内容")); err != nil {
+		t.Fatal(err)
+	}
 
 	// 每张登记了加密列的表都得真的有数据，否则下面的检查是空转。
 	for table := range sealedColumns {

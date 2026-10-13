@@ -168,6 +168,8 @@ type Planner struct {
 	voice   VoiceProvider
 	// prompts 非空时，基础约束与规划说明以用户在后台改写的为准。
 	prompts PromptSource
+	// images 非空时，用户发给任务的图片随上下文一起交给模型看。
+	images ImageSource
 	// pay 为真表示接入了付款能力，付款工具对模型可见。
 	pay bool
 	// paidResources 为真表示允许请求付费资源。
@@ -526,6 +528,9 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 		MaxChars: p.opts.MaxChars + len(system),
 	})
 	if err != nil {
+		return kernel.Decision{}, err
+	}
+	if msgs, err = p.withImages(ctx, t, msgs); err != nil {
 		return kernel.Decision{}, err
 	}
 

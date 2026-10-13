@@ -26,7 +26,6 @@ import (
 	"github.com/xiguac/atomhelper/internal/demo"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
@@ -143,15 +142,12 @@ func run(migrateOnly, checkOnly bool) error {
 	// 消息渠道：主人在聊天软件里发来的话变成任务，任务的进展推回去。
 	if len(parts.channels) > 0 {
 		hub, err := channel.NewHub(parts.channels,
-			&channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget()}, st.Channels(), log)
+			&channel.Kernel{Store: st, Bus: bus, Budget: core.DefaultBudget(), Images: st}, st.Channels(), log)
 		if err != nil {
 			return err
 		}
 		if parts.team {
 			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
-		}
-		if parts.viewer != nil {
-			hub = hub.WithViewer(parts.viewer)
 		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
@@ -267,10 +263,8 @@ type parts struct {
 	// outbox 非空时助手可以往聊天窗口里发文件，渠道中枢建好后要填进去。
 	outbox *chatOutbox
 	// team 为真表示配置了协作模型。
-	team bool
-	// viewer 用多模态模型看用户发来的图片。
-	viewer channel.Viewer
-	close  func()
+	team  bool
+	close func()
 }
 
 // build 按配置装出各个部件。
@@ -405,7 +399,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()).WithCapabilities(st.Skills()).
 		WithPrompts(agent.SettingPrompts{Store: st}).
 		// 自主模式下改动不再等用户确认，会修改、删除已有东西的动作改由主模型把关。
-		WithActionReview(approval.Autonomous)
+		WithActionReview(approval.Autonomous).
+		// 用户发来的图片原样随上下文交给模型看。
+		WithImages(st)
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills())
 
 	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。
@@ -506,7 +502,6 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	return &parts{
 		team:     len(file.Workers()) > 0,
-		viewer:   pictureViewer{model: router},
 		channels: channels,
 		outbox:   outbox,
 		planner:  planner,
@@ -516,19 +511,6 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },
 	}, nil
-}
-
-// pictureViewer 用模型路由里看图的那个模型（没单独配就是主模型）把图片看成文字。
-type pictureViewer struct {
-	model agent.Completer
-}
-
-func (v pictureViewer) Describe(ctx context.Context, pictures []channel.Picture, caption string) (string, error) {
-	images := make([]llm.Image, 0, len(pictures))
-	for _, p := range pictures {
-		images = append(images, llm.Image{MIME: p.MIME, Data: p.Data})
-	}
-	return agent.DescribeImages(ctx, v.model, images, caption)
 }
 
 // chatOutbox 把助手要发的文件交给渠道中枢。

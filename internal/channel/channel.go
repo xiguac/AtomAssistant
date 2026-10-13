@@ -64,11 +64,6 @@ type Picture struct {
 	Data []byte
 }
 
-// Viewer 把图片看成文字：逐字转写图里的字，说明图是什么。由多模态模型提供。
-type Viewer interface {
-	Describe(ctx context.Context, pictures []Picture, caption string) (string, error)
-}
-
 // Outgoing 是要发到渠道里的一条消息。
 type Outgoing struct {
 	Chat string
@@ -146,8 +141,9 @@ type Tasks interface {
 	Create(ctx context.Context, title, goal string, tags []string) (string, error)
 	// Reply 把用户的话送给一个任务。
 	Reply(ctx context.Context, taskID, text, source string) error
-	// Attach 把用户发来的图片的内容送给一个任务。内容是从图片里读出来的，按外部内容对待。
-	Attach(ctx context.Context, taskID, content, source string) error
+	// Attach 把用户发来的图片交给一个任务。图片原样存下，之后每一步决策都随上下文一起给模型看；
+	// 图里的内容按外部内容对待。
+	Attach(ctx context.Context, taskID string, pictures []Picture, source string) error
 	Approve(ctx context.Context, taskID string) error
 	Reject(ctx context.Context, taskID, reason string) error
 	// ByTag 返回带有某个标签的任务，新的在前。activeOnly 为真时不含已结束的。
@@ -241,11 +237,10 @@ type Hub struct {
 	tasks    Tasks
 	state    State
 	feedback Feedback
-	// viewer 非空时看得懂图片；fetch 按地址取回图片，测试里可以换掉。
-	viewer Viewer
-	fetch  func(ctx context.Context, a Attachment) (Picture, error)
-	log    *slog.Logger
-	now    func() time.Time
+	// fetch 按地址取回图片，测试里可以换掉。
+	fetch func(ctx context.Context, a Attachment) (Picture, error)
+	log   *slog.Logger
+	now   func() time.Time
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -269,12 +264,6 @@ func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hu
 		h.bindings[name] = b
 	}
 	return h, nil
-}
-
-// WithViewer 让助手看得懂主人发来的图片。
-func (h *Hub) WithViewer(v Viewer) *Hub {
-	h.viewer = v
-	return h
 }
 
 // WithFeedback 让主人能在聊天里用 /赞 和 /踩 评价协作模型交的活。
@@ -682,21 +671,17 @@ const (
 	maxPictures     = 4
 	maxPictureBytes = 10 << 20
 	pictureTimeout  = 30 * time.Second
-	viewTimeout     = 2 * time.Minute
 )
 
 // imageOnlyGoal 是用户只发了图片、没有说话时任务的目标。
-const imageOnlyGoal = "用户发来了图片，没有附文字说明。图片的内容见随后的消息：看明白它是什么，" +
+const imageOnlyGoal = "用户发来了图片，没有附文字说明。图片随上下文一起给出：看明白它是什么，" +
 	"能判断出用户想让你做什么就去办，判断不出就问用户。"
 
-// routeImages 处理一条带图片的消息：先把图片看成文字，再把它和用户说的话一起交给任务。
+// routeImages 处理一条带图片的消息：把图片取回来，原样交给任务，再把用户说的话送过去。
 //
-// 图片的内容和用户的话分开送：用户的话是他亲口说的，图片里的字是别人写的，两者的信任等级不一样。
+// 图片不在这里转成文字：转写会丢掉版式、图表、照片里的细节，所以任务里的模型看的是原图。
+// 图片和用户的话分开送：用户的话是他亲口说的，图片里的字是别人写的，两者的信任等级不一样。
 func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, tag string) error {
-	if h.viewer == nil {
-		h.say(ctx, channel, m.Chat, "目前我看不了图片：还没有接通能看图的模型。")
-		return nil
-	}
 	images := m.Images
 	if len(images) > maxPictures {
 		images = images[:maxPictures]
@@ -711,28 +696,20 @@ func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, 
 		}
 		pictures = append(pictures, p)
 	}
-	viewCtx, cancel := context.WithTimeout(ctx, viewTimeout)
-	seen, err := h.viewer.Describe(viewCtx, pictures, text)
-	cancel()
-	if err != nil {
-		return err
-	}
-	// 图片交给了模型服务，这是数据离开这台机器的时刻，留一条记录。
-	h.log.Info("图片已交给模型识别", "渠道", channel, "张数", len(pictures))
 	if len(m.Images) > maxPictures {
-		seen += fmt.Sprintf("\n（用户共发来 %d 张图片，只看了前 %d 张。）", len(m.Images), maxPictures)
+		h.say(ctx, channel, m.Chat, fmt.Sprintf("一次最多看 %d 张图片，这次只收下了前 %d 张。", maxPictures, maxPictures))
 	}
 
 	active, err := h.tasks.ByTag(ctx, tag, true, 20)
 	if err != nil {
 		return err
 	}
-	// 有任务在等用户回话：这张图是给它的。先送图片的内容，再送用户的话。
+	// 有任务在等用户回话：这张图是给它的。先送图片，再送用户的话。
 	for _, t := range active {
 		if !asking(t) {
 			continue
 		}
-		if err := h.tasks.Attach(ctx, t.ID, seen, channel); err != nil {
+		if err := h.tasks.Attach(ctx, t.ID, pictures, channel); err != nil {
 			return err
 		}
 		if text == "" {
@@ -748,7 +725,7 @@ func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, 
 	if err != nil {
 		return err
 	}
-	return h.tasks.Attach(ctx, id, seen, channel)
+	return h.tasks.Attach(ctx, id, pictures, channel)
 }
 
 // fetchPicture 按渠道给的地址取回一张图片。

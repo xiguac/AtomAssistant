@@ -52,8 +52,8 @@ func (f *fakeTasks) Reply(_ context.Context, id, text, source string) error {
 	f.log = append(f.log, "reply:"+f.title(id)+"|"+text+"|"+source)
 	return nil
 }
-func (f *fakeTasks) Attach(_ context.Context, id, content, source string) error {
-	f.log = append(f.log, "attach:"+f.title(id)+"|"+content+"|"+source)
+func (f *fakeTasks) Attach(_ context.Context, id string, pictures []Picture, source string) error {
+	f.log = append(f.log, fmt.Sprintf("attach:%s|%d 张|%s", f.title(id), len(pictures), source))
 	return nil
 }
 func (f *fakeTasks) Approve(_ context.Context, id string) error {
@@ -466,18 +466,6 @@ func TestSendFile_只发回任务所来自的会话(t *testing.T) {
 	}
 }
 
-// fakeViewer 假装看图：记下看了几张、用户随图说了什么，返回一段固定的内容。
-type fakeViewer struct {
-	pictures int
-	caption  string
-	err      error
-}
-
-func (v *fakeViewer) Describe(_ context.Context, pictures []Picture, caption string) (string, error) {
-	v.pictures, v.caption = len(pictures), caption
-	return "聊天截图：周五三点开会", v.err
-}
-
 func withPictures(m Message, n int) Message {
 	for i := 0; i < n; i++ {
 		m.Images = append(m.Images, Attachment{URL: fmt.Sprintf("https://img.example.com/%d.jpg", i), ContentType: "image/jpeg"})
@@ -485,41 +473,36 @@ func withPictures(m Message, n int) Message {
 	return m
 }
 
-func TestHandle_图片先看成文字再按外部内容交给任务(t *testing.T) {
+func TestHandle_图片原样交给任务与用户的话分开送(t *testing.T) {
 	h, qq, tasks := hub(t)
 	ctx := context.Background()
 	h.fetch = func(context.Context, Attachment) (Picture, error) {
 		return Picture{MIME: "image/jpeg", Data: []byte("x")}, nil
 	}
 
-	// 没接看图的模型：如实说看不了，不建任务。
-	h.Handle(ctx, "qq", withPictures(from("OWNER", "", "m1"), 1))
-	if len(tasks.log) != 0 || len(qq.sent) != 1 || !strings.Contains(qq.sent[0].Text, "看不了图片") {
-		t.Fatalf("没有看图能力时应如实告知: %v %+v", tasks.log, qq.sent)
-	}
-
-	v := &fakeViewer{}
-	h.WithViewer(v)
-	// 图片配一句话：话是任务的目标，图片的内容单独送进去。
+	// 图片配一句话：话是任务的目标，图片单独交给任务。
 	h.Handle(ctx, "qq", withPictures(from("OWNER", "把这个记到日历上", "m2"), 1))
 	if len(tasks.log) != 2 || tasks.log[0] != "create:把这个记到日历上|把这个记到日历上" ||
-		tasks.log[1] != "attach:把这个记到日历上|聊天截图：周五三点开会|qq" || v.caption != "把这个记到日历上" {
-		t.Fatalf("应新建任务并把图片内容单独交给它: %v", tasks.log)
+		tasks.log[1] != "attach:把这个记到日历上|1 张|qq" {
+		t.Fatalf("应新建任务并把图片交给它: %v", tasks.log)
 	}
-	// 只有图片没有话：照样建任务，由助手看了再说。
+	// 只有图片没有话：照样建任务，由助手看了再说。超出张数上限的只收前几张，并告诉用户。
 	tasks.log = nil
 	h.Handle(ctx, "qq", withPictures(from("OWNER", "", "m3"), 6))
 	if len(tasks.log) != 2 || !strings.HasPrefix(tasks.log[0], "create:处理图片|用户发来了图片") ||
-		!strings.Contains(tasks.log[1], "只看了前 4 张") || v.pictures != maxPictures {
-		t.Fatalf("只发图片也应处理，超出张数上限的要说明: %v", tasks.log)
+		tasks.log[1] != fmt.Sprintf("attach:处理图片|%d 张|qq", maxPictures) {
+		t.Fatalf("只发图片也应处理: %v", tasks.log)
+	}
+	if last := qq.sent[len(qq.sent)-1].Text; !strings.Contains(last, "只收下了前 4 张") {
+		t.Fatalf("超出张数上限应告知用户: %s", last)
 	}
 
-	// 有任务在等回话：图片是给它的。先送图片内容，再送用户的话。
+	// 有任务在等回话：图片是给它的。先送图片，再送用户的话。
 	tasks.log = nil
 	waiting := tasks.add("订餐厅", Tag("qq", "c2c:OWNER"))
 	ask(waiting, "订哪一家？")
 	h.Handle(ctx, "qq", withPictures(from("OWNER", "就这家", "m4"), 1))
-	if len(tasks.log) != 2 || tasks.log[0] != "attach:订餐厅|聊天截图：周五三点开会|qq" || tasks.log[1] != "reply:订餐厅|就这家|qq" {
+	if len(tasks.log) != 2 || tasks.log[0] != "attach:订餐厅|1 张|qq" || tasks.log[1] != "reply:订餐厅|就这家|qq" {
 		t.Fatalf("图片应送给正在等回话的任务: %v", tasks.log)
 	}
 
