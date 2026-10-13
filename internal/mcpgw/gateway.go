@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -214,7 +215,7 @@ func (g *Gateway) ConnectTransport(ctx context.Context, spec ServerSpec, transpo
 		Version: g.clientVersion,
 	}, nil)
 
-	cs, err := client.Connect(ctx, transport, nil)
+	cs, err := connectDetached(ctx, client, transport)
 	if err != nil {
 		return fmt.Errorf("mcpgw: 连接 %s 失败: %w", spec.Name, err)
 	}
@@ -268,6 +269,47 @@ func (g *Gateway) ConnectTransport(ctx context.Context, spec ServerSpec, transpo
 		g.catalog[full] = info
 	}
 	return nil
+}
+
+// connectDetached 建立一个会话，它的寿命不跟着 ctx 走。
+//
+// ctx 只管"连上要等多久"。连上之后会话是长期的：SDK 会用建立会话时的 context 维持它的长连接，
+// 那个 context 一到期（启动阶段的超时、某一步任务的超时），长连接就断，重试几次之后整个会话被关掉，
+// 这个 server 的工具从此全部调不动。所以交给 SDK 的是一个不会到期的 context，会话由 Close 来结束。
+func connectDetached(ctx context.Context, client *mcp.Client, transport mcp.Transport) (*mcp.ClientSession, error) {
+	type result struct {
+		cs  *mcp.ClientSession
+		err error
+	}
+	done := make(chan result, 1)
+	// 不跟着 ctx 到期，但留一个自己的开关：等不及的时候用它把还在进行的连接掐掉。
+	detached, abort := context.WithCancel(context.WithoutCancel(ctx))
+	go func() {
+		cs, err := client.Connect(detached, transport, nil)
+		done <- result{cs, err}
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			abort()
+			return nil, r.err
+		}
+		// 会话结束（被 Close 关掉，或者对端断开）之后，把它的 context 也收回。
+		go func() {
+			_ = r.cs.Wait()
+			abort()
+		}()
+		return r.cs, nil
+	case <-ctx.Done():
+		abort()
+		// 等不及了：它要是之后才连上，把连上的那个会话关掉，不留一个没人管的连接。
+		go func() {
+			if r := <-done; r.cs != nil {
+				_ = r.cs.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 // unreviewedGrant 是助手自己装上的远程 server 的工具所得到的授权边界。
@@ -605,13 +647,82 @@ func buildTransport(ctx context.Context, spec ServerSpec) (mcp.Transport, error)
 			return nil, fmt.Errorf("mcpgw: %s 缺少 URL", spec.Name)
 		}
 		t := &mcp.StreamableClientTransport{Endpoint: spec.URL}
+		var base http.RoundTripper = http.DefaultTransport
 		if len(secrets) > 0 || len(headers) > 0 {
-			t.HTTPClient = &http.Client{Transport: keyedTransport{params: secrets, headers: headers}}
+			base = keyedTransport{params: secrets, headers: headers}
 		}
+		t.HTTPClient = &http.Client{Transport: pushGuard{base: base}}
 		return t, nil
 	default:
 		return nil, fmt.Errorf("mcpgw: 未知的传输方式 %q", spec.Transport)
 	}
+}
+
+// pushWait 是等远程 server 接受"服务器推送通道"的最长时间。
+var pushWait = 10 * time.Second
+
+// pushGuard 让"服务器推送通道"建不起来这件事不至于拖垮整个连接。
+//
+// 连上之后，客户端会另发一个长挂着的 GET 请求，供 server 主动往这边推消息。协议允许 server 不提供它
+// （回 405 即可），但有的 server 既不提供也不回绝：请求挂着没有回音，或者直接出错。
+// SDK 遇到这种情况会重试几次，然后把整个连接关掉——连带着本来好好的工具调用也全用不了了。
+// 我们用不到 server 主动推来的消息，所以这里把"没有回音"和"出错"都当成 405：这个通道没有就没有，
+// 工具调用照常走它们自己的请求。
+type pushGuard struct {
+	base http.RoundTripper
+}
+
+func (g pushGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodGet {
+		return g.base.RoundTrip(req)
+	}
+	ctx, cancel := context.WithCancel(req.Context())
+	type result struct {
+		resp *http.Response
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := g.base.RoundTrip(req.WithContext(ctx))
+		done <- result{resp, err}
+	}()
+	notOffered := func() *http.Response {
+		return &http.Response{
+			Status: "405 Method Not Allowed", StatusCode: http.StatusMethodNotAllowed,
+			Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+			Header: http.Header{}, Body: http.NoBody, Request: req,
+		}
+	}
+	select {
+	case r := <-done:
+		if r.err != nil {
+			cancel()
+			return notOffered(), nil
+		}
+		// 通道建起来了：它会一直开着，等读的人关掉时再收回这个 context。
+		r.resp.Body = cancelOnClose{ReadCloser: r.resp.Body, cancel: cancel}
+		return r.resp, nil
+	case <-time.After(pushWait):
+		cancel()
+		go func() {
+			if r := <-done; r.resp != nil {
+				_ = r.resp.Body.Close()
+			}
+		}()
+		return notOffered(), nil
+	}
+}
+
+// cancelOnClose 在响应体被关掉时收回请求的 context。
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // passthroughEnv 是本地 MCP server 能从主进程继承的环境变量。
