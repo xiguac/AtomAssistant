@@ -364,3 +364,43 @@ func TestDecide_默认策略一律手动(t *testing.T) {
 		t.Fatalf("默认应手动确认，实际 %s", d.Outcome)
 	}
 }
+
+func TestPolicy_自主模式放开默认确认但硬限制照旧(t *testing.T) {
+	now := time.Now()
+	req := Request{Tool: "mail.send", SideEffect: core.SideEffectIrreversible, Origin: core.TrustUser, MaxPrivacy: core.PrivacyNormal}
+	p := &Policy{Autonomous: true}
+	if d := p.Decide(req, Usage{}, now); d.Outcome != OutcomeAuto {
+		t.Fatalf("自主模式下没有规则的工具应直接执行: %+v", d)
+	}
+	// 绝密数据照旧拒绝。
+	secret := req
+	secret.MaxPrivacy = core.PrivacySecret
+	if d := p.Decide(secret, Usage{}, now); d.Outcome != OutcomeDeny {
+		t.Fatalf("绝密数据不受模式影响: %+v", d)
+	}
+	// 花钱必须有上限罩着：没设上限仍然确认，设了就放行，超了又转手动。
+	pay := req
+	pay.AmountCents = 5000
+	if d := p.Decide(pay, Usage{}, now); d.Outcome != OutcomeManual || d.Reason != ReasonNoCap {
+		t.Fatalf("没有金额上限时花钱应确认: %+v", d)
+	}
+	capped := &Policy{Autonomous: true, Caps: Caps{PerTaskAmountCents: 10000}}
+	if d := capped.Decide(pay, Usage{}, now); d.Outcome != OutcomeAuto {
+		t.Fatalf("在上限之内应放行: %+v", d)
+	}
+	if d := capped.Decide(pay, Usage{TaskAmountCents: 8000}, now); d.Outcome != OutcomeManual {
+		t.Fatalf("超出单任务上限应确认: %+v", d)
+	}
+	// 用户写的规则仍然算数：never 始终确认，带条件的按条件。
+	ruled := &Policy{Autonomous: true, Rules: []Rule{
+		{Tool: "mail.send", Never: true},
+		{Tool: "ride.book", AutoIf: Condition{AmountBelowCents: 1000}},
+	}}
+	if d := ruled.Decide(req, Usage{}, now); d.Outcome != OutcomeManual {
+		t.Fatalf("never 应始终确认: %+v", d)
+	}
+	ride := Request{Tool: "ride.book", SideEffect: core.SideEffectIrreversible, Origin: core.TrustUser, AmountCents: 5000}
+	if d := ruled.Decide(ride, Usage{}, now); d.Outcome != OutcomeManual {
+		t.Fatalf("不满足用户写的条件应确认: %+v", d)
+	}
+}

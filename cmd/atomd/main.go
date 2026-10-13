@@ -397,7 +397,9 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		ReplyStyle:  file.Reply.Style,
 		ReplyCustom: file.Reply.Custom,
 	}).WithMemory(mem).WithVault(safe).WithSkills(st.Skills()).WithCapabilities(st.Skills()).
-		WithPrompts(agent.SettingPrompts{Store: st})
+		WithPrompts(agent.SettingPrompts{Store: st}).
+		// 自主模式下改动不再等用户确认，会修改、删除已有东西的动作改由主模型把关。
+		WithActionReview(approval.Autonomous)
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills())
 
 	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。

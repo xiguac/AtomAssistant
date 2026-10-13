@@ -186,6 +186,10 @@ type Planner struct {
 	// worker 是当前这次决策由哪个任务模型来做。它只存在于 decideDelegated 内部的副本上，
 	// 共享的 Planner 上永远是空的。
 	worker string
+	// takeover 为真表示主模型已经接手了这件事，同样只存在于副本上。
+	takeover bool
+	// reviewActions 为真时，会修改、删除已有东西的动作在执行前先由主模型把关，见 guard。
+	reviewActions bool
 	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
 	canSendFiles bool
 	// hasWeb 为真表示接入了联网搜索。
@@ -464,7 +468,17 @@ func (p *Planner) Decide(ctx context.Context, t *core.Task, history []*core.Step
 }
 
 // decide 让当前负责决策的模型（主模型，或者 p.worker 指定的任务模型）决定下一步。
+// 它选的动作如果会修改、删除已有的东西，先交主模型把关。
 func (p *Planner) decide(ctx context.Context, t *core.Task, history []*core.Step) (kernel.Decision, error) {
+	d, err := p.propose(ctx, t, history)
+	if err != nil || !p.reviewActions || !needsMainReview(d) {
+		return d, err
+	}
+	return p.guard(ctx, t, history, d)
+}
+
+// propose 问一次模型下一步做什么，并把回答校验成决策。
+func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Step) (kernel.Decision, error) {
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -497,6 +511,9 @@ func (p *Planner) decide(ctx context.Context, t *core.Task, history []*core.Step
 	}
 	if p.worker != "" {
 		system += "\n\n" + delegateRule + "\n\n" + workerLanguageRule
+	}
+	if p.takeover {
+		system += "\n\n" + takeoverRule
 	}
 	system += "\n\n" + style +
 		"\n\n当前时间：" + p.now().Local().Format("2006-01-02 15:04 Monday") +

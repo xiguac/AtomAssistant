@@ -112,6 +112,11 @@ func (a *Approver) drivenBy(ctx context.Context, t *core.Task, d kernel.Decision
 	if a.history == nil || !t.Origin.CanTriggerIrreversible() {
 		return t.Origin, "", nil
 	}
+	// 自主模式下用户选择了不再为"任务读过外部内容"逐个确认：长程任务几乎都会查网页、读工具返回的文字，
+	// 这条规则会让之后的每一次改动都停下来等人。只看任务是谁发起的——不是用户发起的任务照旧改不了东西。
+	if a.policy.Autonomous {
+		return t.Origin, "", nil
+	}
 	// 只读操作本来就不用审批，不必为它翻一遍历史。
 	if d.SideEffect == core.SideEffectNone || d.SideEffect == core.SideEffectReadOnly {
 		return t.Origin, "", nil

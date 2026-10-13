@@ -381,9 +381,20 @@ type ToolConfig struct {
 
 // ApprovalConfig 是审批策略。
 type ApprovalConfig struct {
+	// Mode 取值 auto / confirm，不写按 auto。
+	//   auto     自主模式：没有为它写规则的工具直接执行，任务读过外部内容之后也一样。
+	//            长程任务不用人一直盯着。硬性限制照旧，见 policy.Policy.Autonomous。
+	//   confirm  逐项确认：没有写规则的改动一律先问；任务读过外部内容之后的改动一律先问。
+	Mode  string         `yaml:"mode,omitempty"`
 	Rules []ApprovalRule `yaml:"rules"`
 	Caps  CapsConfig     `yaml:"caps"`
 }
+
+// 审批模式。
+const (
+	ApprovalAuto    = "auto"
+	ApprovalConfirm = "confirm"
+)
 
 // ApprovalRule 是针对某个工具的放行规则。
 type ApprovalRule struct {
@@ -491,6 +502,11 @@ func (f *File) validate() error {
 		if _, err := parseSideEffect(t.SideEffect); err != nil {
 			return fmt.Errorf("config: 工具 %s: %w", t.Name, err)
 		}
+	}
+	switch f.Approval.Mode {
+	case "", ApprovalAuto, ApprovalConfirm:
+	default:
+		return fmt.Errorf("config: approval.mode 取值非法: %q（可选 auto / confirm）", f.Approval.Mode)
 	}
 	switch f.Reply.Style {
 	case "", "concise", "balanced", "detailed":
@@ -608,6 +624,7 @@ func (f *File) BuildRegistry() (*policy.Registry, error) {
 // BuildApprovalPolicy 按配置构造审批策略。
 func (f *File) BuildApprovalPolicy() *policy.Policy {
 	p := &policy.Policy{
+		Autonomous: f.Approval.Mode != ApprovalConfirm,
 		Caps: policy.Caps{
 			DailyAutoAmountCents: yuanToCents(f.Approval.Caps.DailyAutoAmountYuan),
 			DailyAutoCount:       f.Approval.Caps.DailyAutoCount,

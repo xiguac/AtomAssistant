@@ -58,10 +58,19 @@ type Caps struct {
 	PerTaskAmountCents   int64
 }
 
+// ReasonNoCap 是自主模式下一笔花钱的操作因为没有设置金额上限而转手动的理由。
+const ReasonNoCap = "未设置金额上限（单任务或单日），涉及金额的操作需手动确认"
+
 // Policy 是用户配置的审批策略。默认一律手动确认。
 type Policy struct {
 	Rules []Rule
 	Caps  Caps
+	// Autonomous 为真是自主模式：没有为它写规则的工具直接执行，不再默认手动确认。
+	//
+	// 长程任务要调几十次工具，每一次都等人点确认的话，人就得一直盯着。自主模式放开的是"默认要问"，
+	// 下面这些照旧：绝密数据不外传；不是用户发起的任务不能改动东西；用户写了 never 的工具始终确认；
+	// 用户写了条件的按条件；累计帽子；以及花钱的操作必须有金额上限罩着，没设上限就仍然要确认。
+	Autonomous bool
 }
 
 // Request 是一次待判定的操作。
@@ -116,14 +125,21 @@ func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
 	}
 
 	rule, found := p.ruleFor(req.Tool)
-	if !found {
+	switch {
+	case !found && !p.Autonomous:
 		return Decision{OutcomeManual, ReasonNoRule}
-	}
-	if rule.Never {
+	case !found:
+		// 自主模式下没有规则的工具直接执行，但花钱必须有上限罩着：
+		// 没有任何金额上限时，一个跑飞的任务能花多少就没有边了。
+		if req.AmountCents > 0 && p.Caps.PerTaskAmountCents <= 0 && p.Caps.DailyAutoAmountCents <= 0 {
+			return Decision{OutcomeManual, ReasonNoCap}
+		}
+	case rule.Never:
 		return Decision{OutcomeManual, fmt.Sprintf("%s 被设置为始终手动确认", req.Tool)}
-	}
-	if reason, ok := matches(rule.AutoIf, req, now); !ok {
-		return Decision{OutcomeManual, reason}
+	default:
+		if reason, ok := matches(rule.AutoIf, req, now); !ok {
+			return Decision{OutcomeManual, reason}
+		}
 	}
 
 	// 5. 累计帽子放在最后：即使单次条件满足，也可能因为今天已经自动执行太多次而转手动。
@@ -137,6 +153,9 @@ func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
 			yuan(p.Caps.DailyAutoAmountCents))}
 	}
 
+	if !found {
+		return Decision{OutcomeAuto, "自主模式：直接执行"}
+	}
 	return Decision{OutcomeAuto, fmt.Sprintf("满足 %s 的自动放行条件", req.Tool)}
 }
 

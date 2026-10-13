@@ -282,7 +282,7 @@ func TestDelegate_多轮仍不满意时改派给别的任务模型(t *testing.T)
 	if d.Kind != kernel.DecideFinish || d.Reason != "new model result" {
 		t.Fatalf("到头了应结束: %+v", d)
 	}
-	if !strings.Contains(main.lastReq.Messages[0].Content, "verdict 必须是 accept") {
+	if !strings.Contains(main.lastReq.Messages[0].Content, "不能再退回，也不能再换人了") {
 		t.Fatal("最后一次审核应告诉主模型必须收尾")
 	}
 	// 可评分的只有答复到了用户手里的那个模型，中途被换下去的不记。
@@ -432,3 +432,142 @@ func TestPlanner_保险库目录只列个人信息不列服务凭据(t *testing.
 		t.Fatal("模型只应看到它用得上的条目，服务凭据不列给它")
 	}
 }
+
+func TestDelegate_主模型可以接手自己调工具办完(t *testing.T) {
+	ctx := context.Background()
+	task := core.NewTask("t", "这个周末适合出门吗", core.TrustUser)
+	main := &fakeModel{replies: []string{
+		assignReply, `{"verdict":"approve"}`,
+		`{"verdict":"takeover","feedback":"I will verify Sunday weather myself"}`,
+		`{"action":"tool","tool":"demo.weather","params":{"city":"上海"},"reason":"核实周日天气"}`,
+		`{"action":"finish","reason":"周六去，周日有雨。"}`,
+	}}
+	workers := &scriptedWorkers{replies: []string{planReply, `{"action":"finish","reason":"go on Saturday"}`}}
+	p, store, run := delegated(t, main, workers)
+
+	var history []*core.Step
+	for i := 0; i < 3; i++ { // 指派、方案、审核（决定接手）
+		d, err := p.Decide(ctx, task, history)
+		if err != nil {
+			t.Fatal(err)
+		}
+		history = run(task, history, d)
+	}
+	var rec reviewRecord
+	if json.Unmarshal(history[2].Output, &rec) != nil || !rec.Takeover || rec.Proposed != "go on Saturday" {
+		t.Fatalf("第三步应是主模型决定接手: %+v", rec)
+	}
+	asked := len(workers.reqs)
+
+	// 接手之后由主模型调工具，任务模型不再被叫到。
+	d, err := p.Decide(ctx, task, history)
+	if err != nil || d.ToolName != "demo.weather" || len(workers.reqs) != asked {
+		t.Fatalf("接手后应由主模型自己调工具: %+v %v", d, err)
+	}
+	seen := text(main.lastReq)
+	if !strings.Contains(seen, "已经接手了这件事") || !strings.Contains(seen, "go on Saturday") || !strings.Contains(seen, "I will verify Sunday weather myself") {
+		t.Fatal("主模型接手后应看到任务模型交回的结果和自己指出的问题")
+	}
+	history = append(history, weatherStep(task.ID, len(history)+1, "demo.weather", `{"city":"上海"}`, `{"temp":21}`))
+
+	// 主模型说办完了就结束，不用再审自己；评分仍记在被指派的任务模型名下。
+	calls := main.calls
+	d, err = p.Decide(ctx, task, history)
+	if err != nil || d.Kind != kernel.DecideFinish || d.Reason != "周六去，周日有雨。" || main.calls != calls+1 {
+		t.Fatalf("主模型办完应直接结束: %+v %v", d, err)
+	}
+	if works, _ := store.WorkOfTask(ctx, task.ID); len(works) != 1 {
+		t.Fatalf("应记下一份可评分的活: %+v", works)
+	}
+}
+
+func TestGuard_修改和删除先由主模型把关写入不用(t *testing.T) {
+	ctx := context.Background()
+	task := core.NewTask("t", "把周五的会删掉", core.TrustUser)
+	book := `{"action":"tool","tool":"demo.book","params":{"id":"evt-1"},"reason":"delete it"}`
+
+	// 同意：照原样执行，两次调用的用量都记上。
+	m := &fakeModel{replies: []string{book, `{"verdict":"approve","reason":"user asked"}`}}
+	p := NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{}).WithActionReview(true)
+	d, err := p.Decide(ctx, task, nil)
+	if err != nil || d.ToolName != "demo.book" || d.SideEffect != core.SideEffectIrreversible || m.calls != 2 || d.TokensIn != 20 {
+		t.Fatalf("主模型同意后应照原样执行: %+v %v", d, err)
+	}
+	seen := text(m.lastReq)
+	if !strings.Contains(seen, "把周五的会删掉") || !strings.Contains(seen, "evt-1") || !strings.Contains(seen, "demo.book") {
+		t.Fatal("把关时主模型应看到用户的原始要求和待执行的动作")
+	}
+
+	// 不同意：动作不执行，理由记进日志，提出它的模型下一步看得到。
+	m = &fakeModel{replies: []string{book, `{"verdict":"reject","reason":"wrong event, ask the user"}`}}
+	p = NewPlanner(m, catalogWith(core.SideEffectIrreversible), PlannerOptions{}).WithActionReview(true)
+	d, err = p.Decide(ctx, task, nil)
+	var veto vetoRecord
+	if err != nil || d.ToolName != ToolVeto || d.SideEffect != core.SideEffectNone ||
+		json.Unmarshal(d.Input, &veto) != nil || veto.Tool != "demo.book" || veto.Reason != "wrong event, ask the user" {
+		t.Fatalf("主模型不同意时动作不应执行: %+v %v", d, err)
+	}
+
+	// 可撤销的写入、只读查询不经过把关；没开把关时什么都不拦。
+	for _, c := range []struct {
+		side   core.SideEffect
+		reply  string
+		review bool
+	}{
+		{core.SideEffectReversible, book, true},
+		{core.SideEffectIrreversible, `{"action":"tool","tool":"demo.weather","params":{}}`, true},
+		{core.SideEffectIrreversible, book, false},
+	} {
+		m = &fakeModel{replies: []string{c.reply}}
+		p = NewPlanner(m, catalogWith(c.side), PlannerOptions{}).WithActionReview(c.review)
+		if d, err = p.Decide(ctx, task, nil); err != nil || isInternalTool(d.ToolName) || m.calls != 1 {
+			t.Fatalf("这个动作不应经过把关: %+v %v", d, err)
+		}
+	}
+
+	// 改已有的日程、挪动邮件虽然撤得回来，也要把关；新建不用。
+	for tool, want := range map[string]bool{ToolCalendarUpdate: true, ToolMailMove: true, ToolCalendarCreate: false, ToolDocWrite: false} {
+		got := needsMainReview(kernel.Decision{Kind: kernel.DecideStep, ToolName: tool, SideEffect: core.SideEffectReversible})
+		if got != want {
+			t.Fatalf("%s 要不要把关判断错了: %v", tool, got)
+		}
+	}
+}
+
+func TestApprover_自主模式下读过外部内容的任务也直接执行(t *testing.T) {
+	ctx := context.Background()
+	task := core.NewTask("t", "g", core.TrustUser)
+	external := core.NewStep(task.ID, 1, core.StepTool, nil)
+	external.ToolName = "web.search"
+	external.Complete(json.RawMessage(`{"text":"..."}`), core.TrustExternal)
+	d := kernel.Decision{Kind: kernel.DecideStep, Type: core.StepTool, ToolName: "demo.book",
+		SideEffect: core.SideEffectIrreversible, Input: json.RawMessage(`{"city":"上海"}`)}
+	check := func(pol *policy.Policy, t2 *core.Task) kernel.ApprovalOutcome {
+		t.Helper()
+		a := NewApprover(pol, policy.NewClassifier(), NewMemoryUsageTracker()).WithHistory(stepList{external})
+		outcome, _, err := a.CheckAction(ctx, t2, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return outcome
+	}
+	if check(&policy.Policy{}, task) != kernel.ApprovalManual {
+		t.Fatal("逐项确认模式下，没有规则的改动应等用户确认")
+	}
+	if check(&policy.Policy{Autonomous: true}, task) != kernel.ApprovalAuto {
+		t.Fatal("自主模式下应直接执行，即使任务读过外部内容")
+	}
+	// 不是用户发起的任务，自主模式下也改不了东西。
+	if check(&policy.Policy{Autonomous: true}, core.NewTask("t", "g", core.TrustExternal)) != kernel.ApprovalManual {
+		t.Fatal("外部来源发起的任务不应自动改动东西")
+	}
+	// 用户写了 never 的工具始终确认。
+	never := &policy.Policy{Autonomous: true, Rules: []policy.Rule{{Tool: "demo.book", Never: true}}}
+	if check(never, task) != kernel.ApprovalManual {
+		t.Fatal("never 规则在自主模式下仍然生效")
+	}
+}
+
+type stepList []*core.Step
+
+func (l stepList) ListSteps(context.Context, string) ([]*core.Step, error) { return l, nil }
