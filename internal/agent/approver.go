@@ -227,8 +227,16 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 	}
 
 	amount, eventAt := extractIntent(d.Input)
+	out := outbound(d.ToolName, d.SideEffect)
+	// 联网搜索是只读的，但搜索词会交给模型服务和搜索引擎：里面带着个人敏感信息时按对外发送对待。
+	if d.ToolName == ToolWebSearch && a.classifier.ScanText(string(d.Input)).Level >= core.PrivacySensitive {
+		out = true
+		if maxPrivacy < core.PrivacySensitive {
+			maxPrivacy = core.PrivacySensitive
+		}
+	}
 	decision := a.policy.Decide(policy.Request{
-		Outbound:    outbound(d.ToolName, d.SideEffect),
+		Outbound:    out,
 		Tool:        d.ToolName,
 		SideEffect:  d.SideEffect,
 		AmountCents: amount,

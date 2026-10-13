@@ -15,6 +15,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/policy"
 )
 
 // 付费资源走的是 HTTP 402 协议：请求一个要收费的接口，对方回 402 并在
@@ -138,6 +141,8 @@ func (r Resources) Request(ctx context.Context, taskID, resourceURL, body string
 	if client == nil {
 		client = &http.Client{
 			Timeout: 30 * time.Second,
+			// 网址是模型写的：发出去之前过一遍出站过滤，里面带着个人敏感信息的不发。
+			Transport: policy.NewEgressFilter(nil, core.PrivacyNormal, "付费资源"),
 			// 不跟随跳转：允许的是这个域名，不是它愿意把我们带去的任何地方。
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}

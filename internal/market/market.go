@@ -26,6 +26,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/policy"
 )
 
 const (
@@ -59,8 +62,11 @@ func (c *Client) http() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 90 * time.Second}
+	return &http.Client{Timeout: 90 * time.Second, Transport: egress}
 }
+
+// egress 是查找与下载用的出站过滤：搜索词和要取的条目名是模型写的，里面带着个人敏感信息的不发。
+var egress = policy.NewEgressFilter(nil, core.PrivacyNormal, "能力查找")
 
 // archive 是下载仓库压缩包用的客户端。时限放得很宽：
 // 从国内的服务器到 GitHub 常常只有几十 KB 每秒，几 MB 的仓库要下好几分钟。
@@ -68,7 +74,7 @@ func (c *Client) archive() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 10 * time.Minute}
+	return &http.Client{Timeout: 10 * time.Minute, Transport: egress}
 }
 
 func pick(v, def string) string {

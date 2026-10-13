@@ -1,8 +1,14 @@
 package policy
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -417,5 +423,72 @@ func TestPolicy_自主模式放开内部的事对外发送仍由用户确认(t *
 	out.MaxPrivacy = core.PrivacyNormal
 	if d := ruled.Decide(out, Usage{}, now); d.Outcome != OutcomeAuto {
 		t.Fatalf("用户写了放行规则的对外工具应直接执行: %+v", d)
+	}
+}
+
+func TestScanText_编码之后的敏感信息也认得出(t *testing.T) {
+	c := NewClassifier()
+	phone, id := "13800138000", "11010119900307663X"
+	cases := map[string]core.PrivacyLevel{
+		"q=weather+in+shanghai&page=2":                   core.PrivacyPublic,
+		"order=20261013A8F3C2D1E5B7A9C4D6E8F0A1B2C3D4E5": core.PrivacyPublic, // 长编号不算
+		"tel=" + phone:                           core.PrivacySensitive,
+		"t=138-0013-8000":                        core.PrivacySensitive, // 夹了分隔符
+		"u=" + url.QueryEscape("me@example.com"): core.PrivacySensitive,
+		"d=" + url.QueryEscape(url.QueryEscape("tel:"+phone)):         core.PrivacySensitive, // 套了两层网址编码
+		"d=" + base64.StdEncoding.EncodeToString([]byte("手机 "+phone)): core.PrivacySensitive,
+		"d=" + base64.RawURLEncoding.EncodeToString([]byte(id)):       core.PrivacySecret,
+		"id=" + id: core.PrivacySecret,
+		"note=" + url.QueryEscape("客户对海鲜过敏"): core.PrivacySecret,
+	}
+	for text, want := range cases {
+		if got := c.ScanText(text); got.Level != want {
+			t.Errorf("%q 应为 %s，实际 %s（%s）", text, want, got.Level, got.What)
+		}
+	}
+}
+
+func TestEgressFilter_带着个人信息的请求发不出去(t *testing.T) {
+	var hits int
+	var lastBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		hits++
+		b, _ := io.ReadAll(r.Body)
+		lastBody = string(b)
+	}))
+	defer srv.Close()
+	client := &http.Client{Transport: NewEgressFilter(nil, core.PrivacyNormal, "测试")}
+
+	// 干净的请求照常发出，请求体原样到达。
+	resp, err := client.Post(srv.URL+"/track?campaign=autumn", "application/json", strings.NewReader(`{"q":"天气"}`))
+	if err != nil || hits != 1 || lastBody != `{"q":"天气"}` {
+		t.Fatalf("干净的请求应照常发出: %v %d %q", err, hits, lastBody)
+	}
+	resp.Body.Close()
+
+	// 钓鱼邮件让助手"点一下这个链接"：个人信息拼在参数里、藏在编码里、放在请求体里，都发不出去。
+	blocked := []func() (*http.Response, error){
+		func() (*http.Response, error) { return client.Get(srv.URL + "/c?tel=13800138000") },
+		func() (*http.Response, error) {
+			return client.Get(srv.URL + "/c?d=" + base64.URLEncoding.EncodeToString([]byte("id 11010119900307663X")))
+		},
+		func() (*http.Response, error) { return client.Get(srv.URL + "/u/me@example.com/profile") },
+		func() (*http.Response, error) {
+			return client.Post(srv.URL+"/c", "application/json", strings.NewReader(`{"contact":"13800138000"}`))
+		},
+	}
+	for i, do := range blocked {
+		resp, err := do()
+		if err == nil {
+			resp.Body.Close()
+		}
+		if !errors.Is(err, ErrLeakBlocked) || hits != 1 {
+			t.Fatalf("第 %d 个请求应被拦下且不触达服务器: %v（已到达 %d 次）", i+1, err, hits)
+		}
+		// 报错里说的是哪一类信息，不带它的值。
+		var uerr *url.Error
+		if !errors.As(err, &uerr) || strings.Contains(uerr.Err.Error(), "13800138000") || !strings.Contains(uerr.Err.Error(), "测试") {
+			t.Fatalf("过滤给出的理由应说明是哪一类信息、不带它的值: %v", err)
+		}
 	}
 }

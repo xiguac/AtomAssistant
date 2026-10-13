@@ -579,6 +579,13 @@ func TestApprover_自主模式下内部的事直接做对外发送由用户确�
 			t.Fatalf("对外发送的 %s 应由用户确认: %s %s", tool, got, why)
 		}
 	}
+	// 联网搜索平时直接做；搜索词里带着个人敏感信息的要用户确认。
+	if got, _ := check(auto, task, ToolWebSearch, core.SideEffectReadOnly, `{"query":"上海周末天气"}`); got != kernel.ApprovalAuto {
+		t.Fatal("普通的联网搜索应直接执行")
+	}
+	if got, why := check(auto, task, ToolWebSearch, core.SideEffectReadOnly, `{"query":"查一下 13800138000 是谁的号码"}`); got != kernel.ApprovalManual || !strings.Contains(why, "敏感信息") {
+		t.Fatalf("搜索词里带着手机号应由用户确认: %s %s", got, why)
+	}
 	// 带着敏感信息往外发的，理由里写明。
 	if _, why := check(auto, task, "forms.submit", core.SideEffectReversible, `{"phone":"13800138000"}`); !strings.Contains(why, "敏感信息") {
 		t.Fatalf("含敏感信息时应在理由里写明: %s", why)
