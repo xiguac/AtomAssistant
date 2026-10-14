@@ -292,7 +292,8 @@ func TestOpenAICompatible_正常返回(t *testing.T) {
 			"choices": []any{map[string]any{
 				"message": map[string]any{"content": "你好"},
 			}},
-			"usage": map[string]any{"prompt_tokens": 12, "completion_tokens": 8},
+			// DeepSeek 把命中前缀缓存的输入报在 prompt_cache_hit_tokens 里。
+			"usage": map[string]any{"prompt_tokens": 12, "completion_tokens": 8, "prompt_cache_hit_tokens": 10},
 		})
 	}))
 	defer srv.Close()
@@ -313,7 +314,7 @@ func TestOpenAICompatible_正常返回(t *testing.T) {
 	if resp.Content != "你好" {
 		t.Fatalf("内容不对: %q", resp.Content)
 	}
-	if resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 8 {
+	if resp.Usage.PromptTokens != 12 || resp.Usage.CompletionTokens != 8 || resp.Usage.CachedTokens != 10 {
 		t.Fatalf("用量未解析: %+v", resp.Usage)
 	}
 	if gotPath != "/v1/chat/completions" {

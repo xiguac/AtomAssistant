@@ -52,6 +52,8 @@ type Source struct {
 type Usage struct {
 	PromptTokens     int64
 	CompletionTokens int64
+	// CachedTokens 是 PromptTokens 里命中模型服务前缀缓存的部分。服务不报这一项时为 0。
+	CachedTokens int64
 }
 
 // Response 是模型返回。

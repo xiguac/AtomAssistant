@@ -94,6 +94,12 @@ type chatResponse struct {
 	Usage struct {
 		PromptTokens     int64 `json:"prompt_tokens"`
 		CompletionTokens int64 `json:"completion_tokens"`
+		// 命中前缀缓存的输入：DeepSeek 报在 prompt_cache_hit_tokens，
+		// OpenAI 和多数兼容它的服务报在 prompt_tokens_details.cached_tokens。
+		PromptCacheHitTokens int64 `json:"prompt_cache_hit_tokens"`
+		PromptTokensDetails  struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -174,6 +180,7 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 		Usage: Usage{
 			PromptTokens:     parsed.Usage.PromptTokens,
 			CompletionTokens: parsed.Usage.CompletionTokens,
+			CachedTokens:     max(parsed.Usage.PromptCacheHitTokens, parsed.Usage.PromptTokensDetails.CachedTokens),
 		},
 	}, nil
 }

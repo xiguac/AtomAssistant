@@ -197,7 +197,7 @@ const taskColumns = `
 	budget_max_tokens, budget_max_cost_cents, budget_max_wall_ns,
 	usage_tokens, usage_cost_cents, usage_wall_ns,
 	deadline, wake, next_seq, lease_owner, lease_expires_at,
-	created_at, updated_at, usage_cost_micros`
+	created_at, updated_at, usage_cost_micros, usage_cached_tokens`
 
 func (s *Store) CreateTask(ctx context.Context, t *core.Task) error {
 	return s.z.insertTask(ctx, s.pool, t)
@@ -240,7 +240,7 @@ func (z sealer) insertTask(ctx context.Context, db execer, t *core.Task) error {
 	}
 	_, err = db.Exec(ctx, `
 		INSERT INTO tasks (`+taskColumns+`, wake_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
 		t.ID, nullString(t.ParentID), z.str("tasks.title", t.Title), z.str("tasks.goal", t.Goal),
 		string(t.State), z.str("tasks.reason", t.Reason),
 		string(t.Domain), string(t.Visibility), z.str("tasks.visibility_target", t.VisibilityTarget), int16(t.Origin),
@@ -248,7 +248,7 @@ func (z sealer) insertTask(ctx context.Context, db execer, t *core.Task) error {
 		t.Budget.MaxTokens, t.Budget.MaxCostCents, int64(t.Budget.MaxWallClock),
 		t.Usage.Tokens, t.Usage.CostCents, int64(t.Usage.WallClock),
 		t.Deadline, z.json("tasks.wake", wake), t.NextSeq, t.LeaseOwner, t.LeaseExpiresAt,
-		t.CreatedAt, t.UpdatedAt, t.Usage.CostMicros, wakeAt(t.Wake))
+		t.CreatedAt, t.UpdatedAt, t.Usage.CostMicros, t.Usage.CachedTokens, wakeAt(t.Wake))
 	if err != nil {
 		return fmt.Errorf("pg: 创建任务失败: %w", err)
 	}
@@ -328,11 +328,11 @@ func (s *Store) UpdateTaskRuntime(ctx context.Context, t *core.Task) error {
 		UPDATE tasks
 		   SET usage_tokens = $2, usage_cost_cents = $3, usage_wall_ns = $4,
 		       next_seq = $5, wake = $6, deadline = $7, priority = $8,
-		       usage_cost_micros = $9, wake_at = $10,
+		       usage_cost_micros = $9, wake_at = $10, usage_cached_tokens = $11,
 		       updated_at = now()
 		 WHERE id = $1`,
 		t.ID, t.Usage.Tokens, t.Usage.CostCents, int64(t.Usage.WallClock),
-		t.NextSeq, s.z.json("tasks.wake", wake), t.Deadline, t.Priority, t.Usage.CostMicros, wakeAt(t.Wake))
+		t.NextSeq, s.z.json("tasks.wake", wake), t.Deadline, t.Priority, t.Usage.CostMicros, wakeAt(t.Wake), t.Usage.CachedTokens)
 	if err != nil {
 		return fmt.Errorf("pg: 更新任务运行时失败: %w", err)
 	}
@@ -605,7 +605,7 @@ func (z sealer) scanTask(sc scanner) (*core.Task, error) {
 		&t.Budget.MaxTokens, &t.Budget.MaxCostCents, &maxWall,
 		&t.Usage.Tokens, &t.Usage.CostCents, &usedWall,
 		&t.Deadline, &wake, &t.NextSeq, &t.LeaseOwner, &t.LeaseExpiresAt,
-		&t.CreatedAt, &t.UpdatedAt, &t.Usage.CostMicros)
+		&t.CreatedAt, &t.UpdatedAt, &t.Usage.CostMicros, &t.Usage.CachedTokens)
 	if err != nil {
 		return nil, err
 	}

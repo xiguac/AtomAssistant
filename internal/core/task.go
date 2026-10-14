@@ -99,8 +99,10 @@ type Budget struct {
 
 // Usage 是任务已消耗的资源。
 type Usage struct {
-	Tokens    int64 `json:"tokens"`
-	CostCents int64 `json:"cost_cents"`
+	Tokens int64 `json:"tokens"`
+	// CachedTokens 是 Tokens 里命中模型服务前缀缓存的输入，计费远低于其余部分。只用来展示，不参与预算。
+	CachedTokens int64 `json:"cached_tokens,omitempty"`
+	CostCents    int64 `json:"cost_cents"`
 	// CostMicros 是不足一分的零头，单位为百万分之一元，满一分就进位到 CostCents。
 	CostMicros int64 `json:"cost_micros"`
 	// WallClock 只累计任务真正在执行的时间，不含等待。

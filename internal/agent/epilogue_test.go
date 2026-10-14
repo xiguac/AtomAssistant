@@ -193,8 +193,17 @@ func TestPlanner_系统提示带回复风格与当前时间(t *testing.T) {
 	if !strings.Contains(def, "Reply style: concise") {
 		t.Fatal("默认风格应为简洁")
 	}
-	if !strings.Contains(def, time.Now().Format("2006-01-02")) {
-		t.Fatal("系统提示应带当前日期")
+	// 当前日期每次都变，不放在系统提示里（放了就命中不了缓存），放在最后一条消息里。
+	if strings.Contains(def, time.Now().Format("2006-01-02")) {
+		t.Fatal("系统提示里不应有当前日期")
+	}
+	m := &fakeModel{replies: []string{`{"action":"finish"}`}}
+	if _, err := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).
+		Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil); err != nil {
+		t.Fatal(err)
+	}
+	if last := m.lastReq.Messages[len(m.lastReq.Messages)-1].Content; !strings.Contains(last, time.Now().Format("2006-01-02")) {
+		t.Fatalf("最后一条消息应带当前日期: %s", last)
 	}
 	custom := system(PlannerOptions{ReplyStyle: "detailed", ReplyCustom: "不要用表情"})
 	if !strings.Contains(custom, "Reply style: detailed") || !strings.Contains(custom, "不要用表情") {

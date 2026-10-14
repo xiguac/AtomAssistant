@@ -16,7 +16,7 @@
   {{if and .Task.Goal (ne .Task.Goal .Task.Title)}}<div class="quote" style="margin-top:14px">{{.Task.Goal}}</div>{{end}}
   {{if and .Task.Reason (not .Pending) (not .Question)}}<div style="margin-top:14px;white-space:pre-wrap;word-break:break-word">{{.Task.Reason}}</div>{{end}}
   <div class="note muted" style="margin-top:14px">
-    创建于 {{when .Task.CreatedAt}} · 用量 {{.Task.Usage.Tokens}} tokens · 费用 {{.Task.Usage.CostCents}} 分 ·
+    创建于 {{when .Task.CreatedAt}} · 用量 {{.Task.Usage.Tokens}} tokens{{if .Task.Usage.CachedTokens}}（其中 {{.Task.Usage.CachedTokens}} 命中缓存）{{end}} · 费用 {{.Task.Usage.CostCents}} 分 ·
     来源：{{if eq (print .Task.Origin) "user"}}用户{{else}}{{.Task.Origin}}{{end}}
     {{range .Task.Tags}} · <span class="chip">{{.}}</span>{{end}}
   </div>

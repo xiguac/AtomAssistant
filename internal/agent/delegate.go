@@ -291,12 +291,13 @@ func spend(d *kernel.Decision, resp llm.Response) {
 	d.TokensIn += resp.Usage.PromptTokens
 	d.TokensOut += resp.Usage.CompletionTokens
 	d.CostMicros += resp.CostMicros
+	d.TokensCached += resp.Usage.CachedTokens
 }
 
 // askJSON 让一个模型按给定的系统提示看一遍上下文，把它的回答解析进 out。
 // main 为真问主模型，否则问 p.worker 指定的任务模型。用量记在 spent 上，不管回答能不能用。
 func (p *Planner) askJSON(ctx context.Context, t *core.Task, main bool, system string, segs []llm.Segment, spent *kernel.Decision, what string, out any) error {
-	msgs, err := llm.Build(segs, llm.BuildOptions{SystemPrompt: system, MaxChars: p.opts.MaxChars + len(system)})
+	msgs, err := p.build(t, system, segs)
 	if err != nil {
 		return err
 	}
@@ -334,11 +335,6 @@ func internalStep(spent kernel.Decision, tool string, record any, reason string)
 	return spent, nil
 }
 
-func (p *Planner) clock() string {
-	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	return "\n\nCurrent time: " + p.now().Local().Format("2006-01-02 15:04 Monday")
-}
-
 // knownTools 只留下真的有的工具名：一个不存在的名字只会让任务模型白试一次。
 func (p *Planner) knownTools(names []string) []string {
 	out := make([]string, 0, len(names))
@@ -360,7 +356,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	for _, c := range team.Categories {
 		cats = append(cats, fmt.Sprintf("- %s (%s): %s", c.ID, c.Name, c.Hint))
 	}
-	system := sections(ps.get(PromptBase), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n")) + p.clock()
+	system := sections(ps.get(PromptBase), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n"))
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -395,7 +391,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 	if err != nil {
 		return kernel.Decision{}, err
 	}
-	tools := p.clock() + "\n\nAvailable tools:\n" + p.toolList()
+	tools := "\n\nAvailable tools:\n" + p.toolList()
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -493,7 +489,7 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 		body += "\n{{rules}}"
 	}
 	body = strings.NewReplacer("{{verdicts}}", verdicts, "{{rules}}", extra).Replace(body)
-	system := sections(ps.get(PromptBase), body, style) + p.clock()
+	system := sections(ps.get(PromptBase), body, style)
 	var out struct {
 		Verdict  string `json:"verdict"`
 		Answer   string `json:"answer"`
@@ -594,7 +590,7 @@ func (p *Planner) guard(ctx context.Context, t *core.Task, history []*core.Step,
 		Verdict string `json:"verdict"`
 		Reason  string `json:"reason"`
 	}
-	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptGuard))+p.clock(), segs, &spent, "把关结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptGuard)), segs, &spent, "把关结果", &out); err != nil {
 		return spent, err
 	}
 	switch out.Verdict {

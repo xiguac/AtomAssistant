@@ -48,6 +48,13 @@ type BuildOptions struct {
 	SystemPrompt string
 	// MaxChars 是上下文字符预算，0 表示不限。超出时按信任等级由低到高裁剪。
 	MaxChars int
+	// Nonce 非空时用它做围栏标记，不再每次随机生成。
+	//
+	// 同一个任务的每一步都用同一个标记，发给模型的内容开头才能一字不差，命中模型服务的前缀缓存。
+	// 它仍然是外部内容猜不到的：由调用方随机生成、不出现在任何外部内容里；
+	// 万一外部内容里出现了这个串，fence 也会把它清掉。给了它，围栏说明就总是写进系统提示，
+	// 不随"这一步有没有外部内容"变化。
+	Nonce string
 }
 
 // Build 把带信任等级的分段装配成发给模型的消息列表。
@@ -56,12 +63,14 @@ type BuildOptions struct {
 // 是因为固定标签可以被伪造：攻击者在邮件正文里写一个闭合标签就能"越狱"出围栏，
 // 让后续文字看起来像是系统指令。nonce 每次随机生成，外部内容猜不到。
 func Build(segments []Segment, opts BuildOptions) ([]Message, error) {
-	nonce, err := newNonce()
-	if err != nil {
-		return nil, err
+	nonce := opts.Nonce
+	hasUntrusted := nonce != ""
+	if nonce == "" {
+		var err error
+		if nonce, err = newNonce(); err != nil {
+			return nil, err
+		}
 	}
-
-	hasUntrusted := false
 	for _, s := range segments {
 		if !s.Trust.CanInstruct() {
 			hasUntrusted = true

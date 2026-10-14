@@ -42,6 +42,8 @@ type Decision struct {
 	CostCents int64
 	// CostMicros 是不足一分的开销，单位为百万分之一元。见 Cost.Micros。
 	CostMicros int64
+	// TokensCached 是 TokensIn 里命中模型服务前缀缓存的部分。
+	TokensCached int64
 
 	// Then 是紧接着要做的后续步骤，只允许无副作用或只读的。
 	//
@@ -600,6 +602,7 @@ func (e *Engine) chargeDecision(ctx context.Context, t *core.Task, d Decision) e
 		return nil
 	}
 	t.Usage.Tokens += d.TokensIn + d.TokensOut
+	t.Usage.CachedTokens += d.TokensCached
 	addCost(t, d.CostCents, d.CostMicros)
 	return e.store.UpdateTaskRuntime(ctx, t)
 }
