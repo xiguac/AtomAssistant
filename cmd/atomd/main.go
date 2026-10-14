@@ -478,6 +478,18 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		actuator = actuator.WithFiles(workspace)
 		log.Info("已启用文件处理", "工作区", workspace.Root, "加密存放", file.Files.Encrypt)
 	}
+	// 代码沙箱：断网、只读工作区，跑出来的文件收进工作区。机器上跑不了时只记下原因，不影响别的能力。
+	if runner, err := file.SandboxRunner(workspace); err != nil {
+		return nil, err
+	} else if runner != nil {
+		if err := runner.Check(); err != nil {
+			log.Error("沙箱不可用，助手不能跑代码", "err", err)
+		} else {
+			planner = planner.WithSandbox(true)
+			actuator = actuator.WithSandbox(runner)
+			log.Info("已启用沙箱", "解释器", runner.Python, "时间上限", runner.Timeout.String(), "内存上限MB", runner.MemoryMB)
+		}
+	}
 	feed, err := file.Holidays()
 	if err != nil {
 		return nil, err

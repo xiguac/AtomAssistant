@@ -196,6 +196,8 @@ var inHouse = map[string]bool{
 	ToolCapabilityInstall: true,
 	// 只在用户自己的后台里多出一个空的输入框，值由用户填。
 	ToolVaultRequest: true,
+	// 断网的沙箱，结果只写进本机工作区的一个新目录。
+	ToolSandboxRun: true,
 }
 
 // outbound 报告一个动作是不是对外发送：发信、付款与付费请求、通过 MCP 工具向外部服务提交信息。

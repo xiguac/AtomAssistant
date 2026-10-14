@@ -46,6 +46,7 @@ type Actuator struct {
 	mail      MailService
 	holidays  HolidayService
 	weather   WeatherService
+	sandbox   SandboxService
 	files     FileService
 	// team 与 workers 非空时可以把活派给协作模型。
 	team    Dispatcher
@@ -84,6 +85,12 @@ func (a *Actuator) WithFiles(f FileService) *Actuator {
 // WithHolidays 接入节假日数据。
 func (a *Actuator) WithHolidays(h HolidayService) *Actuator {
 	a.holidays = h
+	return a
+}
+
+// WithSandbox 接入沙箱。
+func (a *Actuator) WithSandbox(s SandboxService) *Actuator {
+	a.sandbox = s
 	return a
 }
 
@@ -288,6 +295,22 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		}
 		// 回执是我们自己生成的：名字和下一步怎么办。
 		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
+	}
+	if s.ToolName == ToolSandboxRun {
+		out, err := a.runSandbox(ctx, s)
+		if a.audit != nil {
+			detail := "成功"
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			// 审计只记跑过，不记代码和输出：它们可能带着文件里的内容。
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustToolOutput, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 代码是模型写的，处理的是工作区里的文件；输出和读文件一样按工具输出对待。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
 	if s.ToolName == ToolWeather {
 		out, err := a.runWeather(ctx, s)

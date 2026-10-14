@@ -110,6 +110,8 @@ type Planner struct {
 	conversation ConversationStore
 	// canRequestSecrets 为真表示助手可以在后台登记待用户填写的环境变量。
 	canRequestSecrets bool
+	// hasSandbox 为真表示启用了沙箱。
+	hasSandbox bool
 	// hasWeather 为真表示接入了天气数据。
 	hasWeather bool
 	// hasFiles 为真表示启用了文件处理。
@@ -242,6 +244,12 @@ func (p *Planner) WithSecretRequests(enabled bool) *Planner {
 	return p
 }
 
+// WithSandbox 向模型开放沙箱。
+func (p *Planner) WithSandbox(enabled bool) *Planner {
+	p.hasSandbox = enabled
+	return p
+}
+
 // WithWeather 向模型开放天气查询。
 func (p *Planner) WithWeather(enabled bool) *Planner {
 	p.hasWeather = enabled
@@ -289,6 +297,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 别人写的流程不能自己再去装东西、读别的流程。
 	if p.library != nil {
 		gated = append(gated, capabilityToolset...)
+	}
+	// 在沙箱里跑代码能读整个工作区，别人写的流程没声明就不能用。
+	if p.hasSandbox {
+		gated = append(gated, sandboxTool)
 	}
 	// 别人写的流程不能让后台多出一个向用户要密钥的输入框。
 	if p.canRequestSecrets {

@@ -141,7 +141,7 @@ func isFileWrite(name string) bool {
 // 用户说"把这些数做成表"，再问一句"可以写吗"是多此一举。
 // 和日历一样，任务读过外部内容之后不适用（见 Approver.drivenBy）。
 func FileDefaults(p *policy.Policy) {
-	for _, tool := range []string{ToolSheetWrite, ToolDocWrite, ToolSlidesWrite} {
+	for _, tool := range []string{ToolSheetWrite, ToolDocWrite, ToolSlidesWrite, ToolSandboxRun} {
 		listed := false
 		for _, r := range p.Rules {
 			if r.Tool == tool {

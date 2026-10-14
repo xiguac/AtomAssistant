@@ -26,6 +26,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/pay"
 	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomhelper/internal/sandbox"
 	"github.com/xiguac/atomhelper/internal/seal"
 )
 
@@ -55,6 +56,43 @@ type File struct {
 	Files *FilesConfig `yaml:"files"`
 	// Budget 是每个任务的预算上限。不写按内置的默认值。
 	Budget *BudgetConfig `yaml:"budget,omitempty"`
+	// Sandbox 是代码沙箱的配置。不写这一节，助手不能跑代码。要先启用文件处理。
+	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+}
+
+// SandboxConfig 是代码沙箱的配置。
+type SandboxConfig struct {
+	// Python 是沙箱里用的解释器的绝对路径，由 deploy/deploy.sh sandbox 装好，默认 /opt/atomhelper-sandbox/bin/python3。
+	Python string `yaml:"python,omitempty"`
+	// TimeoutSeconds 是一次运行的时间上限，不写按 60 秒。
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
+	// MemoryMB 是一次运行能用的内存上限，不写按 1024。
+	MemoryMB int `yaml:"memory_mb,omitempty"`
+}
+
+// DefaultSandboxPython 是沙箱解释器的默认位置。
+const DefaultSandboxPython = "/opt/atomhelper-sandbox/bin/python3"
+
+// SandboxRunner 按配置构造沙箱。没有配置时返回 nil。ws 是文件工作区，没有启用文件处理时报错。
+func (f *File) SandboxRunner(ws *files.Workspace) (*sandbox.Runner, error) {
+	c := f.Sandbox
+	if c == nil {
+		return nil, nil
+	}
+	if ws == nil {
+		return nil, fmt.Errorf("config: 启用沙箱要先启用文件处理（files 一节）")
+	}
+	r := &sandbox.Runner{Python: c.Python, Timeout: time.Duration(c.TimeoutSeconds) * time.Second, MemoryMB: c.MemoryMB, Workspace: ws}
+	if r.Python == "" {
+		r.Python = DefaultSandboxPython
+	}
+	if r.Timeout <= 0 {
+		r.Timeout = time.Minute
+	}
+	if r.MemoryMB <= 0 {
+		r.MemoryMB = 1024
+	}
+	return r, nil
 }
 
 // BudgetConfig 是每个任务的预算上限。任一项不写（或写 0）就用内置的默认值；用到上限任务会暂停，不会接着花。
@@ -642,6 +680,14 @@ func (f *File) validate() error {
 	}
 	if err := f.Budget.Check(); err != nil {
 		return err
+	}
+	if c := f.Sandbox; c != nil {
+		if c.TimeoutSeconds < 0 || c.TimeoutSeconds > 3600 || c.MemoryMB < 0 || c.MemoryMB > 16384 {
+			return fmt.Errorf("config: sandbox 的时间上限须在 0～3600 秒，内存上限须在 0～16384 MB")
+		}
+		if f.Files == nil {
+			return fmt.Errorf("config: 启用沙箱要先启用文件处理（files 一节）")
+		}
 	}
 	for _, t := range f.Tools {
 		if _, err := parsePrivacy(t.MaxPrivacy); err != nil {
