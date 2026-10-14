@@ -26,12 +26,14 @@ type watchdog struct {
 	idle   time.Duration
 	timer  *time.Timer
 	cancel context.CancelCauseFunc
+	// start 是发出请求的时间，first 是收到第一段数据的时间，用来算首段数据耗时。
+	start, first time.Time
 }
 
 // startWatchdog 返回一个会被看门狗取消的 ctx。用完必须调 stop。
 func startWatchdog(ctx context.Context, idle time.Duration) (context.Context, *watchdog) {
 	ctx, cancel := context.WithCancelCause(ctx)
-	w := &watchdog{idle: idle, cancel: cancel}
+	w := &watchdog{idle: idle, cancel: cancel, start: time.Now()}
 	w.timer = time.AfterFunc(idle, func() { cancel(errStalled) })
 	return ctx, w
 }
@@ -53,8 +55,19 @@ func (b *idleReader) Read(p []byte) (int, error) {
 	n, err := b.r.Read(p)
 	if n > 0 {
 		b.w.timer.Reset(b.w.idle)
+		if b.w.first.IsZero() {
+			b.w.first = time.Now()
+		}
 	}
 	return n, err
+}
+
+// since 返回从发出请求到 t 的时长；t 为零值时返回 0。
+func (w *watchdog) since(t time.Time) time.Duration {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Sub(w.start)
 }
 
 // explain 把看门狗造成的错误换成说得清楚的话；别的错误原样返回。

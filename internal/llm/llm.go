@@ -8,7 +8,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
+	"time"
 )
 
 // Role 是消息角色。
@@ -67,6 +69,18 @@ type Response struct {
 	Sources []Source
 	// NoSearch 为真表示请求了联网搜索、而服务明确表明这次没有搜——回答来自模型自己的记忆。
 	NoSearch bool
+	// Timing 是这次调用各阶段的耗时，用来查"为什么这么慢"。provider 量不到的项为 0。
+	Timing Timing
+}
+
+// Timing 是一次调用各阶段的耗时，都从发出请求算起。
+type Timing struct {
+	// FirstByte 是收到第一段数据的时间。
+	FirstByte time.Duration
+	// FirstContent 是收到第一段正文的时间。它比 FirstByte 晚得多，说明模型先想了很久。
+	FirstContent time.Duration
+	// ReasoningChars 是模型思考过程的字数。思考过程不交给调用方，只计数。
+	ReasoningChars int
 }
 
 // Provider 是一家模型服务的适配器。
@@ -130,6 +144,13 @@ type Router struct {
 	routes    map[Purpose]Route
 	fallback  *Route
 	workers   map[string]Route
+	log       *slog.Logger
+}
+
+// WithLogger 让每次模型调用都记一行耗时与用量。不设就不记。
+func (r *Router) WithLogger(l *slog.Logger) *Router {
+	r.log = l
+	return r
 }
 
 // NewRouter 构造路由。
@@ -216,13 +237,41 @@ func (r *Router) run(ctx context.Context, what string, route Route, req Request)
 	if req.MaxTokens == 0 {
 		req.MaxTokens = route.MaxTokens
 	}
+	start := time.Now()
 	resp, err := p.Complete(ctx, req)
+	r.logCall(what, route, req, resp, time.Since(start), err)
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: %s 调用 %s/%s 失败: %w",
 			what, route.Provider, route.Model, err)
 	}
 	resp.CostMicros = route.costMicros(resp.Usage)
 	return resp, nil
+}
+
+// logCall 记下一次调用花了多久、用了多少。只记数字，不记内容。
+func (r *Router) logCall(what string, route Route, req Request, resp Response, total time.Duration, err error) {
+	if r.log == nil {
+		return
+	}
+	chars := 0
+	for _, m := range req.Messages {
+		chars += len([]rune(m.Content))
+	}
+	args := []any{
+		"用途", what, "provider", route.Provider, "模型", route.Model,
+		"总耗时", total.Round(time.Millisecond),
+		"首段数据", resp.Timing.FirstByte.Round(time.Millisecond),
+		"首段正文", resp.Timing.FirstContent.Round(time.Millisecond),
+		"思考字数", resp.Timing.ReasoningChars,
+		"输入字数", chars,
+		"输入token", resp.Usage.PromptTokens, "缓存token", resp.Usage.CachedTokens,
+		"输出token", resp.Usage.CompletionTokens,
+	}
+	if err != nil {
+		r.log.Warn("模型调用失败", append(args, "err", err)...)
+		return
+	}
+	r.log.Info("模型调用", args...)
 }
 
 // AddWorker 登记一个协作模型：主 AI 可以把一块活派给它。名字是用户起的，不能重复。

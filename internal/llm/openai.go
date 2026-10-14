@@ -112,6 +112,10 @@ type chatResponse struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+
+	// 以下两项只在流式返回里由 readOpenAIStream 填：第一段正文到达的时间、思考过程的字数。
+	firstContent   time.Time
+	reasoningChars int
 }
 
 // Complete 执行一次补全。
@@ -162,7 +166,13 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 		if parsed, err = readOpenAIStream(respBody); err != nil {
 			return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err))
 		}
-		return p.finish(parsed, req)
+		out, err := p.finish(parsed, req)
+		out.Timing = Timing{
+			FirstByte:      dog.since(dog.first),
+			FirstContent:   dog.since(parsed.firstContent),
+			ReasoningChars: parsed.reasoningChars,
+		}
+		return out, err
 	}
 
 	// 限制读取大小：上游异常时可能返回巨大的响应体，不能让它吃光内存。
@@ -222,7 +232,8 @@ type chatChunk struct {
 	Model   string `json:"model"`
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -260,6 +271,10 @@ func readOpenAIStream(r io.Reader) (chatResponse, error) {
 		for _, ch := range c.Choices {
 			gotChoice = true
 			text.WriteString(ch.Delta.Content)
+			out.reasoningChars += utf8.RuneCountInString(ch.Delta.ReasoningContent)
+			if ch.Delta.Content != "" && out.firstContent.IsZero() {
+				out.firstContent = time.Now()
+			}
 		}
 		if c.Usage != nil {
 			out.Usage.PromptTokens = c.Usage.PromptTokens

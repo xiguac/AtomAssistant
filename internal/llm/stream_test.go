@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,6 +52,48 @@ func TestOpenAICompatible_流式返回拼成完整答案(t *testing.T) {
 	opts, _ := body["stream_options"].(map[string]any)
 	if body["stream"] != true || opts["include_usage"] != true {
 		t.Fatalf("请求应要求流式并带回用量: %v", body)
+	}
+}
+
+func TestOpenAICompatible_记下先想了多久再开口(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sse(w, `data: {"choices":[{"delta":{"reasoning_content":"先想一想这件事"}}]}`)
+		time.Sleep(80 * time.Millisecond)
+		sse(w,
+			`data: {"choices":[{"delta":{"reasoning_content":"再想想"}}]}`,
+			`data: {"choices":[{"delta":{"content":"好"},"finish_reason":"stop"}]}`,
+			`data: [DONE]`,
+		)
+	}))
+	defer srv.Close()
+
+	p, err := NewOpenAICompatible(OpenAIConfig{Name: "qwen", BaseURL: srv.URL, APIKey: "k", Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	r := NewRouter().WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	if err := r.AddProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetFallback(Route{Provider: "qwen", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := r.Complete(context.Background(), PurposePlan, Request{Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm := resp.Timing
+	if tm.ReasoningChars != 10 || tm.FirstByte <= 0 || tm.FirstContent-tm.FirstByte < 60*time.Millisecond {
+		t.Fatalf("耗时统计不对: %+v", tm)
+	}
+	for _, want := range []string{"模型调用", "模型=m", "思考字数=10", "首段正文="} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("日志里应有 %q: %s", want, logs.String())
+		}
+	}
+	if strings.Contains(logs.String(), "hi") {
+		t.Fatalf("日志里不应有消息内容: %s", logs.String())
 	}
 }
 

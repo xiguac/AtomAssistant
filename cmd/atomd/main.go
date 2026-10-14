@@ -303,6 +303,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if err != nil {
 		return nil, err
 	}
+	router.WithLogger(log)
 	registry, err := file.BuildRegistry()
 	if err != nil {
 		return nil, err
