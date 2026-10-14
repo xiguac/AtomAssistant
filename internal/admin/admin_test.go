@@ -1219,3 +1219,70 @@ func TestAdmin_任务页取消还没结束的任务(t *testing.T) {
 		t.Fatalf("不存在的任务应报错: %s", loc)
 	}
 }
+
+func TestAdmin_预算用尽的任务设置新上限后继续(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+	post := func(id string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post("/tasks/"+id+"/budget", form)
+		return loc
+	}
+	task := core.NewTask("北京四日游", "北京四日游", core.TrustUser)
+	task.Budget = core.Budget{MaxTokens: 600_000, MaxCostCents: 500, MaxWallClock: 24 * time.Hour}
+	if err := e.store.CreateTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	// 跑到 token 用尽、挂起，和执行引擎做的一样。
+	task.Usage.Tokens = 600_123
+	if err := e.store.UpdateTaskRuntime(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range [][2]core.TaskState{{core.StateNew, core.StateReady}, {core.StateReady, core.StateRunning}, {core.StateRunning, core.StateSuspended}} {
+		reason := "推进"
+		if step[1] == core.StateSuspended {
+			reason = "预算超限: tokens"
+		}
+		if err := e.store.Transition(ctx, task.ID, step[0], step[1], reason); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 页面上有设置新上限的表单，默认填的是原上限的两倍。
+	if _, body := e.get("/tasks/" + task.ID); !strings.Contains(body, `action="/tasks/`+task.ID+`/budget"`) || !strings.Contains(body, `value="1200246"`) {
+		t.Fatal("预算用尽的任务页应有设置新上限的表单")
+	}
+	// 新上限不高于已用量：继续了也会马上再挂起，不接受。
+	if loc := post(task.ID, url.Values{"max_tokens": {"600000"}}); !strings.Contains(loc, "须高于已用量") {
+		t.Fatalf("不高于已用量的上限应被拒绝: %s", loc)
+	}
+	if loc := post(task.ID, url.Values{"max_tokens": {"x"}}); !strings.Contains(loc, "非负整数") {
+		t.Fatalf("不是数字应被拒绝: %s", loc)
+	}
+	// 只填 token：其余沿用原来的上限。任务回到队列接着跑。
+	if loc := post(task.ID, url.Values{"max_tokens": {"1000000"}}); !strings.Contains(loc, "继续执行") {
+		t.Fatalf("设置新上限失败: %s", loc)
+	}
+	got, err := e.store.GetTask(ctx, task.ID)
+	if err != nil || got.State != core.StateReady || got.Budget.MaxTokens != 1_000_000 || got.Budget.MaxCostCents != 500 || got.Usage.Tokens != 600_123 {
+		t.Fatalf("任务应带着新上限回到队列，已用量不变: %v %+v", err, got)
+	}
+	// 又用尽了：可以再设一次，次数不限；填 0 表示不限。
+	if err := e.store.Transition(ctx, task.ID, core.StateReady, core.StateRunning, "推进"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.Transition(ctx, task.ID, core.StateRunning, core.StateSuspended, "预算超限: tokens"); err != nil {
+		t.Fatal(err)
+	}
+	if loc := post(task.ID, url.Values{"max_tokens": {"0"}}); !strings.Contains(loc, "继续执行") {
+		t.Fatalf("再次设置失败: %s", loc)
+	}
+	if got, _ = e.store.GetTask(ctx, task.ID); got.Budget.MaxTokens != 0 || got.State != core.StateReady {
+		t.Fatalf("填 0 应表示不限: %+v", got.Budget)
+	}
+	// 不在挂起状态的任务：没有什么可继续的。
+	if loc := post(task.ID, url.Values{"max_tokens": {"2000000"}}); !strings.Contains(loc, "不在挂起状态") {
+		t.Fatalf("不在挂起状态时应说明: %s", loc)
+	}
+}

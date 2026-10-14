@@ -188,3 +188,42 @@ func Cancel(ctx context.Context, s store.TaskStore, taskID, reason string) (core
 		}
 	}
 }
+
+// BudgetStore 是调高预算所需的存储能力，由 *pg.Store 提供。
+type BudgetStore interface {
+	store.TaskStore
+	SetTaskBudget(ctx context.Context, id string, b core.Budget) error
+}
+
+// ErrNotSuspended 表示任务不在挂起状态，没有什么可继续的。
+var ErrNotSuspended = errors.New("kernel: 任务不在挂起状态")
+
+// ErrBudgetTooLow 表示新的上限仍然不高于已经用掉的量，继续了也会马上再挂起。
+var ErrBudgetTooLow = errors.New("kernel: 新的上限不高于已用量")
+
+// RaiseBudget 给一个因预算用尽而挂起的任务换上新的预算，并让它接着跑。可以反复调。
+//
+// 新预算的每一项都必须高于已经用掉的量（0 表示该项不限），否则一继续就会又挂起。
+func RaiseBudget(ctx context.Context, s BudgetStore, taskID string, b core.Budget) error {
+	t, err := s.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if t.State != core.StateSuspended {
+		return ErrNotSuspended
+	}
+	if over, which := b.Exceeded(t.Usage); over {
+		return fmt.Errorf("%w: %s", ErrBudgetTooLow, which)
+	}
+	if err := s.SetTaskBudget(ctx, taskID, b); err != nil {
+		return err
+	}
+	if err := s.Audit(ctx, store.AuditEntry{
+		Actor: "user", Action: "task.budget_raised", TaskID: taskID,
+		Detail:    fmt.Sprintf("tokens=%d cost_cents=%d wall=%s", b.MaxTokens, b.MaxCostCents, b.MaxWallClock),
+		TrustAtOp: core.TrustUser,
+	}); err != nil {
+		return err
+	}
+	return wake(ctx, s, taskID, core.StateSuspended, "预算已调高，继续执行")
+}

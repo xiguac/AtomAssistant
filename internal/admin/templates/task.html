@@ -50,6 +50,22 @@
   </div>
 </div>
 {{else if .Asking}}
+{{if .OverBudget}}<form method="post" action="/tasks/{{.Task.ID}}/budget" class="card" style="margin-top:16px;border-left:3px solid var(--warn-bar)">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>预算已用尽，任务已挂起</b></div>
+  <div class="pad">
+    <div class="note" style="margin-bottom:14px">已用 {{.Task.Usage.Tokens}} tokens、{{printf "%.2f" .UsageYuan}} 元。设置新的上限后任务将从中断处继续执行；再次用尽时可再次设置。</div>
+    <div class="grid2">
+      <div><label for="nb-tokens">token 上限</label><input id="nb-tokens" type="text" name="max_tokens" inputmode="numeric" value="{{.SuggestTokens}}">
+        <div class="help">原上限 {{.Task.Budget.MaxTokens}}</div></div>
+      <div><label for="nb-yuan">金额上限（元）</label><input id="nb-yuan" type="text" name="max_cost_yuan" inputmode="decimal" value="{{printf "%.2f" .SuggestYuan}}"></div>
+      <div><label for="nb-hours">执行时长上限（小时）</label><input id="nb-hours" type="text" name="max_hours" inputmode="decimal" value="{{printf "%.1f" .SuggestHours}}"></div>
+    </div>
+  </div>
+  <div class="band foot"><span class="note muted">各项须高于已用量；填 0 表示该项不限。默认填入的是原上限的两倍。</span><button class="btn">设置并继续</button></div>
+</form>
+{{end}}
+
 <form method="post" action="/tasks/{{.Task.ID}}/reply" class="card" style="margin-top:16px{{if .Question}};border-left:3px solid var(--warn-bar){{end}}">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="pad" style="padding-bottom:8px">

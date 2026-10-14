@@ -33,6 +33,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -343,6 +344,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
 	mux.HandleFunc("POST /tasks/{id}/reject", auth(s.reject))
 	mux.HandleFunc("POST /tasks/{id}/cancel", auth(s.cancel))
+	mux.HandleFunc("POST /tasks/{id}/budget", auth(s.raiseBudget))
 	mux.HandleFunc("POST /tasks/{id}/reply", auth(s.reply))
 	mux.HandleFunc("POST /models/budget", auth(s.budgetSave))
 	mux.HandleFunc("GET /vault", auth(s.vaultPage))
@@ -663,6 +665,11 @@ type taskData struct {
 	Works []workView
 	// Live 为真表示任务还没结束，可以取消。
 	Live bool
+	// OverBudget 为真表示任务因预算用尽而挂起，页面上给出设置新上限的表单；
+	// Suggest 是建议的新上限（各项为现有上限的两倍）。
+	OverBudget                           bool
+	SuggestTokens                        int64
+	SuggestYuan, SuggestHours, UsageYuan float64
 }
 
 // fields 把动作的参数拆成一项一项，方便核对。
@@ -721,6 +728,13 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 		v.Error = err.Error()
 	}
 	d := taskData{Task: t, Asking: !t.State.Terminal(), Live: !t.State.Terminal()}
+	if t.State == core.StateSuspended && strings.HasPrefix(t.Reason, "预算超限") {
+		d.OverBudget = true
+		d.SuggestTokens = max(t.Budget.MaxTokens*2, t.Usage.Tokens*2)
+		d.SuggestYuan = float64(max(t.Budget.MaxCostCents*2, t.Usage.CostCents*2)) / 100
+		d.SuggestHours = max(t.Budget.MaxWallClock*2, t.Usage.WallClock*2).Hours()
+		d.UsageYuan = float64(t.Usage.CostCents) / 100
+	}
 	for _, st := range steps {
 		d.Steps = append(d.Steps, stepView{Step: st, In: pretty(st.Input, 4000), Out: pretty(st.Output, 4000)})
 	}
@@ -769,6 +783,50 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request, _ *view) {
 		s.opts.Log.Info("任务已在后台取消", "任务", id, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/tasks/"+id, "任务已取消。", err)
+}
+
+// raiseBudget 给一个因预算用尽而挂起的任务设一个新的上限，让它接着跑。
+func (s *Server) raiseBudget(w http.ResponseWriter, r *http.Request, _ *view) {
+	id := r.PathValue("id")
+	err := func() error {
+		t, err := s.opts.Store.GetTask(r.Context(), id)
+		if err != nil {
+			return err
+		}
+		// 没填的项沿用原来的上限。
+		b := t.Budget
+		if v := strings.TrimSpace(r.PostFormValue("max_tokens")); v != "" {
+			if b.MaxTokens, err = strconv.ParseInt(v, 10, 64); err != nil || b.MaxTokens < 0 {
+				return errors.New("token 上限须为非负整数")
+			}
+		}
+		if v := strings.TrimSpace(r.PostFormValue("max_cost_yuan")); v != "" {
+			yuan, err := strconv.ParseFloat(v, 64)
+			if err != nil || yuan < 0 {
+				return errors.New("金额上限须为非负数")
+			}
+			b.MaxCostCents = int64(yuan*100 + 0.5)
+		}
+		if v := strings.TrimSpace(r.PostFormValue("max_hours")); v != "" {
+			hours, err := strconv.ParseFloat(v, 64)
+			if err != nil || hours < 0 {
+				return errors.New("执行时长上限须为非负数")
+			}
+			b.MaxWallClock = time.Duration(hours * float64(time.Hour))
+		}
+		err = kernel.RaiseBudget(r.Context(), s.opts.Store, id, b)
+		switch {
+		case errors.Is(err, kernel.ErrNotSuspended):
+			return errors.New("任务不在挂起状态，无需继续")
+		case errors.Is(err, kernel.ErrBudgetTooLow):
+			return errors.New("新的上限须高于已用量，否则任务会立即再次挂起")
+		}
+		return err
+	}()
+	if err == nil {
+		s.opts.Log.Info("任务预算已在后台调高", "任务", id, "来自", r.RemoteAddr)
+	}
+	back(w, r, "/tasks/"+id, "已设置新的上限，任务继续执行。", err)
 }
 
 func (s *Server) reply(w http.ResponseWriter, r *http.Request, _ *view) {

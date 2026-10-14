@@ -302,6 +302,23 @@ func (s *Store) Transition(ctx context.Context, id string, from, to core.TaskSta
 	return fmt.Errorf("%w: 期望 %s，实际 %s", store.ErrStateConflict, from, actual)
 }
 
+// SetTaskBudget 换掉一个已挂起的任务的预算。只对挂起的任务生效：正在跑的任务的预算由执行者持有，
+// 在这里改了也会被它下一次写回时盖掉。
+func (s *Store) SetTaskBudget(ctx context.Context, id string, b core.Budget) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE tasks
+		   SET budget_max_tokens = $2, budget_max_cost_cents = $3, budget_max_wall_ns = $4, updated_at = now()
+		 WHERE id = $1 AND state = $5`,
+		id, b.MaxTokens, b.MaxCostCents, int64(b.MaxWallClock), string(core.StateSuspended))
+	if err != nil {
+		return fmt.Errorf("pg: 更新任务预算失败: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: 任务不存在或不在挂起状态", store.ErrStateConflict)
+	}
+	return nil
+}
+
 func (s *Store) UpdateTaskRuntime(ctx context.Context, t *core.Task) error {
 	wake, err := marshalWake(t.Wake)
 	if err != nil {
