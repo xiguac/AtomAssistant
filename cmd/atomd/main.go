@@ -25,6 +25,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/demo"
 	"github.com/xiguac/atomhelper/internal/event"
+	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
@@ -153,6 +154,10 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.triage != nil {
 			hub = hub.WithTriage(parts.triage)
 		}
+		// 启用了文件处理：用户在聊天里发来的文件收进工作区。
+		if parts.workspace != nil {
+			hub = hub.WithFiles(parts.workspace)
+		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
 		}
@@ -270,7 +275,9 @@ type parts struct {
 	team bool
 	// triage 用主模型判断聊天里的一句话该归给哪件事。
 	triage channel.Triager
-	close  func()
+	// workspace 非空表示启用了文件处理。
+	workspace *files.Workspace
+	close     func()
 }
 
 // build 按配置装出各个部件。
@@ -522,13 +529,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}
 
 	return &parts{
-		team:     len(file.Workers()) > 0,
-		triage:   agent.NewTriager(router),
-		channels: channels,
-		outbox:   outbox,
-		planner:  planner,
-		actuator: actuator,
-		approver: approver,
+		team:      len(file.Workers()) > 0,
+		triage:    agent.NewTriager(router),
+		workspace: workspace,
+		channels:  channels,
+		outbox:    outbox,
+		planner:   planner,
+		actuator:  actuator,
+		approver:  approver,
 		// 任务完成后提炼记忆与流程，经写入管线落库。
 		epilogue: epilogue,
 		close:    func() { _ = gw.Close() },

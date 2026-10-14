@@ -32,6 +32,14 @@ func TestConvert_只收企业成员在单聊里发来的消息(t *testing.T) {
 	if !ok || len(m.Images) != 1 || m.Images[0].Fetch == nil || m.Text != "" {
 		t.Fatalf("图片消息不对: %+v %v", m, ok)
 	}
+	// 文件消息：下载码和文件名都在 content 里。
+	m, ok = b.convert(&chatbot.BotCallbackDataModel{
+		ConversationType: "1", SenderStaffId: "staff-7", MsgId: "msg-3", Msgtype: "file",
+		Content: map[string]any{"downloadCode": "code-file", "fileName": "周报.docx"},
+	})
+	if !ok || len(m.Files) != 1 || m.Files[0].Name != "周报.docx" || m.Files[0].Fetch == nil {
+		t.Fatalf("文件消息不对: %+v %v", m, ok)
+	}
 	// 不处理的：群聊、企业外部的人（没有 staffId）、空消息。
 	for name, d := range map[string]*chatbot.BotCallbackDataModel{
 		"群聊":   {ConversationType: "2", SenderStaffId: "staff-7", MsgId: "m", Msgtype: "text"},

@@ -490,6 +490,7 @@ func (b *Bot) dispatch(p payload, sess *session, seen *recent, handle func(chann
 			Attachments []struct {
 				URL         string `json:"url"`
 				ContentType string `json:"content_type"`
+				Filename    string `json:"filename"`
 			} `json:"attachments"`
 		}
 		if err := json.Unmarshal(p.Data, &m); err != nil {
@@ -509,9 +510,14 @@ func (b *Bot) dispatch(p payload, sess *session, seen *recent, handle func(chann
 		}
 		msg := channel.Message{Chat: chatPrefix + openid, Sender: openid, Text: m.Content, ID: m.ID, At: at}
 		for _, a := range m.Attachments {
-			// 目前只认图片；语音、视频、文件先不处理。
-			if a.URL != "" && strings.HasPrefix(a.ContentType, "image/") {
+			switch {
+			case a.URL == "":
+			case strings.HasPrefix(a.ContentType, "image/"):
 				msg.Images = append(msg.Images, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
+			case strings.HasPrefix(a.ContentType, "voice") || strings.HasPrefix(a.ContentType, "audio/") || strings.HasPrefix(a.ContentType, "video"):
+				// 语音、视频先不处理。
+			default:
+				msg.Files = append(msg.Files, channel.Attachment{URL: a.URL, ContentType: a.ContentType, Name: a.Filename})
 			}
 		}
 		handle(msg)

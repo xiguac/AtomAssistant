@@ -85,12 +85,19 @@ func TestBot_长轮询收消息并用上下文令牌回话(t *testing.T) {
 				{"message_id":18446744073709551615,"from_user_id":"user-1@im.wechat","message_type":1,"create_time_ms":1791866585144,
 				 "context_token":"ctx-abc","item_list":[{"type":1,"text_item":{"text":"看看这张图"}},
 				 {"type":2,"image_item":{"aeskey":"`+hex.EncodeToString(key)+`","media":{"encrypt_query_param":"enc param/1"}}}]},
+				{"message_id":4,"from_user_id":"user-1@im.wechat","message_type":1,"context_token":"ctx-abc",
+				 "item_list":[{"type":4,"file_item":{"file_name":"报价单.xlsx","len":"9","media":{"encrypt_query_param":"enc file/1","aes_key":"`+
+				base64.StdEncoding.EncodeToString([]byte(hex.EncodeToString(key)))+`"}}}]},
 				{"message_id":2,"from_user_id":"bot@im.bot","message_type":2,"item_list":[{"type":1,"text_item":{"text":"机器人自己发的"}}]},
 				{"message_id":3,"from_user_id":"user-2","group_id":"group-1","message_type":1,"item_list":[{"type":1,"text_item":{"text":"群里的"}}]}]}`)
 		case "/ilink/bot/sendmessage":
 			sent = body
 			_, _ = io.WriteString(w, `{"ret":0,"message_id":77}`)
 		case "/download":
+			if r.URL.Query().Get("encrypted_query_param") == "enc file/1" {
+				_, _ = w.Write(encryptECB(t, []byte("file-body"), key))
+				return
+			}
 			if r.URL.Query().Get("encrypted_query_param") != "enc param/1" {
 				http.Error(w, "bad param", http.StatusBadRequest)
 				return
@@ -128,6 +135,19 @@ func TestBot_长轮询收消息并用上下文令牌回话(t *testing.T) {
 	pic, err := m.Images[0].Fetch(ctx)
 	if err != nil || pic.MIME != "image/png" || len(pic.Data) != len(png) {
 		t.Fatalf("图片应取回并解密: %s %d %v", pic.MIME, len(pic.Data), err)
+	}
+	// 文件消息：带着文件名，从 CDN 取回并解密。
+	var fm channel.Message
+	select {
+	case fm = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("没有收到文件消息")
+	}
+	if len(fm.Files) != 1 || fm.Files[0].Name != "报价单.xlsx" || fm.Files[0].Fetch == nil {
+		t.Fatalf("应带着一个文件: %+v", fm.Files)
+	}
+	if f, err := fm.Files[0].Fetch(ctx); err != nil || string(f.Data) != "file-body" {
+		t.Fatalf("文件应取回并解密: %q %v", f.Data, err)
 	}
 
 	// 回话：带上对方那条消息给的上下文令牌。

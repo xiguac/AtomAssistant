@@ -205,6 +205,45 @@ func (w *Workspace) List(dir string) ([]Entry, error) {
 	return out, nil
 }
 
+// receivedDir 是用户在聊天里发来的文件放的目录。
+const receivedDir = "收到的文件"
+
+// Receive 收下用户在聊天里发来的一个文件，放进「收到的文件」目录，返回它在工作区里的路径。
+// 同名的不覆盖：后来的那个在名字后面加上序号。
+func (w *Workspace) Receive(name string, data []byte) (string, error) {
+	name = path.Base(strings.ReplaceAll(strings.TrimSpace(name), `\`, "/"))
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || strings.ContainsRune(`:*?"<>|`, r) {
+			return '_'
+		}
+		return r
+	}, name)
+	if name == "" || name == "." || name == ".." || strings.HasPrefix(name, ".") {
+		name = "文件" + strings.TrimLeft(name, ".")
+	}
+	ext := path.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	rel := path.Join(receivedDir, name)
+	for i := 2; ; i++ {
+		abs, _, err := w.resolve(rel, true)
+		if err != nil {
+			return "", err
+		}
+		if _, err := os.Stat(abs); errors.Is(err, fs.ErrNotExist) {
+			break
+		}
+		if i > 999 {
+			return "", fmt.Errorf("%w: 同名文件太多", ErrInvalid)
+		}
+		rel = path.Join(receivedDir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
+	}
+	saved, err := w.save(rel, func() ([]byte, error) { return data, nil })
+	if err != nil {
+		return "", err
+	}
+	return saved.Path, nil
+}
+
 // Delete 删掉工作区里的一个文件，或者一个空目录。
 //
 // 这是给用户在管理后台用的，助手没有删除文件的工具。删掉的不留底：用户亲手删的就是不要了。

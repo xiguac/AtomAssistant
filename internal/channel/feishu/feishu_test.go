@@ -36,6 +36,11 @@ func TestConvert_只收单聊里人发来的消息(t *testing.T) {
 	if !ok || len(m.Images) != 1 || m.Images[0].Fetch == nil || m.Text != "" {
 		t.Fatalf("图片消息不对: %+v %v", m, ok)
 	}
+	// 文件消息：带着文件名，取回办法在附件上。
+	m, ok = b.convert(event("p2p", "user", "file", `{"file_key":"file_v2_1","file_name":"报表.xlsx"}`))
+	if !ok || len(m.Files) != 1 || m.Files[0].Name != "报表.xlsx" || m.Files[0].Fetch == nil || m.Text != "" {
+		t.Fatalf("文件消息不对: %+v %v", m, ok)
+	}
 	// 不处理的：群聊、机器人发的、残缺的事件。
 	if _, ok := b.convert(event("group", "user", "text", `{"text":"hi"}`)); ok {
 		t.Fatal("群聊消息不应处理")

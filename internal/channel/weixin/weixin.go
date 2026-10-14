@@ -68,6 +68,8 @@ const (
 	stateFinished   = 2
 	itemText        = 1
 	itemImage       = 2
+	// itemFile 是文件，取自官方客户端（@tencent-weixin/openclaw-weixin）的 MessageItemType.FILE。
+	itemFile = 4
 )
 
 // KV 存取几项要跨重启留着的小状态：长轮询的游标，以及每个会话最近一次的上下文令牌。由 *pg.Store 提供。
@@ -232,6 +234,11 @@ type messageItem struct {
 		// AESKey 是十六进制写的 16 字节密钥，有它就优先用它。
 		AESKey string `json:"aeskey"`
 	} `json:"image_item,omitempty"`
+	// FileItem 是文件。密钥只在 media.aes_key 里，下载、解密的办法和图片一样。
+	FileItem *struct {
+		Media    *cdnMedia `json:"media"`
+		FileName string    `json:"file_name"`
+	} `json:"file_item,omitempty"`
 }
 
 // message 是服务端推来的一条消息。
@@ -382,6 +389,10 @@ func (b *Bot) convert(ctx context.Context, m *message) (channel.Message, bool) {
 		switch {
 		case item.Type == itemText && item.TextItem != nil:
 			texts = append(texts, item.TextItem.Text)
+		case item.Type == itemFile && item.FileItem != nil && item.FileItem.Media != nil:
+			media := *item.FileItem.Media
+			out.Files = append(out.Files, channel.Attachment{Name: item.FileItem.FileName,
+				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, media) }})
 		case item.Type == itemImage && item.ImageItem != nil && item.ImageItem.Media != nil:
 			media, key := *item.ImageItem.Media, item.ImageItem.AESKey
 			out.Images = append(out.Images, channel.Attachment{ContentType: "image/*",
@@ -493,6 +504,50 @@ func (b *Bot) fetchImage(ctx context.Context, media cdnMedia, hexKey string) (ch
 		return channel.Picture{}, fmt.Errorf("weixin: 取回来的不是图片（%s）", mime)
 	}
 	return channel.Picture{MIME: mime, Data: raw}, nil
+}
+
+// fetchFile 取回用户发来的一个文件：从 CDN 取回，再用消息里给的密钥解开。
+func (b *Bot) fetchFile(ctx context.Context, media cdnMedia) (channel.Picture, error) {
+	key, err := aesKey("", media.AESKey)
+	if err != nil {
+		return channel.Picture{}, err
+	}
+	target := media.FullURL
+	if target == "" {
+		if media.EncryptQueryParam == "" {
+			return channel.Picture{}, fmt.Errorf("weixin: 文件消息里没有下载地址")
+		}
+		target = b.cdn() + "/download?encrypted_query_param=" + url.QueryEscape(media.EncryptQueryParam)
+	}
+	if !strings.HasPrefix(target, "https://") && b.CDNBase == "" {
+		return channel.Picture{}, fmt.Errorf("weixin: 文件的下载地址不是 https")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return channel.Picture{}, fmt.Errorf("weixin: 文件的下载地址不合法: %w", err)
+	}
+	resp, err := b.client(2 * time.Minute).Do(req)
+	if err != nil {
+		return channel.Picture{}, fmt.Errorf("weixin: 取回文件失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return channel.Picture{}, fmt.Errorf("weixin: 文件服务器返回 %d", resp.StatusCode)
+	}
+	// 密文比明文多出至多 16 字节的填充。
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, channel.MaxFileBytes+17))
+	if err != nil {
+		return channel.Picture{}, fmt.Errorf("weixin: 读取文件失败: %w", err)
+	}
+	if len(raw) > channel.MaxFileBytes+16 {
+		return channel.Picture{}, fmt.Errorf("weixin: 文件超过 %d MB，收不了", channel.MaxFileBytes>>20)
+	}
+	if key != nil {
+		if raw, err = decryptECB(raw, key); err != nil {
+			return channel.Picture{}, err
+		}
+	}
+	return channel.Picture{MIME: http.DetectContentType(raw), Data: raw}, nil
 }
 
 // Send 往一个单聊会话里发一条文字消息。

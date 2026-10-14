@@ -695,3 +695,59 @@ func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t
 		t.Fatalf("模型出错时应按规则处理: %s", last())
 	}
 }
+
+type memSink struct {
+	saved map[string][]byte
+	fail  error
+}
+
+func (m *memSink) Receive(name string, data []byte) (string, error) {
+	if m.fail != nil {
+		return "", m.fail
+	}
+	if m.saved == nil {
+		m.saved = map[string][]byte{}
+	}
+	p := "收到的文件/" + name
+	m.saved[p] = data
+	return p, nil
+}
+
+func TestRoute_文件收进工作区换成一句话照常处理(t *testing.T) {
+	h, qq, tasks := hub(t)
+	ctx := context.Background()
+	file := func(name, body string) Attachment {
+		return Attachment{Name: name, Fetch: func(context.Context) (Picture, error) { return Picture{Data: []byte(body)}, nil }}
+	}
+
+	// 没启用文件处理：告诉用户，不建任务。
+	h.Handle(ctx, "qq", Message{Chat: "c2c:OWNER", Sender: "OWNER", ID: "f0", Files: []Attachment{file("a.pdf", "x")}})
+	if len(tasks.log) != 0 || !strings.Contains(qq.sent[len(qq.sent)-1].Text, "文件处理没有启用") {
+		t.Fatalf("没启用文件处理时应说明: %v %+v", tasks.log, qq.sent)
+	}
+
+	sink := &memSink{}
+	h = h.WithFiles(sink)
+	// 只发了文件：存进工作区，换成"我发来了文件"建成任务。
+	h.Handle(ctx, "qq", Message{Chat: "c2c:OWNER", Sender: "OWNER", ID: "f1", Files: []Attachment{file("合同.pdf", "pdf-body")}})
+	if string(sink.saved["收到的文件/合同.pdf"]) != "pdf-body" {
+		t.Fatalf("文件应存进工作区: %v", sink.saved)
+	}
+	if len(tasks.log) != 1 || !strings.Contains(tasks.log[0], "我发来了文件，已放进工作区：收到的文件/合同.pdf（8 字节）") {
+		t.Fatalf("应换成一句话建任务: %v", tasks.log)
+	}
+	// 文件带着话：话在前，文件的说明在后，一起送给在等回话的任务。
+	ask(tasks.tasks[0], "要我对合同做什么？")
+	h.Handle(ctx, "qq", Message{Chat: "c2c:OWNER", Sender: "OWNER", ID: "f2", Text: "按这个改一下",
+		Files: []Attachment{file("修改意见.docx", "doc")}})
+	if last := tasks.log[len(tasks.log)-1]; !strings.HasPrefix(last, "reply:") || !strings.Contains(last, "按这个改一下") || !strings.Contains(last, "修改意见.docx") {
+		t.Fatalf("文件带着的话应和文件说明一起送给在等回话的任务: %s", last)
+	}
+	// 取不回来的文件：告诉用户是哪个没收成。
+	before := len(tasks.log)
+	broken := Attachment{Name: "坏的.zip", Fetch: func(context.Context) (Picture, error) { return Picture{}, errors.New("下载失败") }}
+	h.Handle(ctx, "qq", Message{Chat: "c2c:OWNER", Sender: "OWNER", ID: "f3", Files: []Attachment{broken}})
+	if len(tasks.log) != before || !strings.Contains(qq.sent[len(qq.sent)-2].Text, "坏的.zip") {
+		t.Fatalf("没收成的文件应告诉用户: %v %+v", tasks.log[before:], qq.sent[len(qq.sent)-2:])
+	}
+}

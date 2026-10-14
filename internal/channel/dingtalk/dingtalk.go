@@ -216,6 +216,16 @@ func (b *Bot) convert(data *chatbot.BotCallbackDataModel) (channel.Message, bool
 			out.Images = append(out.Images, channel.Attachment{ContentType: "image/*",
 				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchImage(ctx, code) }})
 		}
+	case "file":
+		// 文件消息的 content 形如 {"downloadCode":"...","fileName":"..."}，取文件的办法和图片一样。
+		if code := downloadCode(data.Content); code != "" {
+			name := ""
+			if m, ok := data.Content.(map[string]any); ok {
+				name, _ = m["fileName"].(string)
+			}
+			out.Files = append(out.Files, channel.Attachment{Name: name,
+				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, code) }})
+		}
 	}
 	return out, true
 }
@@ -231,6 +241,51 @@ func downloadCode(content any) string {
 	}
 	code, _ := m["downloadCode"].(string)
 	return code
+}
+
+// fetchFile 取回用户发来的一个文件：先用下载码换下载地址，再把文件取回来。
+func (b *Bot) fetchFile(ctx context.Context, code string) (channel.Picture, error) {
+	target, err := b.downloadURL(ctx, code)
+	if err != nil {
+		return channel.Picture{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return channel.Picture{}, fmt.Errorf("dingtalk: 文件的下载地址不合法: %w", err)
+	}
+	resp, err := b.http().Do(req)
+	if err != nil {
+		return channel.Picture{}, fmt.Errorf("dingtalk: 取回文件失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return channel.Picture{}, fmt.Errorf("dingtalk: 文件服务器返回 %d", resp.StatusCode)
+	}
+	data, err := channel.ReadLimited(resp.Body)
+	if err != nil {
+		return channel.Picture{}, err
+	}
+	return channel.Picture{MIME: http.DetectContentType(data), Data: data}, nil
+}
+
+// downloadURL 用下载码换下载地址。
+func (b *Bot) downloadURL(ctx context.Context, code string) (string, error) {
+	token, err := b.accessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		DownloadURL string `json:"downloadUrl"`
+	}
+	if err := b.call(ctx, "/v1.0/robot/messageFiles/download", token,
+		map[string]string{"downloadCode": code, "robotCode": b.robot()}, &out); err != nil {
+		return "", err
+	}
+	// 测试里的模拟服务是本机的 http；正式环境的地址是钉钉给的，只认 https。
+	if !strings.HasPrefix(out.DownloadURL, "https://") && b.APIBase == "" {
+		return "", fmt.Errorf("dingtalk: 下载地址不是 https")
+	}
+	return out.DownloadURL, nil
 }
 
 // fetchImage 取回用户发来的一张图片：先用下载码换下载地址，再把图片取回来。

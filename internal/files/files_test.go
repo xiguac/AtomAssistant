@@ -337,3 +337,29 @@ func TestRead_文本编码与分段(t *testing.T) {
 		}
 	}
 }
+
+func TestReceive_收下聊天里发来的文件同名的不覆盖(t *testing.T) {
+	ws, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := ws.Receive("报价单.xlsx", []byte("v1"))
+	if err != nil || first != "收到的文件/报价单.xlsx" {
+		t.Fatalf("收文件失败: %q %v", first, err)
+	}
+	second, err := ws.Receive("报价单.xlsx", []byte("v2"))
+	if err != nil || second != "收到的文件/报价单 (2).xlsx" {
+		t.Fatalf("同名的文件应另起一个名字: %q %v", second, err)
+	}
+	if got, _ := ws.Bytes(first); string(got) != "v1" {
+		t.Fatalf("先收的文件不应被覆盖: %q", got)
+	}
+	// 文件名是别人起的：路径、隐藏文件、奇怪的字符都不能让它落到别处。
+	for _, name := range []string{"../../etc/passwd", ".bashrc", "a:b*c?.txt", ""} {
+		p, err := ws.Receive(name, []byte("x"))
+		if err != nil || !strings.HasPrefix(p, "收到的文件/") || strings.Contains(strings.TrimPrefix(p, "收到的文件/"), "/") ||
+			strings.HasPrefix(strings.TrimPrefix(p, "收到的文件/"), ".") {
+			t.Fatalf("文件名 %q 应被整理后收在「收到的文件」里: %q %v", name, p, err)
+		}
+	}
+}

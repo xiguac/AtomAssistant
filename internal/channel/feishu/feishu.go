@@ -145,6 +145,18 @@ func (b *Bot) convert(ev *larkim.P2MessageReceiveV1) (channel.Message, bool) {
 	if ms, err := strconv.ParseInt(str(msg.CreateTime), 10, 64); err == nil && ms > 0 {
 		out.At = time.UnixMilli(ms)
 	}
+	if str(msg.MessageType) == "file" {
+		var c struct {
+			FileKey  string `json:"file_key"`
+			FileName string `json:"file_name"`
+		}
+		if json.Unmarshal([]byte(str(msg.Content)), &c) == nil && c.FileKey != "" {
+			key := c.FileKey
+			out.Files = append(out.Files, channel.Attachment{Name: c.FileName,
+				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, id, key) }})
+		}
+		return out, true
+	}
 	text, imageKeys := parseContent(str(msg.MessageType), str(msg.Content))
 	out.Text = text
 	for _, key := range imageKeys {
@@ -245,6 +257,27 @@ func (b *Bot) fetchImage(ctx context.Context, messageID, imageKey string) (chann
 		return channel.Picture{}, fmt.Errorf("feishu: 取回来的不是图片（%s）", mime)
 	}
 	return channel.Picture{MIME: mime, Data: data}, nil
+}
+
+// fetchFile 取回用户发来的一个文件。和图片走同一个接口，类型写 file。
+func (b *Bot) fetchFile(ctx context.Context, messageID, fileKey string) (channel.Picture, error) {
+	cli, err := b.api(ctx)
+	if err != nil {
+		return channel.Picture{}, err
+	}
+	resp, err := cli.Im.MessageResource.Get(ctx, larkim.NewGetMessageResourceReqBuilder().
+		MessageId(messageID).FileKey(fileKey).Type("file").Build())
+	if err != nil {
+		return channel.Picture{}, fmt.Errorf("feishu: 取回文件失败: %w", err)
+	}
+	if !resp.Success() {
+		return channel.Picture{}, fmt.Errorf("feishu: 取回文件失败: %d %s", resp.Code, resp.Msg)
+	}
+	data, err := channel.ReadLimited(resp.File)
+	if err != nil {
+		return channel.Picture{}, err
+	}
+	return channel.Picture{MIME: http.DetectContentType(data), Data: data}, nil
 }
 
 // Send 往一个单聊会话里发一条消息：文字，或者一个文件。

@@ -46,6 +46,8 @@ type Message struct {
 	Text   string
 	// Images 是随消息发来的图片。
 	Images []Attachment
+	// Files 是随消息发来的文件（图片以外的附件）。
+	Files []Attachment
 	// ID 是渠道给这条消息的编号，有的渠道回复时要带上它。
 	ID string
 	At time.Time
@@ -56,6 +58,8 @@ type Attachment struct {
 	URL string
 	// ContentType 形如 image/jpeg。
 	ContentType string
+	// Name 是文件名，只有文件有。
+	Name string
 	// Fetch 非空时用它取回附件，不看 URL。有的平台的图片没有公开的下载地址，
 	// 要带着凭证调接口取（飞书、钉钉），或者取回来还要解密（微信）。
 	Fetch func(ctx context.Context) (Picture, error)
@@ -251,6 +255,8 @@ type Hub struct {
 
 	// triage 非空时，一句话归给哪件事由主模型判断，见 triage.go。
 	triage Triager
+	// files 非空时用户可以在聊天里发文件，见 files.go。
+	files FileSink
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -422,11 +428,25 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		text = string([]rune(text)[:maxTextRunes])
 	}
 	tag := Tag(channel, m.Chat)
+	// 文件先取回来放进工作区，换成一句"我发来了文件 xxx"，再和用户的话一起照常处理。
+	if len(m.Files) > 0 {
+		note, err := h.receiveFiles(ctx, channel, m)
+		if err != nil {
+			return err
+		}
+		if text == "" {
+			text = note
+		} else {
+			text = text + "\n" + note
+		}
+		m.Files = nil
+		m.Text = text
+	}
 	if len(m.Images) > 0 {
 		return h.routeImages(ctx, channel, m, text, tag)
 	}
 	if text == "" {
-		h.say(ctx, channel, m.Chat, "这条消息里没有我能处理的内容：目前我看得懂文字和图片。")
+		h.say(ctx, channel, m.Chat, "这条消息里没有我能处理的内容：目前我看得懂文字、图片和文件（语音、视频还不行）。")
 		return nil
 	}
 
