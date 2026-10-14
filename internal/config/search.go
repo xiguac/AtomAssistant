@@ -122,7 +122,7 @@ func (f *File) addSearch(ctx context.Context, r *llm.Router, secrets SecretLende
 		}
 		provider = pc.Name + "/search"
 		p, err := llm.NewAnthropicCompatible(llm.OpenAIConfig{
-			Name: provider, BaseURL: deepseekAnthropicBase, APIKey: key, Timeout: pc.Timeout,
+			Name: provider, BaseURL: deepseekAnthropicBase, APIKey: key,
 		})
 		if err != nil {
 			return err

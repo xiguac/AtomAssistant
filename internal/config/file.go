@@ -466,7 +466,10 @@ type ProviderConfig struct {
 	// APIKey 是密钥在保险库里的句柄（vault://名字），与 api_key_env 二选一。
 	// 用它的话密钥可以在管理后台里填，不必登上服务器改环境变量。
 	// 保险库里那一条的授权名单要有 provider.<服务名>。
-	APIKey  string        `yaml:"api_key,omitempty"`
+	APIKey string `yaml:"api_key,omitempty"`
+	// Timeout 已不再起作用，保留只为让写了它的旧配置还能读进来。
+	// 它原本是整次请求的总时限；模型调用改成流式之后，改为固定的首字超时 10 分钟、不设总时限，
+	// 旧配置里常见的 120s 会把强模型的长任务掐断。
 	Timeout time.Duration `yaml:"timeout,omitempty"`
 }
 

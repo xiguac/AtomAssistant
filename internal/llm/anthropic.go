@@ -22,6 +22,7 @@ type AnthropicCompatible struct {
 	name    string
 	baseURL string
 	apiKey  string
+	idle    time.Duration
 	client  *http.Client
 }
 
@@ -45,13 +46,15 @@ func NewAnthropicCompatible(cfg OpenAIConfig) (*AnthropicCompatible, error) {
 		return nil, fmt.Errorf("llm: provider %s 缺少 API Key", cfg.Name)
 	}
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = 120 * time.Second
+		cfg.Timeout = defaultIdleTimeout
 	}
 	return &AnthropicCompatible{
 		name:    cfg.Name,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
-		client:  &http.Client{Timeout: cfg.Timeout},
+		idle:    cfg.Timeout,
+		// 同 OpenAICompatible：时限交给看门狗，不给 client 设总时限。
+		client: &http.Client{},
 	}, nil
 }
 
@@ -71,27 +74,93 @@ type anthropicRequest struct {
 	Messages    []any   `json:"messages"`
 	Temperature float64 `json:"temperature,omitempty"`
 	Tools       []any   `json:"tools,omitempty"`
+	Stream      bool    `json:"stream,omitempty"`
 }
 
 // webSearchTool 是服务端执行的联网搜索工具：搜索由模型服务自己完成，我们只拿结果。
 var webSearchTool = map[string]any{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
 
 type anthropicResponse struct {
-	Model   string `json:"model"`
-	Content []struct {
+	Model   string           `json:"model"`
+	Content []anthropicBlock `json:"content"`
+	Usage   anthropicUsage   `json:"usage"`
+	Error   *anthropicError  `json:"error"`
+}
+
+type anthropicBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+	// Content 只在 web_search_tool_result 块里有：一组搜到的网页，或一个错误对象。
+	Content json.RawMessage `json:"content"`
+}
+
+type anthropicUsage struct {
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
+}
+
+type anthropicError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
+// anthropicEvent 是流式返回里的一个事件，各种事件的字段合在一起。
+type anthropicEvent struct {
+	Type string `json:"type"`
+	// message_start 带着模型名和输入用量。
+	Message *struct {
+		Model string         `json:"model"`
+		Usage anthropicUsage `json:"usage"`
+	} `json:"message"`
+	// content_block_start 带着一个新块；搜索结果块在这里一次给全。
+	Index        int             `json:"index"`
+	ContentBlock *anthropicBlock `json:"content_block"`
+	// content_block_delta 带着块的增量。
+	Delta *struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
-		// Content 只在 web_search_tool_result 块里有：一组搜到的网页，或一个错误对象。
-		Content json.RawMessage `json:"content"`
-	} `json:"content"`
-	Usage struct {
-		InputTokens  int64 `json:"input_tokens"`
-		OutputTokens int64 `json:"output_tokens"`
-	} `json:"usage"`
-	Error *struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"error"`
+	} `json:"delta"`
+	// message_delta 带着累计的输出用量。
+	Usage *anthropicUsage `json:"usage"`
+	Error *anthropicError `json:"error"`
+}
+
+// readAnthropicStream 把流式返回拼成一份完整的返回。
+func readAnthropicStream(r io.Reader) (anthropicResponse, error) {
+	var out anthropicResponse
+	err := readEvents(r, func(data []byte) error {
+		var e anthropicEvent
+		if err := json.Unmarshal(data, &e); err != nil {
+			return fmt.Errorf("流里有一段不是 JSON: %s", truncate(string(data), 200))
+		}
+		switch e.Type {
+		case "message_start":
+			if e.Message != nil {
+				out.Model = e.Message.Model
+				out.Usage = e.Message.Usage
+			}
+		case "content_block_start":
+			if e.ContentBlock != nil && e.Index == len(out.Content) {
+				out.Content = append(out.Content, *e.ContentBlock)
+			}
+		case "content_block_delta":
+			// 只拼文字；思考过程和工具参数的增量用不上。
+			if e.Delta != nil && e.Delta.Type == "text_delta" && e.Index < len(out.Content) {
+				out.Content[e.Index].Text += e.Delta.Text
+			}
+		case "message_delta":
+			if e.Usage != nil {
+				out.Usage.OutputTokens = e.Usage.OutputTokens
+				if e.Usage.InputTokens > 0 {
+					out.Usage.InputTokens = e.Usage.InputTokens
+				}
+			}
+		case "error":
+			out.Error = e.Error
+		}
+		return nil
+	})
+	return out, err
 }
 
 // Complete 执行一次补全。
@@ -122,11 +191,15 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 	if req.WebSearch {
 		body.Tools = []any{webSearchTool}
 	}
+	// 流式取回，理由同 OpenAICompatible。
+	body.Stream = true
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: 序列化请求失败: %w", err)
 	}
 
+	ctx, dog := startWatchdog(ctx, p.idle)
+	defer dog.stop()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(), bytes.NewReader(payload))
 	if err != nil {
 		return Response{}, fmt.Errorf("llm: 构造请求失败: %w", err)
@@ -137,16 +210,24 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return Response{}, fmt.Errorf("%w: %s 不可达: %w", ErrUpstream, p.name, err)
+		return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: %s 不可达: %w", ErrUpstream, p.name, err))
 	}
 	defer resp.Body.Close()
+	respBody := dog.body(resp.Body)
+
+	var parsed anthropicResponse
+	if isEventStream(resp) {
+		if parsed, err = readAnthropicStream(respBody); err != nil {
+			return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err))
+		}
+		return p.finish(parsed, req)
+	}
 
 	// 限制读取大小：上游异常时可能返回巨大的响应体，不能让它吃光内存。
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	raw, err := io.ReadAll(io.LimitReader(respBody, 8<<20))
 	if err != nil {
-		return Response{}, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err)
+		return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err))
 	}
-	var parsed anthropicResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return Response{}, fmt.Errorf("%w: %s 返回了非 JSON 内容（HTTP %d）: %s",
 			ErrUpstream, p.name, resp.StatusCode, truncate(string(raw), 200))
@@ -158,6 +239,11 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 		}
 		return Response{}, fmt.Errorf("%w: %s 返回 HTTP %d: %s", ErrUpstream, p.name, resp.StatusCode, msg)
 	}
+	return p.finish(parsed, req)
+}
+
+// finish 从完整的一份返回里取出答案。流式返回先拼成同样的形状再交给它。
+func (p *AnthropicCompatible) finish(parsed anthropicResponse, req Request) (Response, error) {
 	if parsed.Error != nil {
 		return Response{}, fmt.Errorf("%w: %s: %s", ErrUpstream, p.name, parsed.Error.Message)
 	}

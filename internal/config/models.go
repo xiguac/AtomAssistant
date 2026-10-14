@@ -145,7 +145,8 @@ func (f *File) Provider(ctx context.Context, name string, secrets SecretLender) 
 		if err != nil {
 			return nil, err
 		}
-		cfg := llm.OpenAIConfig{Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Timeout: pc.Timeout}
+		// 不传 pc.Timeout：见 ProviderConfig.Timeout 的说明。
+		cfg := llm.OpenAIConfig{Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key}
 		if pc.Protocol == ProtocolAnthropic {
 			return llm.NewAnthropicCompatible(cfg)
 		}

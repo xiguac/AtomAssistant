@@ -23,6 +23,7 @@ type OpenAICompatible struct {
 	name    string
 	baseURL string
 	apiKey  string
+	idle    time.Duration
 	client  *http.Client
 }
 
@@ -35,7 +36,9 @@ type OpenAIConfig struct {
 	// BaseURL 形如 https://api.example.com/v1，不含 /chat/completions。
 	BaseURL string
 	// APIKey 由用户持有。我们的任何服务都不接触它。
-	APIKey  string
+	APIKey string
+	// Timeout 是首字超时：发出请求后多久没收到任何数据就放弃，之后两段数据之间也按它算。
+	// 不写按 10 分钟。整次请求没有总时限。
 	Timeout time.Duration
 }
 
@@ -51,13 +54,15 @@ func NewOpenAICompatible(cfg OpenAIConfig) (*OpenAICompatible, error) {
 		return nil, fmt.Errorf("llm: provider %s 缺少 API Key", cfg.Name)
 	}
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = 120 * time.Second
+		cfg.Timeout = defaultIdleTimeout
 	}
 	return &OpenAICompatible{
 		name:    cfg.Name,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
-		client:  &http.Client{Timeout: cfg.Timeout},
+		idle:    cfg.Timeout,
+		// 不给 client 设 Timeout：它管的是整次请求，长回答流到一半会被它掐断。时限交给看门狗。
+		client: &http.Client{},
 	}, nil
 }
 
@@ -72,6 +77,13 @@ type chatRequest struct {
 	// 以下两项是阿里云百炼的联网搜索开关，只在请求联网搜索时带上。
 	EnableSearch  bool           `json:"enable_search,omitempty"`
 	SearchOptions *searchOptions `json:"search_options,omitempty"`
+	Stream        bool           `json:"stream,omitempty"`
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	// IncludeUsage 让流的最后一段带上用量，不开的话流式返回里没有用量。
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type respFmt struct {
@@ -84,14 +96,9 @@ type searchOptions struct {
 }
 
 type chatResponse struct {
-	Model   string `json:"model"`
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage struct {
+	Model   string       `json:"model"`
+	Choices []chatChoice `json:"choices"`
+	Usage   struct {
 		PromptTokens     int64 `json:"prompt_tokens"`
 		CompletionTokens int64 `json:"completion_tokens"`
 		// 命中前缀缓存的输入：DeepSeek 报在 prompt_cache_hit_tokens，
@@ -121,6 +128,9 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 	if req.JSONMode {
 		body.ResponseFormat = &respFmt{Type: "json_object"}
 	}
+	// 流式取回：强模型想得久，一次性返回要等它全部写完才有响应头，容易超时。
+	body.Stream = true
+	body.StreamOptions = &streamOptions{IncludeUsage: true}
 	if req.WebSearch {
 		body.EnableSearch = true
 		body.SearchOptions = &searchOptions{ForcedSearch: true}
@@ -130,6 +140,8 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 		return Response{}, fmt.Errorf("llm: 序列化请求失败: %w", err)
 	}
 
+	ctx, dog := startWatchdog(ctx, p.idle)
+	defer dog.stop()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		p.baseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
@@ -140,17 +152,25 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return Response{}, fmt.Errorf("%w: %s 不可达: %w", ErrUpstream, p.name, err)
+		return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: %s 不可达: %w", ErrUpstream, p.name, err))
 	}
 	defer resp.Body.Close()
-
-	// 限制读取大小：上游异常时可能返回巨大的响应体，不能让它吃光内存。
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return Response{}, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err)
-	}
+	respBody := dog.body(resp.Body)
 
 	var parsed chatResponse
+	if isEventStream(resp) {
+		if parsed, err = readOpenAIStream(respBody); err != nil {
+			return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err))
+		}
+		return p.finish(parsed, req)
+	}
+
+	// 限制读取大小：上游异常时可能返回巨大的响应体，不能让它吃光内存。
+	raw, err := io.ReadAll(io.LimitReader(respBody, 8<<20))
+	if err != nil {
+		return Response{}, dog.explain(ctx, p.name, fmt.Errorf("%w: 读取 %s 响应失败: %w", ErrUpstream, p.name, err))
+	}
+
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return Response{}, fmt.Errorf("%w: %s 返回了非 JSON 内容（HTTP %d）: %s",
 			ErrUpstream, p.name, resp.StatusCode, truncate(string(raw), 200))
@@ -163,6 +183,11 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 		return Response{}, fmt.Errorf("%w: %s 返回 HTTP %d: %s",
 			ErrUpstream, p.name, resp.StatusCode, msg)
 	}
+	return p.finish(parsed, req)
+}
+
+// finish 从完整的一份返回里取出答案。流式返回先拼成同样的形状再交给它。
+func (p *OpenAICompatible) finish(parsed chatResponse, req Request) (Response, error) {
 	if parsed.Error != nil {
 		return Response{}, fmt.Errorf("%w: %s: %s", ErrUpstream, p.name, parsed.Error.Message)
 	}
@@ -183,6 +208,76 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 			CachedTokens:     max(parsed.Usage.PromptCacheHitTokens, parsed.Usage.PromptTokensDetails.CachedTokens),
 		},
 	}, nil
+}
+
+type chatChoice struct {
+	Message struct {
+		Content string `json:"content"`
+	} `json:"message"`
+	FinishReason string `json:"finish_reason"`
+}
+
+// chatChunk 是流式返回里的一段。用量只在最后一段里有，那一段的 choices 为空。
+type chatChunk struct {
+	Model   string `json:"model"`
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens         int64 `json:"prompt_tokens"`
+		CompletionTokens     int64 `json:"completion_tokens"`
+		PromptCacheHitTokens int64 `json:"prompt_cache_hit_tokens"`
+		PromptTokensDetails  struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+	} `json:"error"`
+}
+
+// readOpenAIStream 把流式返回拼成一份完整的返回。思考过程（reasoning_content）不要。
+func readOpenAIStream(r io.Reader) (chatResponse, error) {
+	var out chatResponse
+	var text strings.Builder
+	gotChoice := false
+	err := readEvents(r, func(data []byte) error {
+		var c chatChunk
+		if err := json.Unmarshal(data, &c); err != nil {
+			return fmt.Errorf("流里有一段不是 JSON: %s", truncate(string(data), 200))
+		}
+		if c.Error != nil {
+			out.Error = c.Error
+			return nil
+		}
+		if c.Model != "" {
+			out.Model = c.Model
+		}
+		for _, ch := range c.Choices {
+			gotChoice = true
+			text.WriteString(ch.Delta.Content)
+		}
+		if c.Usage != nil {
+			out.Usage.PromptTokens = c.Usage.PromptTokens
+			out.Usage.CompletionTokens = c.Usage.CompletionTokens
+			out.Usage.PromptCacheHitTokens = c.Usage.PromptCacheHitTokens
+			out.Usage.PromptTokensDetails.CachedTokens = c.Usage.PromptTokensDetails.CachedTokens
+		}
+		return nil
+	})
+	if err != nil {
+		return chatResponse{}, err
+	}
+	if gotChoice {
+		var c chatChoice
+		c.Message.Content = text.String()
+		out.Choices = []chatChoice{c}
+	}
+	return out, nil
 }
 
 func truncate(s string, max int) string {
