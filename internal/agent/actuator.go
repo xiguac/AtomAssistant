@@ -387,6 +387,7 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 幂等键必须透传，否则崩溃重放会重复下单。
 		IdempotencyKey: s.IdempotencyKey,
 		TaskID:         t.ID,
+		UserApproved:   kernel.UserApproved(ctx),
 	})
 	if err != nil {
 		return kernel.Result{}, err

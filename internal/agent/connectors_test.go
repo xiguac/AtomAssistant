@@ -187,10 +187,10 @@ func TestConnectors_副作用等级写死且写操作默认要确认(t *testing.
 	if out := check(lenient, fromMail, ToolCalendarCreate, surgery); out != kernel.ApprovalManual {
 		t.Fatalf("外部内容驱动的写操作必须确认: %s", out)
 	}
-	// 这个例外只给日历。邮件是发给别人的，照常拦。
-	if out := check(strict, task, ToolMailSend,
-		`{"to":["boss@example.com"],"subject":"请假","body":"我下周手术，请假三天"}`); out != kernel.ApprovalDeny {
-		t.Fatalf("邮件里的绝密数据仍应被拒绝: %s", out)
+	// 这个例外只给日历。邮件是发给别人的：含绝密数据时一律由用户确认，放行规则也不管用。
+	if out := check(lenient, task, ToolMailSend,
+		`{"to":["boss@example.com"],"subject":"请假","body":"我下周手术，请假三天"}`); out != kernel.ApprovalManual {
+		t.Fatalf("邮件里的绝密数据应由用户确认: %s", out)
 	}
 }
 

@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
@@ -90,6 +91,8 @@ type Request struct {
 	EventAt *time.Time
 	// MaxPrivacy 是参数里出现的最高隐私等级。
 	MaxPrivacy core.PrivacyLevel
+	// Secrets 是参数里的绝密数据，形如"id_no（身份证号）"，见 SecretItems。用来告诉用户要交出去的是什么。
+	Secrets []string
 	// Outbound 为真表示这个动作会把内容发到外部：发信、付款、向外部服务提交信息。
 	// 查询不算——它带出去的只是查询条件，而且能带多敏感的数据已经由工具的隐私上限管着。
 	Outbound bool
@@ -104,13 +107,14 @@ type Usage struct {
 
 // Decide 判定一次操作该自动执行、请用户确认，还是直接拒绝。
 //
-// 判定顺序是刻意的：硬性拒绝 → 无需审批 → 强制手动 → 用户规则 → 累计帽子。
+// 判定顺序是刻意的：绝密数据 → 无需审批 → 强制手动 → 用户规则 → 累计帽子。
 // 任何一步得出"手动"就不再往下看是否能放行——放行条件永远不能覆盖收紧条件。
 func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
-	// 1. 硬性拒绝：绝密数据不参与任何对外操作，连审批机会都不给。
-	//    给了审批机会，用户点确认就泄露了。
+	// 1. 绝密数据一律由用户确认：任何规则、自主模式都不能自动放行，只读操作也不例外。
+	//    直接拒绝的话，用户自己要办的事（比如用证件号订票）就永远办不成；
+	//    所以交给用户，并且说清楚要交出去的是哪几项——只说字段和类别，不说值。
 	if req.MaxPrivacy.NeverLeavesInstance() {
-		return Decision{OutcomeDeny, "参数含绝密数据（L3），此类操作不可执行"}
+		return Decision{OutcomeManual, SecretReason(req.Secrets)}
 	}
 
 	// 2. 无副作用或只读操作不需要审批。例外是自主模式下被认定为对外发送的：
@@ -174,6 +178,14 @@ func (p *Policy) Decide(req Request, usage Usage, now time.Time) Decision {
 		return Decision{OutcomeAuto, "自主模式：直接执行"}
 	}
 	return Decision{OutcomeAuto, fmt.Sprintf("满足 %s 的自动放行条件", req.Tool)}
+}
+
+// SecretReason 是参数含绝密数据时请用户确认的理由。
+func SecretReason(secrets []string) string {
+	if len(secrets) == 0 {
+		return "参数含绝密数据（L3），需要你确认后才能交给这个工具"
+	}
+	return "参数含绝密数据（L3）：" + strings.Join(secrets, "、") + "。这些信息会交给这个工具，需要你确认后才能执行"
 }
 
 func (p *Policy) ruleFor(tool string) (Rule, bool) {

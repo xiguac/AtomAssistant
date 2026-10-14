@@ -186,15 +186,15 @@ func TestPay_支付链接与订单号不按密钥处理但自由文本仍分级(
 		  "service":"加油包","amount_cents":990,"payee":"某某科技"}`); out != kernel.ApprovalManual {
 		t.Fatalf("正常付款应进入用户确认而不是被直接拒绝，实际 %s", out)
 	}
-	// 模型把证件号塞进服务内容：照样拦下，这会被发给支付宝并展示出来。
+	// 模型把证件号塞进服务内容：照样当绝密数据处理，这会被发给支付宝并展示出来。
 	if out := check(ToolPaySubmit, core.SideEffectIrreversible,
 		`{"payment_link":"https://cashier.alipay.com/pay?id=1","service":"代办，身份证 330102199001011234",
-		  "amount_cents":990,"payee":"某某科技"}`); out != kernel.ApprovalDeny {
-		t.Fatalf("自由文本里的绝密数据仍应被拒绝，实际 %s", out)
+		  "amount_cents":990,"payee":"某某科技"}`); out != kernel.ApprovalManual {
+		t.Fatalf("自由文本里的绝密数据应由用户确认，实际 %s", out)
 	}
-	// 同样的长串出现在别的工具里，规则不变。
+	// 同样的长串出现在别的工具里，规则不变：只读的查询也要确认。
 	if out := check("demo.weather", core.SideEffectReadOnly,
-		`{"city":"`+strings.Repeat("Ab3", 20)+`"}`); out != kernel.ApprovalDeny {
+		`{"city":"`+strings.Repeat("Ab3", 20)+`"}`); out != kernel.ApprovalManual {
 		t.Fatalf("其他工具不享受这个例外，实际 %s", out)
 	}
 }

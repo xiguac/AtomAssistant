@@ -211,6 +211,13 @@ func TestCall_出口管控拦截绝密参数(t *testing.T) {
 	if len(audit.entries) != 1 {
 		t.Fatalf("拦截也必须留审计，实际 %d 条", len(audit.entries))
 	}
+
+	// 用户批准过这一步就放行。
+	if _, err := gw.Call(context.Background(), CallRequest{
+		Tool: "demo.weather", Params: json.RawMessage(`{"city":"上海","password":"hunter2"}`), UserApproved: true,
+	}); err != nil || len(cap.args) != 1 {
+		t.Fatalf("用户批准后应发出去: %v, %d", err, len(cap.args))
+	}
 }
 
 func TestCall_参数被裁剪到最小集合(t *testing.T) {

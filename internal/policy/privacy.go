@@ -53,36 +53,42 @@ func NewClassifier() *Classifier { return &Classifier{} }
 
 // ClassifyField 判断单个字段的隐私等级。
 func (c *Classifier) ClassifyField(name string, value any) core.PrivacyLevel {
+	lv, _ := c.classify(name, value)
+	return lv
+}
+
+// classify 判断单个字段的隐私等级；是绝密数据时同时给出它是哪一类（不含值），用来告诉用户。
+func (c *Classifier) classify(name string, value any) (core.PrivacyLevel, string) {
 	lower := strings.ToLower(name)
 	for _, kw := range secretFieldNames {
 		if strings.Contains(lower, kw) {
-			return core.PrivacySecret
+			return core.PrivacySecret, "密码或密钥"
 		}
 	}
 
 	s := stringify(value)
 	if s == "" {
-		return c.levelFromFieldName(lower)
+		return c.levelFromFieldName(lower), ""
 	}
 
 	switch {
 	case reIDCard.MatchString(s):
-		return core.PrivacySecret
+		return core.PrivacySecret, "身份证号"
 	case looksLikeBankCard(s):
-		return core.PrivacySecret
+		return core.PrivacySecret, "银行卡号"
 	case reLongToken.MatchString(s) && !hasSpace(s):
-		return core.PrivacySecret
+		return core.PrivacySecret, "疑似密钥"
 	}
 	for _, kw := range secretValueHints {
 		if strings.Contains(s, kw) {
 			// 健康信息属于 L3，见 docs/安全模型.md §4.1。
-			return core.PrivacySecret
+			return core.PrivacySecret, "健康信息"
 		}
 	}
 	if rePhoneCN.MatchString(s) {
-		return core.PrivacySensitive
+		return core.PrivacySensitive, ""
 	}
-	return c.levelFromFieldName(lower)
+	return c.levelFromFieldName(lower), ""
 }
 
 func (c *Classifier) levelFromFieldName(lower string) core.PrivacyLevel {
@@ -98,6 +104,8 @@ func (c *Classifier) levelFromFieldName(lower string) core.PrivacyLevel {
 type FieldLevel struct {
 	Path  string
 	Level core.PrivacyLevel
+	// What 是绝密数据的类别（如"身份证号"），只在 Level 为 L3 时有，不含值。
+	What string
 }
 
 // ClassifyJSON 递归分级一个 JSON 对象，返回每个叶子字段的等级与整体最高等级。
@@ -130,12 +138,23 @@ func (c *Classifier) walk(path string, v any, out *[]FieldLevel, max *core.Priva
 		if i := strings.LastIndex(path, "."); i >= 0 {
 			name = path[i+1:]
 		}
-		lv := c.ClassifyField(name, v)
-		*out = append(*out, FieldLevel{Path: path, Level: lv})
+		lv, what := c.classify(name, v)
+		*out = append(*out, FieldLevel{Path: path, Level: lv, What: what})
 		if lv > *max {
 			*max = lv
 		}
 	}
+}
+
+// SecretItems 列出分级结果里的绝密数据，形如"id_no（身份证号）"：只有字段和类别，不含值。
+func SecretItems(fields []FieldLevel) []string {
+	var out []string
+	for _, f := range fields {
+		if f.Level.NeverLeavesInstance() {
+			out = append(out, fmt.Sprintf("%s（%s）", f.Path, f.What))
+		}
+	}
+	return out
 }
 
 func join(prefix, key string) string {

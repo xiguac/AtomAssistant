@@ -110,6 +110,8 @@ type CallRequest struct {
 	IdempotencyKey string
 	// TaskID 仅用于审计。
 	TaskID string
+	// UserApproved 表示用户批准过这一步，参数里的绝密数据才能交给工具。见 policy.Guard.CheckOutbound。
+	UserApproved bool
 }
 
 // CallResult 是一次工具调用的结果。
@@ -473,7 +475,7 @@ func (g *Gateway) Call(ctx context.Context, req CallRequest) (CallResult, error)
 	}
 
 	// 出口管控在调用之前，不在之后。参数会被裁剪成工具声明需要的最小集合。
-	trimmed, violations, err := g.guard.CheckOutbound(req.Tool, req.Params)
+	trimmed, violations, err := g.guard.CheckOutbound(req.Tool, req.Params, req.UserApproved)
 	if err != nil {
 		g.auditCall(ctx, req, core.TrustExternal,
 			fmt.Sprintf("被出口管控拦截: %v (%s)", err, joinViolations(violations)))

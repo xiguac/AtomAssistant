@@ -245,13 +245,13 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 	}
 
 	// 参数分级失败时按最保守处理：分不清就不能放行。
-	_, maxPrivacy, err := a.classifier.ClassifyJSON(classifiable(d))
+	fields, maxPrivacy, err := a.classifier.ClassifyJSON(classifiable(d))
 	if err != nil {
 		return kernel.ApprovalManual, "参数无法完成隐私分级，转人工确认", nil
 	}
 
 	// 写进用户自己的日历不算"把数据交给第三方"：那是他自己的地方，本来就是他记这些事的地方。
-	// "周三手术复查"写不进日历的助手没法用。所以日历工具不适用"含绝密数据直接拒绝"，
+	// "周三手术复查"写不进日历的助手没法用。所以日历工具不适用"含绝密数据一律确认"，
 	// 降一级按敏感数据对待——其余规则照旧：写操作默认要确认，外部内容驱动的一律要确认。
 	// 这个例外只给日历。邮件是发给别人的，照常拦。
 	// 写进本机工作区的文件同理：它连这台机器都没离开。
@@ -287,7 +287,9 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 		Domain:      t.Domain,
 		EventAt:     eventAt,
 		MaxPrivacy:  maxPrivacy,
+		Secrets:     policy.SecretItems(fields),
 	}, usage, now)
+	secret := maxPrivacy.NeverLeavesInstance()
 
 	// 金额无从核实的付款不适用任何自动放行规则。拒绝的结论不受影响。
 	if unverifiableAmount(d.ToolName) && decision.Outcome == policy.OutcomeAuto {
@@ -295,7 +297,8 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 	}
 
 	// 说清楚为什么这次要确认：同样的操作，平时是直接做的。
-	if source != "" && decision.Outcome == policy.OutcomeManual {
+	// 含绝密数据时保留那条理由：用户要先知道交出去的是哪几项信息。
+	if source != "" && decision.Outcome == policy.OutcomeManual && !secret {
 		decision.Reason = fmt.Sprintf("这个任务读过外部内容（%s），由它引出的改动交给你定夺", source)
 	}
 

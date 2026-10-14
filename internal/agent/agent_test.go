@@ -392,9 +392,9 @@ func TestApprover_累计次数帽子生效(t *testing.T) {
 	}
 }
 
-func TestApprover_绝密参数直接拒绝(t *testing.T) {
+func TestApprover_绝密参数请用户确认并说明是哪几项(t *testing.T) {
 	a := newApprover()
-	out, _, err := a.CheckAction(context.Background(),
+	out, reason, err := a.CheckAction(context.Background(),
 		core.NewTask("t", "g", core.TrustUser), kernel.Decision{
 			ToolName: "demo.book", SideEffect: core.SideEffectIrreversible,
 			Input: json.RawMessage(`{"amount_cents":100,"password":"hunter2"}`),
@@ -402,8 +402,8 @@ func TestApprover_绝密参数直接拒绝(t *testing.T) {
 	if err != nil {
 		t.Fatalf("判定失败: %v", err)
 	}
-	if out != kernel.ApprovalDeny {
-		t.Fatalf("含 L3 数据应直接拒绝，实际 %s", out)
+	if out != kernel.ApprovalManual || !strings.Contains(reason, "password（密码或密钥）") || strings.Contains(reason, "hunter2") {
+		t.Fatalf("含 L3 数据应请用户确认、列出字段而不带值，实际 %s: %s", out, reason)
 	}
 }
 

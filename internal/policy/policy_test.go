@@ -109,18 +109,27 @@ func newGuard(t *testing.T, grants ...ToolGrant) *Guard {
 	return NewGuard(NewClassifier(), r)
 }
 
-func TestCheckOutbound_绝密数据永远拦截(t *testing.T) {
+func TestCheckOutbound_绝密数据未经批准一律拦截(t *testing.T) {
 	g := newGuard(t, ToolGrant{
 		Name: "mail.send", MaxPrivacy: core.PrivacySensitive,
 		SideEffect: core.SideEffectIrreversible,
 	})
-	_, violations, err := g.CheckOutbound("mail.send",
-		json.RawMessage(`{"body":"客户海鲜过敏，改订川菜"}`))
+	params := json.RawMessage(`{"body":"客户海鲜过敏，改订川菜"}`)
+	_, violations, err := g.CheckOutbound("mail.send", params, false)
 	if !errors.Is(err, ErrSecretBlocked) {
 		t.Fatalf("期望 ErrSecretBlocked，实际 %v", err)
 	}
 	if len(violations) == 0 {
 		t.Fatal("应返回被拦下的字段")
+	}
+	// 用户批准过这一步就放行。
+	if _, _, err := g.CheckOutbound("mail.send", params, true); err != nil {
+		t.Fatalf("用户批准后应放行: %v", err)
+	}
+	// 批准只管绝密数据，超出工具授权上限的照常拦。
+	narrow := newGuard(t, ToolGrant{Name: "weather.query", MaxPrivacy: core.PrivacyNormal, SideEffect: core.SideEffectReadOnly})
+	if _, _, err := narrow.CheckOutbound("weather.query", json.RawMessage(`{"phone":"13800138000"}`), true); !errors.Is(err, ErrPrivacyExceeded) {
+		t.Fatalf("批准不应放宽工具授权上限: %v", err)
 	}
 }
 
@@ -144,7 +153,7 @@ func TestCheckOutbound_越权字段被拒(t *testing.T) {
 		Name: "weather.query", MaxPrivacy: core.PrivacyNormal,
 		SideEffect: core.SideEffectReadOnly,
 	})
-	_, _, err := g.CheckOutbound("weather.query", json.RawMessage(`{"phone":"13800138000"}`))
+	_, _, err := g.CheckOutbound("weather.query", json.RawMessage(`{"phone":"13800138000"}`), false)
 	if !errors.Is(err, ErrPrivacyExceeded) {
 		t.Fatalf("期望 ErrPrivacyExceeded，实际 %v", err)
 	}
@@ -158,7 +167,7 @@ func TestCheckOutbound_最小化裁剪(t *testing.T) {
 	})
 	// 查天气只需要城市名，不该把整个日程对象传出去。
 	out, _, err := g.CheckOutbound("weather.query",
-		json.RawMessage(`{"city":"上海","meeting_title":"与张总谈续约"}`))
+		json.RawMessage(`{"city":"上海","meeting_title":"与张总谈续约"}`), false)
 	if err != nil {
 		t.Fatalf("检查失败: %v", err)
 	}
@@ -176,7 +185,7 @@ func TestCheckOutbound_最小化裁剪(t *testing.T) {
 
 func TestCheckOutbound_未注册工具被拒(t *testing.T) {
 	g := newGuard(t)
-	if _, _, err := g.CheckOutbound("unknown.tool", json.RawMessage(`{}`)); !errors.Is(err, ErrToolUnknown) {
+	if _, _, err := g.CheckOutbound("unknown.tool", json.RawMessage(`{}`), false);!errors.Is(err, ErrToolUnknown) {
 		t.Fatalf("期望 ErrToolUnknown，实际 %v", err)
 	}
 }
@@ -250,14 +259,41 @@ func TestDecide_只读操作直接放行(t *testing.T) {
 	}
 }
 
-func TestDecide_绝密数据直接拒绝而不是进审批(t *testing.T) {
-	d := basePolicy().Decide(Request{
+func TestDecide_绝密数据由用户确认并说明是哪几项(t *testing.T) {
+	// 放行规则写得再宽也不自动放行。
+	p := &Policy{Rules: []Rule{{Tool: "ride.book"}, {Tool: "weather.query"}}, Autonomous: true}
+	d := p.Decide(Request{
 		Tool: "ride.book", SideEffect: core.SideEffectIrreversible,
 		Origin: core.TrustUser, MaxPrivacy: core.PrivacySecret,
+		Secrets: []string{"passenger.id_no（身份证号）", "password（密码或密钥）"},
 	}, Usage{}, time.Now())
-	// 给了审批机会，用户点一下确认就泄露了。必须连机会都不给。
-	if d.Outcome != OutcomeDeny {
-		t.Fatalf("含 L3 数据应直接拒绝，实际 %s: %s", d.Outcome, d.Reason)
+	if d.Outcome != OutcomeManual || !strings.Contains(d.Reason, "passenger.id_no（身份证号）、password（密码或密钥）") {
+		t.Fatalf("含 L3 数据应请用户确认并列出是哪几项，实际 %s: %s", d.Outcome, d.Reason)
+	}
+	// 只读操作也一样：查询条件同样会交给外部。
+	d = p.Decide(Request{
+		Tool: "weather.query", SideEffect: core.SideEffectReadOnly,
+		Origin: core.TrustUser, MaxPrivacy: core.PrivacySecret,
+	}, Usage{}, time.Now())
+	if d.Outcome != OutcomeManual {
+		t.Fatalf("含 L3 数据的只读操作也应确认，实际 %s: %s", d.Outcome, d.Reason)
+	}
+}
+
+func TestSecretItems_只列字段和类别不含值(t *testing.T) {
+	fields, _, err := NewClassifier().ClassifyJSON(json.RawMessage(
+		`{"city":"杭州","passenger":{"id_no":"110101199003077715"},"note":"对青霉素过敏"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(SecretItems(fields), "、")
+	for _, want := range []string{"passenger.id_no（身份证号）", "note（健康信息）"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("应列出 %s，实际 %s", want, got)
+		}
+	}
+	if strings.Contains(got, "110101") || strings.Contains(got, "青霉素") || strings.Contains(got, "city") {
+		t.Fatalf("不应带出值或非绝密字段: %s", got)
 	}
 }
 
@@ -388,10 +424,10 @@ func TestPolicy_自主模式放开内部的事对外发送仍由用户确认(t *
 	if d := p.Decide(out, Usage{}, now); d.Outcome != OutcomeManual || d.Reason == ReasonOutbound {
 		t.Fatalf("含敏感信息时理由应写明: %+v", d)
 	}
-	// 绝密数据照旧拒绝。
+	// 绝密数据照旧由用户确认。
 	secret := req
 	secret.MaxPrivacy = core.PrivacySecret
-	if d := p.Decide(secret, Usage{}, now); d.Outcome != OutcomeDeny {
+	if d := p.Decide(secret, Usage{}, now); d.Outcome != OutcomeManual {
 		t.Fatalf("绝密数据不受模式影响: %+v", d)
 	}
 	// 花钱必须有上限罩着：没设上限仍然确认，设了就放行，超了又转手动。

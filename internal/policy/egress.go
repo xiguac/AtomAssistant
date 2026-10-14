@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	// ErrSecretBlocked 表示参数里含有 L3 绝密数据。这条没有任何开关。
-	ErrSecretBlocked = errors.New("policy: 绝密数据永不传出实例")
+	// ErrSecretBlocked 表示参数里含有 L3 绝密数据，而这一步没有经过用户批准。
+	ErrSecretBlocked = errors.New("policy: 绝密数据未经用户批准不传出实例")
 	// ErrPrivacyExceeded 表示参数隐私等级超出该工具的授权范围。
 	ErrPrivacyExceeded = errors.New("policy: 参数隐私等级超出工具授权")
 	// ErrEgressBlocked 表示出站目标不在白名单内。
@@ -113,7 +113,10 @@ func (v Violation) String() string {
 //
 // 返回裁剪后的参数：只保留工具声明需要的字段。查天气只需要城市名，
 // 不需要传完整日程对象；叫车只需要起终点，不需要传客户姓名。
-func (g *Guard) CheckOutbound(toolName string, params json.RawMessage) (json.RawMessage, []Violation, error) {
+//
+// userApproved 为真表示用户已经看过这次要交出去的绝密数据是哪几项，并批准了这一步：
+// 只有这时 L3 数据才放行。工具授权上限对 L3 以外的数据照常生效。
+func (g *Guard) CheckOutbound(toolName string, params json.RawMessage, userApproved bool) (json.RawMessage, []Violation, error) {
 	grant, err := g.registry.Grant(toolName)
 	if err != nil {
 		return nil, nil, err
@@ -127,15 +130,17 @@ func (g *Guard) CheckOutbound(toolName string, params json.RawMessage) (json.Raw
 	var violations []Violation
 	for _, f := range fields {
 		switch {
+		case f.Level.NeverLeavesInstance() && userApproved:
+			// 用户批准过这一步。
 		case f.Level.NeverLeavesInstance():
-			violations = append(violations, Violation{f.Path, f.Level, "绝密数据，永不传出实例"})
+			violations = append(violations, Violation{f.Path, f.Level, "绝密数据，未经用户批准不传出实例"})
 		case f.Level > grant.MaxPrivacy:
 			violations = append(violations, Violation{f.Path, f.Level,
 				fmt.Sprintf("超出工具 %s 的授权上限 %s", toolName, grant.MaxPrivacy)})
 		}
 	}
 	if len(violations) > 0 {
-		// L3 与越权分别对应不同的处置：前者永远拒绝，后者可以请求用户单次授权。
+		// L3 与越权分别对应不同的处置：前者没有用户批准就拒绝，后者可以请求用户单次授权。
 		for _, v := range violations {
 			if v.Level.NeverLeavesInstance() {
 				return nil, violations, fmt.Errorf("%w: %s", ErrSecretBlocked, v.Path)

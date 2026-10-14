@@ -29,13 +29,16 @@ func (p *scriptedPlanner) Decide(context.Context, *core.Task, []*core.Step) (Dec
 
 // recordingActuator 记录每次执行，便于断言幂等键与执行次数。
 type recordingActuator struct {
-	keys   []string
-	result Result
-	err    error
+	keys []string
+	// approved 记录每次执行时是否带着"用户批准过"的标记。
+	approved []bool
+	result   Result
+	err      error
 }
 
-func (a *recordingActuator) Execute(_ context.Context, _ *core.Task, s *core.Step) (Result, error) {
+func (a *recordingActuator) Execute(ctx context.Context, _ *core.Task, s *core.Step) (Result, error) {
 	a.keys = append(a.keys, s.IdempotencyKey)
+	a.approved = append(a.approved, UserApproved(ctx))
 	if a.err != nil {
 		return Result{}, a.err
 	}
@@ -264,9 +267,29 @@ func TestApprove_批准后按原参数执行且不再询问Planner(t *testing.T)
 	if len(act.keys) != 1 || act.keys[0] != core.IdempotencyKeyFor(task.ID, 1) {
 		t.Fatalf("期望用步骤 1 的幂等键执行 1 次，实际 %v", act.keys)
 	}
+	// 执行时要让 Actuator 知道这一步是用户批准过的：出口管控凭它放行绝密数据。
+	if !act.approved[0] {
+		t.Fatal("执行已批准的步骤时应带着用户批准的标记")
+	}
 	steps, _ := st.ListSteps(ctx, task.ID)
 	if len(steps) != 1 || steps[0].Status != core.StepDone || string(steps[0].Input) != `{"amount":100}` {
 		t.Fatalf("期望原步骤以原参数完成，实际 %+v", steps)
+	}
+}
+
+func TestAdvance_没经过审批的步骤不带用户批准的标记(t *testing.T) {
+	st := memory.New()
+	task := runningTask(t, st, core.TrustUser)
+	planner := &scriptedPlanner{script: []Decision{{
+		Kind: DecideStep, Type: core.StepTool, ToolName: "weather.query",
+		SideEffect: core.SideEffectReadOnly, Input: json.RawMessage(`{"city":"杭州"}`),
+	}}}
+	act := &recordingActuator{result: Result{Output: json.RawMessage(`{}`), Trust: core.TrustToolOutput}}
+	if err := NewEngine(st, planner, act).Advance(context.Background(), task.ID); err != nil {
+		t.Fatalf("推进失败: %v", err)
+	}
+	if len(act.approved) != 1 || act.approved[0] {
+		t.Fatalf("自动执行的步骤不应带用户批准的标记: %v", act.approved)
 	}
 }
 

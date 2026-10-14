@@ -145,9 +145,9 @@ func TestWebSearch_含绝密信息的问题发不出去上过网之后的改动�
 	if out := check(ToolWebSearch, `{"query":"杭州 明天 天气预报"}`, &fakeHistory{}); out != kernel.ApprovalAuto {
 		t.Fatalf("普通的搜索应直接执行，实际 %s", out)
 	}
-	// 身份证号这类绝密数据不传给任何工具，搜索也不例外。
-	if out := check(ToolWebSearch, `{"query":"身份证 110101199003077715 能查到什么"}`, &fakeHistory{}); out != kernel.ApprovalDeny {
-		t.Fatalf("含绝密信息的搜索应被拒绝，实际 %s", out)
+	// 身份证号这类绝密数据要交给任何工具都得用户确认，搜索也不例外。
+	if out := check(ToolWebSearch, `{"query":"身份证 110101199003077715 能查到什么"}`, &fakeHistory{}); out != kernel.ApprovalManual {
+		t.Fatalf("含绝密信息的搜索应由用户确认，实际 %s", out)
 	}
 	// 上过网之后记日程：网上的内容引出的改动交给用户定夺。
 	create := `{"title":"看展","start_at":"2099-01-01T10:00:00+08:00"}`

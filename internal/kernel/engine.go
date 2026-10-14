@@ -79,7 +79,8 @@ const (
 	ApprovalAuto ApprovalOutcome = "auto"
 	// ApprovalManual 需要用户在 App 上确认。
 	ApprovalManual ApprovalOutcome = "manual"
-	// ApprovalDeny 直接拒绝，连审批机会都不给。
+	// ApprovalDeny 直接拒绝，连审批机会都不给。内置的审批策略目前不再给出这个结果，
+	// 含绝密数据的动作也改为请用户确认。
 	ApprovalDeny ApprovalOutcome = "deny"
 )
 
@@ -97,6 +98,17 @@ type Approver interface {
 // 否则崩溃重放会造成重复下单、重复打车。
 type Actuator interface {
 	Execute(ctx context.Context, t *core.Task, s *core.Step) (Result, error)
+}
+
+type userApprovedKey struct{}
+
+// UserApproved 报告 Actuator 正在执行的这一步是不是用户亲自批准过的。
+//
+// 出口管控靠它决定能不能把绝密数据交给工具：用户看过要交出去的是哪几项、点了确认，才放行。
+// 批准后崩溃重放的那一次拿不到这个标记，会被出口管控拦下——宁可让这一步失败，也不凭推测放行。
+func UserApproved(ctx context.Context) bool {
+	ok, _ := ctx.Value(userApprovedKey{}).(bool)
+	return ok
 }
 
 // Subscriber 为等待事件的任务登记订阅，由事件总线实现。
@@ -230,7 +242,7 @@ func (e *Engine) advance(ctx context.Context, t *core.Task) error {
 		if err := e.store.SaveStep(ctx, s); err != nil {
 			return err
 		}
-		return e.execute(ctx, t, s)
+		return e.execute(context.WithValue(ctx, userApprovedKey{}, true), t, s)
 	}
 	if s := lastWithStatus(history, core.StepAwaiting); s != nil {
 		t.Wake = &core.WakeCondition{Kind: core.WakeApproval, Ref: s.ID}
