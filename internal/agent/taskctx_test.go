@@ -85,6 +85,53 @@ func TestTaskContext_同一任务连续几步发出的内容开头一致(t *test
 	}
 }
 
+// 复现一次北京行程任务：先查了一批地点的坐标，后面几步联网搜索的长结果把上下文占满，
+// 坐标那几步被裁掉，模型看不到查过，就拿同样的参数一遍遍重查。
+func TestTaskContext_较早查到的工具结果不会因预算被整段丢掉(t *testing.T) {
+	places := []string{"北京新世界酒店", "天安门广场", "故宫午门", "故宫神武门", "天坛公园", "颐和园", "北京南站"}
+	build := func(before, after int) string {
+		t.Helper()
+		m := &fakeModel{replies: []string{`{"action":"tool","tool":"demo.weather","input":{"city":"北京"}}`}}
+		// 预算给得紧一些，让裁剪一定发生，不依赖默认预算恰好多大。
+		p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{MaxChars: 12000})
+		task := core.NewTask("北京四日游", "安排一个北京四日游，含打车距离和时长", core.TrustUser)
+		var history []*core.Step
+		add := func(tool, input, output string) {
+			s := core.NewStep(task.ID, len(history)+1, core.StepTool, json.RawMessage(input))
+			s.ToolName, s.Status, s.Output, s.OutputTrust = tool, core.StepDone, json.RawMessage(output), core.TrustExternal
+			history = append(history, s)
+		}
+		long := strings.Repeat("北京七月下旬的门票、车次与价格说明。", 200)
+		search := func(n int) {
+			for i := 0; i < n; i++ {
+				add(ToolWebSearch, fmt.Sprintf(`{"query":"第 %d 次搜索"}`, i), `{"answer":"`+long+`"}`)
+			}
+		}
+		search(before)
+		for i, name := range places {
+			// 地图服务的返回：先是一串候选，坐标在每一项里。
+			out := fmt.Sprintf(`[{"address":"东城区","display_name":"%s","location":{"lng":116.4%d,"lat":39.9%d}}%s]`,
+				name, i, i, strings.Repeat(`,{"address":"东城区某街道某号","display_name":"附近地点"}`, 30))
+			add("didi.maps_textsearch", fmt.Sprintf(`{"city":"北京","keywords":"%s"}`, name), out)
+		}
+		search(after)
+		if _, err := p.Decide(context.Background(), task, history); err != nil {
+			t.Fatalf("决策失败: %v", err)
+		}
+		return prefix(m.lastReq)
+	}
+
+	// 坐标那几步还在最近的窗口里，但被后面的长结果挤出了预算。
+	// 坐标那几步已经压进了较早步骤的摘要。
+	for name, sent := range map[string]string{"窗口内被挤出预算": build(0, 6), "已压进摘要": build(2, 20)} {
+		for i, place := range places {
+			if !strings.Contains(sent, place) || !strings.Contains(sent, fmt.Sprintf(`"lng":116.4%d`, i)) {
+				t.Errorf("%s：发给模型的上下文里看不到 %s 的查询和坐标", name, place)
+			}
+		}
+	}
+}
+
 func TestTaskContext_背景在任务第一步取下之后不再变(t *testing.T) {
 	conv := &fakeConversation{}
 	p := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithConversation(conv)

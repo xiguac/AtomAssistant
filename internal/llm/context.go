@@ -22,6 +22,9 @@ type Segment struct {
 	// Pinned 为真时这段内容不参与预算裁剪，无论信任等级多低。
 	// 它只影响裁剪，不影响围栏：不可信的内容钉住了也还是不可信。
 	Pinned bool
+	// Brief 非空时，预算不够要裁掉这一段，就换成这段短的，而不是整段丢掉。
+	// 信任等级与围栏照旧按这一段算。
+	Brief string
 }
 
 // 不可信内容的围栏说明。放在系统消息里，只出现一次。
@@ -146,13 +149,14 @@ func trimToBudget(segments []Segment, budget int) []Segment {
 
 	drop := make([]bool, len(segments))
 	// 只在可裁剪的等级区间里由低到高丢弃；同等级内丢靠前的（越旧越先丢）。
+	// 带 Brief 的段换成短的留下：替身很短，换完仍超出一点预算也不再往下丢。
 	for level := core.TrustExternal; level < core.TrustUser && total > budget; level++ {
 		for i, s := range segments {
 			if drop[i] || s.Trust != level || !droppable(s) {
 				continue
 			}
 			drop[i] = true
-			total -= len(s.Content)
+			total -= len(s.Content) - len(s.Brief)
 			if total <= budget {
 				break
 			}
@@ -161,7 +165,11 @@ func trimToBudget(segments []Segment, budget int) []Segment {
 
 	out := make([]Segment, 0, len(segments))
 	for i, s := range segments {
-		if !drop[i] {
+		switch {
+		case !drop[i]:
+			out = append(out, s)
+		case s.Brief != "":
+			s.Content, s.Brief = s.Brief, ""
 			out = append(out, s)
 		}
 	}

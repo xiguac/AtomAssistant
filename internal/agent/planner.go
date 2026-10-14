@@ -695,12 +695,26 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 			Trust:   core.TrustSystem,
 			Source:  "步骤日志摘要",
 		})
+		// 摘要里只有做过什么、没有拿到什么。地图、车票这类工具的结果一旦看不到，
+		// 模型会拿同样的参数一遍遍重查，所以各留一段开头。和摘要一样只在分界挪动时变。
+		if got := earlierResults(history[:cut]); got != "" {
+			segs = append(segs, llm.Segment{
+				Role:    llm.RoleUser,
+				Content: "较早的工具调用已经拿到下面这些结果，同样的参数不要再调：\n" + got,
+				// 工具返回的内容，照旧在围栏里。
+				Trust:  core.TrustExternal,
+				Source: "较早的工具调用结果",
+				Pinned: true,
+			})
+		}
 	}
 	recent := history[cut:]
 	for i, s := range recent {
 		segs = append(segs, llm.Segment{
 			Role:    llm.RoleUser,
 			Content: describeStep(s),
+			// 预算不够被裁掉时留这一行，模型至少知道这一步做过、拿到了什么。
+			Brief: resultLine(s),
 			// 每一步的输出带着自己的信任等级进上下文——
 			// 工具返回的文本在这里依然是 untrusted。
 			Trust:  s.OutputTrust,
@@ -743,6 +757,56 @@ func (p *Planner) segments(t *core.Task, history []*core.Step) []llm.Segment {
 		}
 	}
 	return segs
+}
+
+const (
+	// resultChars 是较早的一次工具调用留在上下文里的结果长度，够放下名称、地址和坐标这类要点。
+	resultChars = 240
+	// maxResults 是留在上下文里的较早工具调用的条数上限，超出时留最近的。
+	maxResults = 30
+)
+
+// earlierResults 把较早步骤里外部工具返回的结果各留一段开头。
+// 联网搜索由 earlierFindings 管；同一个工具、同样的参数只留最近一次。
+func earlierResults(steps []*core.Step) string {
+	type item struct {
+		key  string
+		line string
+	}
+	var items []item
+	for _, s := range steps {
+		if s.Type != core.StepTool || s.Status != core.StepDone || s.ToolName == ToolWebSearch ||
+			s.OutputTrust >= core.TrustUser || len(s.Output) == 0 {
+			continue
+		}
+		key := s.ToolName + " " + string(s.Input)
+		line := "- " + resultLine(s)
+		for i := range items {
+			if items[i].key == key {
+				items = append(items[:i], items[i+1:]...)
+				break
+			}
+		}
+		items = append(items, item{key, line})
+	}
+	if len(items) > maxResults {
+		items = items[len(items)-maxResults:]
+	}
+	lines := make([]string, len(items))
+	for i, it := range items {
+		lines[i] = it.line
+	}
+	return strings.Join(lines, "\n")
+}
+
+// resultLine 把一步缩成一行：调了什么、参数是什么、结果的开头。
+func resultLine(s *core.Step) string {
+	out := []rune(oneLine(string(s.Output)))
+	if len(out) > resultChars {
+		out = append(out[:resultChars], '…')
+	}
+	return fmt.Sprintf("步骤 %d %s %s %s：%s", s.Seq, s.ToolName, stepOutcome(s),
+		truncate(oneLine(string(s.Input)), 160), string(out))
 }
 
 // pinnedSteps 是不参与预算裁剪的最近步骤数。

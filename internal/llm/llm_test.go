@@ -168,6 +168,32 @@ func TestBuild_钉住的低信任内容不被裁剪但仍在围栏里(t *testing
 	}
 }
 
+func TestBuild_带替身的内容被裁时换成替身而不是整段丢掉(t *testing.T) {
+	segs := []Segment{
+		{Content: "旧结果" + strings.Repeat("外", 100), Brief: "步骤 1 查过 新世界酒店：116.41,39.89", Trust: core.TrustExternal},
+		{Content: strings.Repeat("新", 100), Trust: core.TrustExternal, Pinned: true},
+	}
+	msgs, err := Build(segs, BuildOptions{MaxChars: 150})
+	if err != nil {
+		t.Fatalf("装配失败: %v", err)
+	}
+	var joined string
+	for _, m := range msgs {
+		if m.Role != RoleSystem {
+			joined += m.Content
+		}
+	}
+	if strings.Contains(joined, "外外外") {
+		t.Fatalf("超出预算的原文应被裁掉: %s", joined)
+	}
+	if !strings.Contains(joined, "116.41,39.89") {
+		t.Fatalf("被裁掉的一段应留下替身: %s", joined)
+	}
+	if strings.Count(joined, "<untrusted-") != 2 {
+		t.Fatalf("替身仍是外部内容，应在围栏里: %s", joined)
+	}
+}
+
 func extractNonce(t *testing.T, content string) string {
 	t.Helper()
 	const prefix = "<untrusted-"
