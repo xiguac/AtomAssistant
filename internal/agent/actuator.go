@@ -200,6 +200,20 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 清单是模型自己写的，信任等级与模型输出一致。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
+	if s.ToolName == ToolLoad {
+		// 说明由规划器按日志里的这一步放进上下文，这里只留一条回执。
+		var in struct {
+			Tools []string `json:"tools"`
+		}
+		if err := json.Unmarshal(s.Input, &in); err != nil {
+			return kernel.Result{}, fmt.Errorf("agent: 解析 %s 的参数失败: %w", ToolLoad, err)
+		}
+		out, err := json.Marshal(map[string]any{"loaded": in.Tools, "note": "完整说明已放进上下文的「工具说明」一段"})
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
 	if isInternalTool(s.ToolName) {
 		// 指派、方案、审核意见是规划器自己写的记录，原样留在日志里。它们是模型写的，信任等级与模型输出一致。
 		return kernel.Result{Output: s.Input, Trust: core.TrustToolOutput}, nil

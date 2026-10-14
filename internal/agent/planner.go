@@ -412,6 +412,16 @@ func (p *Planner) toolDecision(name string, params json.RawMessage, reason strin
 	if len(params) == 0 {
 		params = json.RawMessage(`{}`)
 	}
+	// 取来工具说明：参数换成具体的工具全名，记进日志，之后每一步据此把说明放进上下文。
+	if info.Name == ToolLoad {
+		names, err := p.resolveLoad(params)
+		if err != nil {
+			return kernel.Decision{}, err
+		}
+		if params, err = json.Marshal(map[string][]string{"tools": names}); err != nil {
+			return kernel.Decision{}, fmt.Errorf("agent: 序列化 %s 的参数失败: %w", ToolLoad, err)
+		}
+	}
 	return kernel.Decision{
 		Kind:     kernel.DecideStep,
 		Type:     core.StepTool,
@@ -638,10 +648,13 @@ func (p *Planner) contextSegments(ctx context.Context, t *core.Task, history []*
 	if err != nil {
 		return nil, err
 	}
-	// 背景紧跟在任务定义之后，再往后是步骤历史和末尾那些每步都变的东西。
-	out := make([]llm.Segment, 0, len(segs)+len(bg))
+	// 背景紧跟在任务定义之后，然后是取来过的工具说明，再往后是步骤历史和末尾那些每步都变的东西。
+	out := make([]llm.Segment, 0, len(segs)+len(bg)+1)
 	out = append(out, segs[0])
 	out = append(out, bg...)
+	if seg, ok := p.loadedSegment(history); ok {
+		out = append(out, seg)
+	}
 	return append(out, segs[1:]...), nil
 }
 
@@ -746,18 +759,18 @@ func (p *Planner) toolList() string {
 			tools = append(tools, t)
 		}
 	}
-	tools = append(tools, p.builtins()...)
+	builtins := p.builtins()
+	sort.Slice(builtins, func(i, j int) bool { return builtins[i].Name < builtins[j].Name })
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	if len(tools) == 0 {
+	if len(tools) == 0 && len(builtins) == 0 {
 		return "（当前没有可用工具，只能输出 finish 或 fail）"
 	}
+	// 内置工具一直带着完整说明；MCP 服务的工具只列目录，用到时用 tools.load 取来，见 toolload.go。
 	var sb strings.Builder
-	for _, t := range tools {
-		fmt.Fprintf(&sb, "- %s: %s\n", t.Name, t.Description)
-		if len(t.InputSchema) > 0 {
-			fmt.Fprintf(&sb, "  入参: %s\n", truncate(string(t.InputSchema), 1500))
-		}
+	for _, t := range builtins {
+		sb.WriteString(toolDetail(t))
 	}
+	sb.WriteString(mcpDirectory(tools))
 	return sb.String()
 }
 

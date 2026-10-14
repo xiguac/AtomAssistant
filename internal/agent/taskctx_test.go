@@ -50,7 +50,7 @@ func TestTaskContext_同一任务连续几步发出的内容开头一致(t *test
 		reqs = append(reqs, m.lastReq)
 		// 外部内容（工具返回）每一步都有，围栏标记也就每一步都在。
 		history = append(history, ctxStep(i, "demo.weather", fmt.Sprintf(`{"text":"第 %d 次的结果"}`, i), core.TrustExternal))
-		task.Usage.CostCents += 3
+		task.Usage.Tokens += 1000
 	}
 	// 相邻两步：前一步发出去的内容，除了末尾的当前状态，原样是后一步的开头。
 	// 只有压缩分界挪动的那一步例外（每 compactEvery 步一次）。
@@ -72,10 +72,10 @@ func TestTaskContext_同一任务连续几步发出的内容开头一致(t *test
 	}
 	// 系统提示里没有当前时间和花费；它们在最后一条。
 	sys := reqs[len(reqs)-1].Messages[0].Content
-	if strings.Contains(sys, "当前时间") || strings.Contains(sys, "已花费") {
+	if strings.Contains(sys, "当前时间") || strings.Contains(sys, "已用") {
 		t.Fatal("系统提示里不应有每一步都变的东西")
 	}
-	if last := reqs[len(reqs)-1].Messages; !strings.Contains(last[len(last)-1].Content, "已花费: 57 分") {
+	if last := reqs[len(reqs)-1].Messages; !strings.Contains(last[len(last)-1].Content, "已用: 19000 tokens") {
 		t.Fatalf("末尾应是当前状态: %s", last[len(last)-1].Content)
 	}
 	// 不同的任务用不同的围栏标记。

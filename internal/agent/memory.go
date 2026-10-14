@@ -58,7 +58,7 @@ var planTool = mcpgw.ToolInfo{
 
 // builtinTools 是不经过 MCP 的内置工具。
 func builtinTools(hasMemory bool) []mcpgw.ToolInfo {
-	tools := []mcpgw.ToolInfo{planTool}
+	tools := []mcpgw.ToolInfo{planTool, toolLoadTool}
 	if hasMemory {
 		tools = append(tools, expandMemoryTool)
 	}

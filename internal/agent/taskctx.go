@@ -129,15 +129,22 @@ func (p *Planner) background(ctx context.Context, t *core.Task) ([]llm.Segment, 
 	return segs, nil
 }
 
-// tail 是放在最后的、每一步都在变的东西：当前时间和已花费。
+// tail 是放在最后的、每一步都在变的东西：当前时间和已用的 token。
 func (p *Planner) tail(t *core.Task) llm.Segment {
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
 	return llm.Segment{
 		Role: llm.RoleUser,
-		Content: fmt.Sprintf("当前时间: %s\n这个任务已花费: %d 分",
-			p.now().Local().Format("2006-01-02 15:04 Monday"), t.Usage.CostCents),
+		Content: fmt.Sprintf("当前时间: %s\n这个任务已用: %d tokens（上限 %s）",
+			p.now().Local().Format("2006-01-02 15:04 Monday"), t.Usage.Tokens, tokenLimit(t.Budget.MaxTokens)),
 		Trust: core.TrustSystem, Source: "当前状态", Pinned: true,
 	}
+}
+
+func tokenLimit(n int64) string {
+	if n <= 0 {
+		return "不限"
+	}
+	return fmt.Sprint(n)
 }
 
 // build 把一次调用的系统提示和上下文装成消息：用任务固定的围栏标记，末尾接上当前状态。

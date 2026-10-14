@@ -91,8 +91,6 @@
   <div class="pad grid2">
     <div><label for="b-tokens">token 上限</label><input id="b-tokens" type="text" name="max_tokens" inputmode="numeric" value="{{.BudgetTokens}}">
       <div class="help">单个任务可使用的 token 总量（输入与输出合计）</div></div>
-    <div><label for="b-yuan">金额上限（元）</label><input id="b-yuan" type="text" name="max_cost_yuan" inputmode="decimal" value="{{.BudgetYuan}}">
-      <div class="help">按模型单价计算；未填写单价的模型不计费</div></div>
     <div><label for="b-hours">执行时长上限（小时）</label><input id="b-hours" type="text" name="max_hours" inputmode="decimal" value="{{.BudgetHours}}">
       <div class="help">仅累计实际执行时间，等待时间不计</div></div>
   </div>
