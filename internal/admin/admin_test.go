@@ -510,8 +510,11 @@ func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T)
 	if loc := post("/models/main", url.Values{"provider": {"本地"}, "model": {"m1"}}); !strings.Contains(loc, "主 AI 已设置为") {
 		t.Fatalf("保存主 AI 失败: %s", loc)
 	}
-	if loc := post("/models/agent", url.Values{"name": {"写手"}, "provider": {"本地"}, "model": {"m2"}, "good_at": {"writing", "translate"}}); !strings.Contains(loc, "协作模型「写手」已保存") {
+	if loc := post("/models/agent", url.Values{"name": {"写手"}, "provider": {"本地"}, "model": {"m2"}, "good_at": {"writing", "translate"}, "tier": {"complex"}}); !strings.Contains(loc, "协作模型「写手」已保存") {
 		t.Fatalf("保存协作模型失败: %s", loc)
+	}
+	if loc := post("/models/agent", url.Values{"name": {"乱填"}, "provider": {"本地"}, "model": {"m"}, "tier": {"medium"}}); !strings.Contains(loc, "tier") {
+		t.Fatalf("不存在的难度应被拒绝: %s", loc)
 	}
 	if loc := post("/models/agent", url.Values{"name": {"坏的"}, "provider": {"不存在"}, "model": {"m"}}); !strings.Contains(loc, "不存在") {
 		t.Fatalf("引用不存在的服务应被拒绝: %s", loc)
@@ -522,7 +525,7 @@ func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T)
 	if strings.Contains(text, "sk-secret-1") {
 		t.Fatal("密钥不能出现在配置文件里")
 	}
-	for _, want := range []string{"# 我自己写的注释", "files:", "api_key: vault://本地", "purpose: plan", "fallback:", "name: 写手", "- writing"} {
+	for _, want := range []string{"# 我自己写的注释", "files:", "api_key: vault://本地", "purpose: plan", "fallback:", "name: 写手", "- writing", "tier: complex"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("配置里应有 %q:\n%s", want, text)
 		}
@@ -551,7 +554,7 @@ func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T)
 		t.Fatalf("在用的服务不应能删: %s", loc)
 	}
 	_, body := e.get("/models")
-	for _, want := range []string{"已配置", "写手", "尚无记录，优先试用", `value="m1"`} {
+	for _, want := range []string{"已配置", "写手", "尚无记录，优先试用", `value="m1"`, "复杂", "优先分派（简单、复杂任务）"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("模型页应有 %q", want)
 		}

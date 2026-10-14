@@ -59,15 +59,22 @@ fallback:
 #   name     自己起的名字，成绩记在它下面
 #   good_at  只让它接哪几类：writing / code / analysis / translate / summary / creative / other
 #            不写就是什么都接，由成绩说话
+#   tier     只让它接哪一档难度：simple / complex。主 AI 指派时判断每件事是简单还是复杂，
+#            同一类里简单的交给接 simple 的、复杂的交给接 complex 的；不写就是都接
 # ---------------------------------------------------------------
 # agents:
 #   - name: 写手
 #     provider: moonshot
 #     model: moonshot-v1-32k
 #     good_at: [writing, translate]
+#   - name: 快手
+#     provider: deepseek
+#     model: deepseek-chat
+#     tier: simple
 #   - name: 码农
 #     provider: deepseek
 #     model: deepseek-reasoner
+#     tier: complex
 
 # ---------------------------------------------------------------
 # 每个任务的预算上限。任一项用到上限任务就暂停，不会接着花。不写的项用默认值

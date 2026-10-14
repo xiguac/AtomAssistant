@@ -62,7 +62,7 @@ const (
 
 // TaskAssigner 按类别和评分选出任务模型，并记下谁办了哪件事。由 *team.Board 提供。
 type TaskAssigner interface {
-	PickExcept(ctx context.Context, c team.Category, exclude []string) (team.Worker, error)
+	PickExcept(ctx context.Context, c team.Category, t team.Tier, exclude []string) (team.Worker, error)
 	Record(ctx context.Context, w *team.Work) error
 }
 
@@ -70,7 +70,9 @@ type TaskAssigner interface {
 type assignRecord struct {
 	Worker   string `json:"worker"`
 	Category string `json:"category"`
-	Title    string `json:"title"`
+	// Tier 是主模型判断的难度：simple 或 complex。
+	Tier  string `json:"tier,omitempty"`
+	Title string `json:"title"`
 	// Round 是第几次指派，从 1 起。Why 是改派的原因，第一次指派时为空。
 	Round int    `json:"round"`
 	Why   string `json:"why,omitempty"`
@@ -364,6 +366,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	var spent kernel.Decision
 	var out struct {
 		Category string `json:"category"`
+		Tier     string `json:"tier"`
 		Title    string `json:"title"`
 	}
 	if err := p.askJSON(ctx, t, true, system, segs, &spent, "指派结果", &out); err != nil {
@@ -373,16 +376,20 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	if !team.ValidCategory(team.Category(out.Category)) {
 		out.Category = string(team.CatOther)
 	}
+	// 难度没写或写错时按复杂算：交给弱模型办砸了，比交给强模型多花几个 token 代价大。
+	if tier := team.Tier(out.Tier); tier != team.TierSimple && tier != team.TierComplex {
+		out.Tier = string(team.TierComplex)
+	}
 	if strings.TrimSpace(out.Title) == "" {
 		out.Title = t.Title
 	}
-	w, err := p.team.PickExcept(ctx, team.Category(out.Category), nil)
+	w, err := p.team.PickExcept(ctx, team.Category(out.Category), team.Tier(out.Tier), nil)
 	if err != nil {
 		return spent, fmt.Errorf("agent: 选任务模型失败: %w", err)
 	}
 	return internalStep(spent, ToolAssign,
-		assignRecord{Worker: w.Name, Category: out.Category, Title: out.Title, Round: 1},
-		fmt.Sprintf("按「%s」交给 %s 办理", team.CategoryName(team.Category(out.Category)), w.Name))
+		assignRecord{Worker: w.Name, Category: out.Category, Tier: out.Tier, Title: out.Title, Round: 1},
+		fmt.Sprintf("按「%s · %s」交给 %s 办理", team.CategoryName(team.Category(out.Category)), team.TierName(team.Tier(out.Tier)), w.Name))
 }
 
 // draft 让任务模型写一份简略的方案，再由主模型评估：同意，或者改。定下来的方案记进日志。
@@ -513,10 +520,11 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 			reviewRecord{Round: round + 1, Proposed: d.Reason, Feedback: feedback, Takeover: true}, "主模型审核：由主模型接手")
 	}
 	if out.Verdict == "reassign" && canReassign && feedback != "" {
+		// 改派按复杂的办：退回了几轮还不行，说明这件事比当初判断的难。
 		// 没有别的任务模型可换时，照下面的路收尾。
-		if w, err := p.team.PickExcept(ctx, team.Category(cur.Category), state.tried()); err == nil {
+		if w, err := p.team.PickExcept(ctx, team.Category(cur.Category), team.TierComplex, state.tried()); err == nil {
 			return internalStep(spent, ToolAssign,
-				assignRecord{Worker: w.Name, Category: cur.Category, Title: cur.Title, Round: cur.Round + 1, Why: feedback},
+				assignRecord{Worker: w.Name, Category: cur.Category, Tier: string(team.TierComplex), Title: cur.Title, Round: cur.Round + 1, Why: feedback},
 				fmt.Sprintf("主模型审核：改派给 %s 办理", w.Name))
 		}
 	}

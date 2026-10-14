@@ -31,6 +31,9 @@ type AgentConfig struct {
 	// GoodAt 限定它只接哪些类别（writing / code / analysis / translate / summary / creative / other）。
 	// 不写表示什么都接，由成绩说话。
 	GoodAt []string `yaml:"good_at,omitempty"`
+	// Tier 限定它只接哪一档难度（simple / complex），由主 AI 在指派时判断一件事的难度。
+	// 不写表示都接。
+	Tier string `yaml:"tier,omitempty"`
 	// Note 是给你自己看的备注。
 	Note      string `yaml:"note,omitempty"`
 	MaxTokens int    `yaml:"max_tokens,omitempty"`
@@ -43,7 +46,7 @@ type AgentConfig struct {
 func (f *File) Workers() []team.Worker {
 	out := make([]team.Worker, 0, len(f.Agents))
 	for _, a := range f.Agents {
-		w := team.Worker{Name: a.Name, Model: a.Model, Note: a.Note}
+		w := team.Worker{Name: a.Name, Model: a.Model, Tier: team.Tier(a.Tier), Note: a.Note}
 		for _, g := range a.GoodAt {
 			w.GoodAt = append(w.GoodAt, team.Category(g))
 		}
@@ -96,6 +99,9 @@ func (f *File) validateModels() error {
 			if !team.ValidCategory(team.Category(g)) {
 				return fmt.Errorf("config: 协作模型 %s 的 good_at 里没有 %q 这个类别", a.Name, g)
 			}
+		}
+		if !team.ValidTier(team.Tier(a.Tier)) {
+			return fmt.Errorf("config: 协作模型 %s 的 tier 只能是 simple 或 complex，实际 %q", a.Name, a.Tier)
 		}
 		if a.InputYuanPerMTok < 0 || a.OutputYuanPerMTok < 0 {
 			return fmt.Errorf("config: 协作模型 %s 的单价不能为负", a.Name)

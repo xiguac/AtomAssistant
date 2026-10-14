@@ -71,6 +71,29 @@ func ValidCategory(c Category) bool {
 	return false
 }
 
+// Tier 是一件事的难度档位。同一类的事可以按难度交给不同的模型：简单的给快而便宜的，复杂的给强的。
+// 难度由主模型在指派时判断；哪个模型接哪一档由用户配置。
+type Tier string
+
+const (
+	TierSimple  Tier = "simple"
+	TierComplex Tier = "complex"
+)
+
+// TierName 返回难度档位的中文名，空表示不限。
+func TierName(t Tier) string {
+	switch t {
+	case TierSimple:
+		return "简单"
+	case TierComplex:
+		return "复杂"
+	}
+	return "不限"
+}
+
+// ValidTier 报告一个难度档位是否存在。空表示不限，也算合法。
+func ValidTier(t Tier) bool { return t == "" || t == TierSimple || t == TierComplex }
+
 // Worker 是一个协作模型。
 type Worker struct {
 	// Name 是用户给它起的名字，成绩记在这个名字下。
@@ -79,8 +102,13 @@ type Worker struct {
 	Model string
 	// GoodAt 是用户指定它只接哪些类别。为空表示什么都接。
 	GoodAt []Category
-	Note   string
+	// Tier 是用户指定它只接哪一档难度。为空表示都接。
+	Tier Tier
+	Note string
 }
+
+// handles 报告这个协作模型接不接某一档难度。t 为空表示不看难度。
+func (w Worker) handles(t Tier) bool { return t == "" || w.Tier == "" || w.Tier == t }
 
 // takes 报告这个协作模型接不接某一类活。
 func (w Worker) takes(c Category) bool {
@@ -180,16 +208,52 @@ type Standing struct {
 	Worker Worker
 	Tally  Tally
 	// Next 为真表示这一类的下一份活会派给它。
-	Next bool
+	// 配了难度档位时，简单和复杂两档各有一个，NextFor 说是哪几档；没配时只有一个，NextFor 为空。
+	Next    bool
+	NextFor []Tier
 }
 
-// Standings 返回某个类别里各协作模型的成绩，下一份活会派给谁排在最前面。
+// Standings 返回某个类别里各协作模型的成绩，排在前面的先派。
 func (b *Board) Standings(ctx context.Context, c Category) ([]Standing, error) {
 	all, err := b.store.Tally(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return b.rank(c, all), nil
+	rows := b.rank(c, all)
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	if !b.tiered() {
+		rows[0].Next = true
+		return rows, nil
+	}
+	for _, t := range []Tier{TierSimple, TierComplex} {
+		i := firstFor(rows, t)
+		rows[i].Next = true
+		rows[i].NextFor = append(rows[i].NextFor, t)
+	}
+	return rows, nil
+}
+
+// tiered 报告有没有哪个协作模型配了难度档位。都没配时难度不影响派给谁。
+func (b *Board) tiered() bool {
+	for _, w := range b.workers {
+		if w.Tier != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// firstFor 在排好的名单里找出某一档难度先派给谁。
+// 这一类里没有接这一档的模型时，不让活没人做：按类别排在最前面的接。
+func firstFor(rows []Standing, t Tier) int {
+	for i, r := range rows {
+		if r.Worker.handles(t) {
+			return i
+		}
+	}
+	return 0
 }
 
 // rank 排出某个类别里的先后。
@@ -219,9 +283,6 @@ func (b *Board) rank(c Category, all []Tally) []Standing {
 		}
 		return a.Runs < z.Runs
 	})
-	if len(out) > 0 {
-		out[0].Next = true
-	}
 	return out
 }
 
@@ -249,24 +310,34 @@ func (b *Board) Pick(ctx context.Context, c Category) (Worker, error) {
 	return rows[0].Worker, nil
 }
 
-// PickExcept 决定某个类别的下一份活派给谁，但不派给 exclude 里的那些。
+// PickExcept 决定某个类别、某一档难度的下一份活派给谁，但不派给 exclude 里的那些。
 //
-// 一件事交给某个模型办了几轮仍不合格、要换人时用：exclude 是已经试过的。
+// 先在这一类里找接这一档的；没有就由这一类里的别的模型接。t 为空表示不看难度。
+// 一件事交给某个模型办了几轮仍不合格、要换人时，exclude 是已经试过的。
 // 除了它们再没有别人时返回错误。
-func (b *Board) PickExcept(ctx context.Context, c Category, exclude []string) (Worker, error) {
+func (b *Board) PickExcept(ctx context.Context, c Category, t Tier, exclude []string) (Worker, error) {
 	if len(b.workers) == 0 {
 		return Worker{}, fmt.Errorf("team: 没有配置协作模型")
 	}
 	if !ValidCategory(c) {
 		return Worker{}, fmt.Errorf("team: 没有 %q 这个类别", c)
 	}
-	rows, err := b.Standings(ctx, c)
+	if !ValidTier(t) {
+		return Worker{}, fmt.Errorf("team: 没有 %q 这一档难度", t)
+	}
+	all, err := b.store.Tally(ctx)
 	if err != nil {
 		return Worker{}, err
 	}
+	rows := b.rank(c, all)
 	tried := make(map[string]bool, len(exclude))
 	for _, name := range exclude {
 		tried[name] = true
+	}
+	for _, row := range rows {
+		if !tried[row.Worker.Name] && row.Worker.handles(t) {
+			return row.Worker, nil
+		}
 	}
 	for _, row := range rows {
 		if !tried[row.Worker.Name] {

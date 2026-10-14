@@ -206,7 +206,8 @@ func New(opts Options) (*Server, error) {
 		"add":        func(a, b int) int { return a + b },
 		"pct":        func(f float64) int { return int(f*100 + 0.5) },
 		// 配置里的类别是字符串，记录里的是 team.Category，两种都接。
-		"catName": func(c any) string { return team.CategoryName(team.Category(fmt.Sprint(c))) },
+		"catName":  func(c any) string { return team.CategoryName(team.Category(fmt.Sprint(c))) },
+		"tierName": func(t any) string { return team.TierName(team.Tier(fmt.Sprint(t))) },
 	}
 	pages, err := templateFS.ReadDir("templates")
 	if err != nil {

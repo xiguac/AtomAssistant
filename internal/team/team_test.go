@@ -78,6 +78,51 @@ func TestBoard_先试后比再按用户的评价派活(t *testing.T) {
 	}
 }
 
+func TestBoard_同一类按难度派给不同的模型(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemStore()
+	b := NewBoard(s, []Worker{
+		{Name: "快手", Tier: TierSimple},
+		{Name: "强手", Tier: TierComplex},
+		{Name: "写手", GoodAt: []Category{CatWriting}, Tier: TierSimple},
+	})
+	pickTier := func(c Category, tier Tier, exclude ...string) string {
+		t.Helper()
+		w, err := b.PickExcept(ctx, c, tier, exclude)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w.Name
+	}
+	if got := pickTier(CatAnalysis, TierSimple); got != "快手" {
+		t.Fatalf("简单的应派给接简单的，实际 %s", got)
+	}
+	if got := pickTier(CatAnalysis, TierComplex); got != "强手" {
+		t.Fatalf("复杂的应派给接复杂的，实际 %s", got)
+	}
+	// 这一档的人都试过了：由这一类里别的模型顶上。
+	if got := pickTier(CatAnalysis, TierComplex, "强手"); got != "快手" {
+		t.Fatalf("这一档没人了应由同类别的别的模型接，实际 %s", got)
+	}
+	// 成绩榜上两档各标出一个优先的。
+	rows, err := b.Standings(ctx, CatAnalysis)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := map[string][]Tier{}
+	for _, r := range rows {
+		if r.Next {
+			next[r.Worker.Name] = r.NextFor
+		}
+	}
+	if len(next) != 2 || len(next["快手"]) != 1 || next["快手"][0] != TierSimple || next["强手"][0] != TierComplex {
+		t.Fatalf("两档应各有一个优先的: %+v", next)
+	}
+	if _, err := b.PickExcept(ctx, CatAnalysis, "medium", nil); err == nil {
+		t.Fatal("不存在的难度应报错")
+	}
+}
+
 func TestStore_推断的评价分量轻且不覆盖用户的(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemStore()

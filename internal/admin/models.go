@@ -339,6 +339,7 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		Model:    strings.TrimSpace(r.PostFormValue("model")),
 		Note:     strings.TrimSpace(r.PostFormValue("note")),
 		GoodAt:   r.PostForm["good_at"],
+		Tier:     r.PostFormValue("tier"),
 	}
 	err := s.editModels(func(m *config.Models) error {
 		if a.Name == "" || a.Provider == "" || a.Model == "" {

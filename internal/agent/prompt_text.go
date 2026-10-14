@@ -163,10 +163,15 @@ const assignPrompt = `You are the main model of AtomHelper (原子助手). The u
 Output exactly one JSON object and nothing else:
 {
   "category": "the category of this task, one of the categories below",
+  "tier": "simple" | "complex",
   "title": "one sentence saying what this task is; the user will see it"
 }
 
-- Choose the category by the ability the task mainly tests.`
+- Choose the category by the ability the task mainly tests.
+- Choose the tier by how much judgement the task needs, not by how short the request is; the system may give simple tasks to a faster, weaker model.
+  simple: one clear goal, a few steps, little room to get it wrong (check the weather, translate a paragraph, note an appointment, a fact lookup).
+  complex: several factors to weigh, multi-step research, planning or recommendations, long or careful writing, code beyond a snippet, anything that changes or sends things, or a short request whose purpose implies more than it says.
+  When unsure, choose complex.`
 
 const draftPrompt = `You are the task model. The main model has given you a task from the user. Before doing anything, write a brief plan for the main model to evaluate.
 

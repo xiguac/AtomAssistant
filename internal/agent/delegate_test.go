@@ -314,11 +314,34 @@ func TestDelegate_评分高的任务模型优先(t *testing.T) {
 		t.Fatalf("同类的事应交给评分高的: %+v %v", assign, err)
 	}
 	// 换人时跳过已经办过的；都办过了就没人可换。
-	if w, err := board.PickExcept(ctx, team.CatAnalysis, []string{"乙"}); err != nil || w.Name != "甲" {
+	if w, err := board.PickExcept(ctx, team.CatAnalysis, "", []string{"乙"}); err != nil || w.Name != "甲" {
 		t.Fatalf("换人应跳过办过的: %+v %v", w, err)
 	}
-	if _, err := board.PickExcept(ctx, team.CatAnalysis, []string{"甲", "乙"}); err == nil {
+	if _, err := board.PickExcept(ctx, team.CatAnalysis, "", []string{"甲", "乙"}); err == nil {
 		t.Fatal("都办过了应无人可换")
+	}
+}
+
+func TestDelegate_按难度交给不同的任务模型(t *testing.T) {
+	ctx := context.Background()
+	board := team.NewBoard(team.NewMemStore(), []team.Worker{
+		{Name: "快手", Tier: team.TierSimple},
+		{Name: "强手", Tier: team.TierComplex},
+	})
+	cases := []struct{ reply, want, tier string }{
+		{`{"category":"other","tier":"simple","title":"查天气"}`, "快手", "simple"},
+		{`{"category":"analysis","tier":"complex","title":"规划行程"}`, "强手", "complex"},
+		// 没写难度的按复杂算。
+		{`{"category":"analysis","title":"规划行程"}`, "强手", "complex"},
+	}
+	for _, c := range cases {
+		p := NewPlanner(&fakeModel{replies: []string{c.reply}}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).
+			WithTaskModels(board, &scriptedWorkers{})
+		d, err := p.Decide(ctx, core.NewTask("t", "g", core.TrustUser), nil)
+		var assign assignRecord
+		if err != nil || json.Unmarshal(d.Input, &assign) != nil || assign.Worker != c.want || assign.Tier != c.tier {
+			t.Fatalf("%s 应交给 %s（%s）: %+v %v", c.reply, c.want, c.tier, assign, err)
+		}
 	}
 }
 
