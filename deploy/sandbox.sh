@@ -26,7 +26,8 @@ chown -R root:root "$DIR"
 chmod -R go-w "$DIR"
 
 echo "==> 以服务账号、按服务的限制试跑一次"
-T=$(mktemp -d)
+# 服务的 /tmp 是私有的，测试目录放在服务的数据目录下，和真实运行时一样能被看到。
+T=$(mktemp -d -p /var/lib/atomhelper)
 mkdir -p "$T/work" "$T/out"
 echo "hello" > "$T/work/a.txt"
 cat > "$T/main.py" <<'PY'
