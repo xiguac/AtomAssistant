@@ -40,8 +40,8 @@ func trustedStep(taskID string, seq int, tool string) *core.Step {
 }
 
 const learnedReply = `{"memories":[],"skills":[
-  {"id":"calendar.reschedule","name":"日程改期","goal":"把已有日程挪到别的时间","steps":["查目标日期全天日程","核对冲突后改期"],"tools":["calendar.events","calendar.update"]},
-  {"id":"builtin.dining","name":"冒名","goal":"g","steps":["s"],"tools":[]}
+  {"id":"calendar.reschedule","name":"日程改期","description":"把已有日程挪到别的时间。用户说改期、挪一下、换个时间时用","steps":["查目标日期全天日程，因为可能和课冲突","核对冲突后改期"],"pitfalls":["不要只凭用户一句话就定时间"],"tools":["calendar.events","calendar.update"]},
+  {"id":"builtin.dining","name":"冒名","description":"g","steps":["s"],"tools":[]}
 ]}`
 
 func TestEpilogue_办事方法写成Skill而不是记忆(t *testing.T) {
@@ -64,8 +64,10 @@ func TestEpilogue_办事方法写成Skill而不是记忆(t *testing.T) {
 		t.Fatal("提炼时应看到怎么写 Skill 和已有的 Skill，记忆里不再有流程这一类")
 	}
 	got := shelf["calendar.reschedule"]
-	if got == nil || !got.Learned() || !strings.Contains(got.Source, task.ID) || got.Format != skill.FormatManifest ||
-		len(got.Steps) != 2 || got.RequiredTools[1] != "calendar.update" {
+	if got == nil || !got.Learned() || !strings.Contains(got.Source, task.ID) || got.Format != skill.FormatMarkdown ||
+		!strings.HasPrefix(got.Raw, "---\nname: calendar.reschedule\ndescription: 把已有日程挪到别的时间") ||
+		!strings.Contains(got.Raw, "2. 核对冲突后改期") || !strings.Contains(got.Raw, "## 注意\n- 不要只凭") ||
+		!strings.Contains(got.Raw, "calendar.update") || !strings.Contains(got.Goal, "换个时间时用") {
 		t.Fatalf("应写成一份助手总结的 Skill: %+v", got)
 	}
 	if shelf["builtin.dining"].Name != "宴请订餐" {
@@ -73,12 +75,12 @@ func TestEpilogue_办事方法写成Skill而不是记忆(t *testing.T) {
 	}
 
 	// 同一类事再总结一次：整份换成新的，不另起一份。
-	model.replies = []string{`{"memories":[],"skills":[{"id":"calendar.reschedule","name":"日程改期","goal":"改期","steps":["先确认是哪一条","查当天日程","改期"],"tools":[]}]}`}
+	model.replies = []string{`{"memories":[],"skills":[{"id":"calendar.reschedule","name":"日程改期","description":"改期","steps":["先确认是哪一条","查当天日程","改期"],"tools":[]}]}`}
 	model.calls = 0
 	if _, err := NewEpilogue(model, memory.NewPipeline(st, nil)).WithSkills(shelf).TaskFinished(ctx, task, history); err != nil {
 		t.Fatal(err)
 	}
-	if len(shelf) != 2 || len(shelf["calendar.reschedule"].Steps) != 3 {
+	if len(shelf) != 2 || !strings.Contains(shelf["calendar.reschedule"].Raw, "3. 改期") {
 		t.Fatalf("同 ID 的助手总结应整份更新: %+v", shelf["calendar.reschedule"])
 	}
 }
@@ -185,7 +187,7 @@ func TestEpilogue_照着Skill办过且用户纠正了就更新那份Skill(t *tes
 	read.Input = []byte(`{"id":"calendar.reschedule"}`)
 	read.OutputTrust = core.TrustToolOutput
 	history := []*core.Step{read, userReplyStep(task.ID, 2, "改之前先看看那天有没有课")}
-	model := &fakeModel{replies: []string{`{"memories":[],"skills":[{"id":"calendar.reschedule","name":"日程改期","goal":"改期",
+	model := &fakeModel{replies: []string{`{"memories":[],"skills":[{"id":"calendar.reschedule","name":"日程改期","description":"改期",
 	  "steps":["先查那天的课和其他日程","没有冲突再改"],"tools":["calendar.events","calendar.update"]}]}`}}
 	ep := NewEpilogue(model, memory.NewPipeline(memstore.New(), nil)).WithSkills(shelf)
 	if _, err := ep.TaskFinished(ctx, task, history); err != nil {
@@ -194,7 +196,7 @@ func TestEpilogue_照着Skill办过且用户纠正了就更新那份Skill(t *tes
 	if system := model.lastReq.Messages[0].Content; !strings.Contains(system, "This task followed the Skill below") || !strings.Contains(system, "直接改到用户说的时间") {
 		t.Fatal("只走了一步也应请模型对照照着办过的 Skill 全文")
 	}
-	if got := shelf["calendar.reschedule"]; len(got.Steps) != 2 || !strings.Contains(got.Steps[0], "课") {
-		t.Fatalf("Skill 应按用户的纠正更新: %+v", got.Steps)
+	if got := shelf["calendar.reschedule"]; !strings.Contains(got.Raw, "1. 先查那天的课") {
+		t.Fatalf("Skill 应按用户的纠正更新: %s", got.Raw)
 	}
 }

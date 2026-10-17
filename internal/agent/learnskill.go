@@ -36,21 +36,57 @@ func (e *Epilogue) WithSkills(w SkillWriter) *Epilogue {
 // 总结出来只是一段谁都知道的话，还要占一行目录。
 const minSkillSteps = 3
 
+// learnSkillPrompt 的写法参考了 Anthropic 的 skill-creator：描述决定它会不会被想起来，
+// 要写清做什么、什么时候用；步骤用祈使句并说明理由；从这次的经过里提炼，尤其是用户纠正过的地方；
+// 概括成通用的做法，不贴合这一次的例子；能省的就省。
 const learnSkillPrompt = `Skills (how to do a kind of task):
-- Besides memories, the JSON object may have a top-level "skills" array: reusable methods for a kind of task, saved as Skills that the assistant reads only when that kind of task comes up again.
+- Besides memories, the JSON object may have a top-level "skills" array: reusable methods for a kind of task, saved as Skills. Next time, the assistant sees only each Skill's name and description, and reads the full text when the description matches the task at hand.
 - Write one only when all of these hold: the task took several steps; the method is not what any capable assistant would do anyway (it went wrong and was fixed, the user corrected the approach, or it needs a non-obvious order of checks or way of using a tool); and the same kind of task will clearly come up again. Most tasks need none: output "skills": [] and that is normal.
 - If one of the existing Skills below covers the same kind of task, update it: reuse its id and give the complete improved version. Never create a second Skill for the same kind of task. Existing Skills marked 不可改 cannot be updated; if one of them already covers the task, write nothing.
-- A Skill holds only the method. No data from this run (dates, times, people's names, prices, file names), and no facts or standing answers about the user: "courses are in the 个人 calendar" or "skip settlement statements" are memories (fact or preference), not part of a Skill.
-- Do not describe the assistant's own capabilities or limits; they change.
-- Each item: {"id": "lowercase English slug such as calendar.reschedule", "name": "short name in Simplified Chinese", "goal": "one sentence in Simplified Chinese saying which tasks it applies to", "steps": ["Simplified Chinese, one step per item, at most 8"], "tools": ["full names of the tools the steps use"]}`
+- Work from what actually happened: the tools used and in what order, what went wrong and how it was fixed, and above all what the user corrected or insisted on. Those corrections are the most valuable part.
+- Generalize: write the method for the whole kind of task, not for this one example. No data from this run (dates, times, people's names, prices, file names), and no facts or standing answers about the user: "courses are in the 个人 calendar" or "skip settlement statements" are memories (fact or preference), not part of a Skill.
+- Write steps in the imperative, and when a step is not self-evident, say why in a few words ("check the whole day first, because the user has classes the new time may clash with"). Explaining the reason works better than piling up "must"s.
+- Keep it lean: leave out anything a capable assistant would do anyway. Do not describe the assistant's own capabilities or limits; they change.
+- Each item, all text in Simplified Chinese except id and tools:
+  {"id": "lowercase English slug such as calendar.reschedule",
+   "name": "short name",
+   "description": "what it does and when to use it, in one or two sentences. This is what decides whether the Skill gets read, so name the kinds of requests and phrasings it covers, including ones that do not use its exact words",
+   "steps": ["one step per item, at most 8"],
+   "output": "what the reply to the user should contain; empty if nothing special",
+   "pitfalls": ["mistakes to avoid, especially ones made before or corrected by the user; may be empty"],
+   "tools": ["full names of the tools the steps use"]}`
 
 // learnedSkill 是模型提炼出的一份办事方法。
 type learnedSkill struct {
-	ID    string   `json:"id"`
-	Name  string   `json:"name"`
-	Goal  string   `json:"goal"`
-	Steps []string `json:"steps"`
-	Tools []string `json:"tools"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Steps       []string `json:"steps"`
+	Output      string   `json:"output"`
+	Pitfalls    []string `json:"pitfalls"`
+	Tools       []string `json:"tools"`
+}
+
+// markdown 把一份办事方法写成 SKILL.md：开头是名字和描述，正文是步骤、输出要求和注意事项。
+func (l learnedSkill) markdown(id string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "---\nname: %s\ndescription: %s\n---\n\n# %s\n\n## 步骤\n", id, oneLine(l.Description), strings.TrimSpace(l.Name))
+	for i, s := range l.Steps {
+		fmt.Fprintf(&sb, "%d. %s\n", i+1, strings.TrimSpace(s))
+	}
+	if out := strings.TrimSpace(l.Output); out != "" {
+		sb.WriteString("\n## 答复\n" + out + "\n")
+	}
+	if len(l.Pitfalls) > 0 {
+		sb.WriteString("\n## 注意\n")
+		for _, p := range l.Pitfalls {
+			sb.WriteString("- " + strings.TrimSpace(p) + "\n")
+		}
+	}
+	if len(l.Tools) > 0 {
+		sb.WriteString("\n## 用到的工具\n" + strings.Join(l.Tools, "、") + "\n")
+	}
+	return sb.String()
 }
 
 // skillWorthy 报告这个任务值不值得考虑总结方法。
@@ -146,16 +182,17 @@ func (e *Epilogue) saveSkills(ctx context.Context, t *core.Task, learned []learn
 			errs = append(errs, fmt.Errorf("agent: Skill %s 不是助手总结的，不能改写", id))
 			continue
 		}
-		s, err := skill.Compose(&skill.Skill{
-			ID: id, Name: strings.TrimSpace(l.Name), Goal: strings.TrimSpace(l.Goal),
-			Steps: l.Steps, RequiredTools: l.Tools, Author: "原子助手",
-		})
-		if err != nil {
-			errs = append(errs, fmt.Errorf("agent: 总结出的 Skill %q 不合法: %w", id, err))
+		// 写成参考文档类（SKILL.md）：助手总结的 Skill 不绑定任务、不收窄工具，只在用得上时读来参考。
+		s := &skill.Skill{
+			ID: id, Name: strings.TrimSpace(l.Name), Goal: oneLine(l.Description),
+			Author: "原子助手", Format: skill.FormatMarkdown, Raw: l.markdown(id),
+			Source:      skill.SourceLearned + "（任务 " + t.ID + "）",
+			InstalledAt: e.now(),
+		}
+		if err := s.Validate(); err != nil || len(l.Steps) == 0 {
+			errs = append(errs, fmt.Errorf("agent: 总结出的 Skill %q 不合法（需要名称、描述和至少一个步骤）: %v", id, err))
 			continue
 		}
-		s.Source = skill.SourceLearned + "（任务 " + t.ID + "）"
-		s.InstalledAt = e.now()
 		if err := e.skills.PutSkill(ctx, s); err != nil {
 			errs = append(errs, err)
 		}
