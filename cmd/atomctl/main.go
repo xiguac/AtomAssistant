@@ -49,12 +49,18 @@ const usage = `用法:
                                  不带 --yes 只清点不删除；清掉的找不回来
 
   atomctl memory list [all]      查看生效的记忆；加 all 连已经归档、过期的也列出来
-  atomctl memory pending         查看助手提炼出来、等你确认的记忆与流程
+  atomctl memory pending         查看助手提炼出来、等你确认的记忆
   atomctl memory confirm <ID>    确认一条，让它生效
   atomctl memory dismiss <ID>    否决一条
+  atomctl memory forget <ID>     归档一条已生效的记忆（不物理删除）
+  atomctl memory add <类型> <主体> <领域> <内容> [属性]
+                                 以你本人的名义记一条：类型 fact / preference / entity，主体本人写 user
 
   atomctl skill install <路径> [--yes]
                                  安装一个 Skill。先扫描，再展示全文和它要用的工具，确认后才装
+  atomctl skill fetch <owner/repo/name> [--accept]
+                                 从公开 Skill 库装一个 SKILL.md，与助手自己安装一样先扫描；有外传风险时要加 --accept
+  atomctl skill put <SKILL.md>   把整理好的 SKILL.md 存成助手总结类的 Skill（元数据里的 name 作为 id）
   atomctl skill list | show <ID> | rm <ID>
                                  助手自己找来装上的 Skill 也在其中
   atomctl mcp list | rm <名称>   查看、移除助手自己找来装上的 MCP server

@@ -12,6 +12,7 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/skill"
 	"github.com/xiguac/atomhelper/internal/skillscan"
 	"github.com/xiguac/atomhelper/internal/store/pg"
@@ -20,7 +21,7 @@ import (
 // skillCmd 处理 atomctl skill 的子命令。
 func skillCmd(ctx context.Context, st *pg.Store, cfg *config.Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("skill 需要子命令: install / list / show / rm")
+		return fmt.Errorf("skill 需要子命令: install / fetch <owner/repo/name> [--accept] / put <SKILL.md> / list / show / rm")
 	}
 	store := st.Skills()
 	switch args[0] {
@@ -29,6 +30,16 @@ func skillCmd(ctx context.Context, st *pg.Store, cfg *config.Config, args []stri
 			return fmt.Errorf("install 需要一个 Skill 目录或清单文件的路径")
 		}
 		return installSkill(ctx, store, cfg, args[1], len(args) > 2 && args[2] == "--yes")
+	case "fetch":
+		if len(args) < 2 {
+			return fmt.Errorf("fetch 需要公开 Skill 库里的 id，如 anthropics/skills/docx")
+		}
+		return fetchSkill(ctx, store, cfg, args[1], len(args) > 2 && args[2] == "--accept")
+	case "put":
+		if len(args) < 2 {
+			return fmt.Errorf("put 需要一个 SKILL.md 文件的路径")
+		}
+		return putLearnedSkill(ctx, store, args[1])
 	case "list":
 		items, err := store.ListSkills(ctx)
 		if err != nil {
@@ -119,6 +130,75 @@ func installSkill(ctx context.Context, store skill.Store, cfg *config.Config, pa
 		return err
 	}
 	fmt.Printf("已安装 %s。用 atomctl run %s <标题> [目标] 让一个任务按它执行。\n", s.ID, s.ID)
+	return nil
+}
+
+// fetchSkill 从公开 Skill 库装一个 SKILL.md：和助手自己安装走同一套下载、扫描与风险评估。
+// 扫描判出会把数据外传或高危的内容时只列出风险点，要装须再带 --accept。
+func fetchSkill(ctx context.Context, store skill.Store, cfg *config.Config, id string, accept bool) error {
+	scanCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 6*time.Minute)
+	defer cancel()
+	in := &market.Installer{
+		Client:  &market.Client{},
+		Scanner: skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
+		Skills:  store,
+	}
+	fmt.Fprintln(os.Stderr, "正在下载并扫描……")
+	s, pending, err := in.InstallSkill(scanCtx, id, false)
+	if err != nil {
+		return err
+	}
+	if pending != nil {
+		fmt.Println("扫描发现需要你拿主意的风险点：")
+		for _, r := range pending.Risks {
+			fmt.Println("  - " + r)
+		}
+		if !accept {
+			return fmt.Errorf("没有安装。确认要装的话加 --accept 再执行一次")
+		}
+		if s, _, err = in.InstallSkill(scanCtx, id, true); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("已安装 %s（%s）\n", s.ID, s.Name)
+	return nil
+}
+
+// putLearnedSkill 把一份 SKILL.md 存成助手总结类的 Skill，用于手工整理助手总结的 Skill。
+// 不过扫描：扫描防的是别人写的东西，这里是用户自己写的。
+func putLearnedSkill(ctx context.Context, store skill.Store, path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	// id 取自元数据里的 name；名称取正文的第一个标题，没有就用 id。
+	const unnamed = "unnamed"
+	s, err := skill.ParseMarkdown(raw, unnamed)
+	if err != nil {
+		return err
+	}
+	id := s.Name
+	if id == unnamed {
+		return fmt.Errorf("SKILL.md 开头的元数据里要写 name（作为 id）和 description")
+	}
+	s.ID, s.Name = id, id
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		if title, ok := strings.CutPrefix(line, "# "); ok {
+			s.Name = strings.TrimSpace(title)
+			break
+		}
+	}
+	if existing, err := store.GetSkill(ctx, id); err == nil && !existing.Learned() {
+		return fmt.Errorf("已有一个不是助手总结的 %s，不覆盖", id)
+	}
+	s.Author, s.Source, s.InstalledAt = "原子助手", skill.SourceLearned+"（人工整理）", time.Now().UTC()
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if err := store.PutSkill(ctx, s); err != nil {
+		return err
+	}
+	fmt.Printf("已保存 %s（%s）\n", s.ID, s.Name)
 	return nil
 }
 

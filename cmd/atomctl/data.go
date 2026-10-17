@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/config"
+	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
@@ -23,7 +24,7 @@ import (
 // 不会直接生效，先挂在 pending 里等用户在这里确认。
 func memoryCmd(ctx context.Context, st *pg.Store, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("memory 需要子命令: list / pending / confirm <ID> / dismiss <ID>")
+		return fmt.Errorf("memory 需要子命令: list / pending / confirm <ID> / dismiss <ID> / forget <ID> / add <类型> <主体> <领域> <内容> [属性]")
 	}
 	store := st.Memories()
 	switch args[0] {
@@ -83,6 +84,40 @@ func memoryCmd(ctx context.Context, st *pg.Store, args []string) error {
 			return fmt.Errorf("dismiss 需要一个待确认记忆的 ID")
 		}
 		return memory.NewPipeline(store, nil).Dismiss(ctx, args[1])
+	case "forget":
+		// 归档，不物理删除：之后还能回溯。和后台记忆页上的「删除」是同一个操作。
+		if len(args) < 2 {
+			return fmt.Errorf("forget 需要一个记忆 ID")
+		}
+		if err := memory.NewPipeline(store, nil).Forget(ctx, args[1]); err != nil {
+			return err
+		}
+		fmt.Printf("已归档 %s，不再被使用\n", args[1])
+		return nil
+	case "add":
+		// 在这里写的就是用户本人写的，和他在聊天里亲口说的同等对待。
+		if len(args) < 5 {
+			return fmt.Errorf("add 需要: <fact|preference|entity> <主体，本人写 user> <领域> <内容> [属性]")
+		}
+		cand := memory.Candidate{
+			Kind: memory.Kind(args[1]), Subject: args[2], Domain: args[3], Value: args[4],
+			Temporality: memory.TemporalDurable,
+			Source:      memory.Source{Kind: memory.SourceUser, Ref: "atomctl", Trust: core.TrustUser},
+		}
+		if len(args) > 5 {
+			cand.Attribute = args[5]
+		}
+		if cand.Kind == memory.KindPlaybook {
+			return fmt.Errorf("办事的方法写成 Skill（atomctl skill put），不写进记忆")
+		}
+		out, err := memory.NewPipeline(store, nil).Ingest(ctx, []memory.Candidate{cand})
+		if err != nil {
+			return err
+		}
+		for _, o := range out {
+			fmt.Printf("%s %s\n", o.Resolution, dash(o.MemoryID+o.PendingID))
+		}
+		return nil
 	default:
 		return fmt.Errorf("未知的 memory 子命令 %q", args[0])
 	}
