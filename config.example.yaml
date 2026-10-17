@@ -58,8 +58,9 @@ fallback:
 #   name     自己起的名字，成绩记在它下面
 #   good_at  只让它接哪几类：writing / code / analysis / translate / summary / creative / other
 #            不写就是什么都接，由成绩说话
-#   tier     只让它接哪一档难度：simple / complex。主 AI 指派时判断每件事是简单还是复杂，
-#            同一类里简单的交给接 simple 的、复杂的交给接 complex 的；不写就是都接
+#   tier     只让它接哪一档难度：simple / complex；不写就是都接。
+#            主 AI 指派时先判断一件事是短程的还是要规划的：短程的由主 AI 自己办，不派给协作模型，
+#            所以 tier: simple 的协作模型接不到活；要规划的交给不限难度或 tier: complex 的
 # ---------------------------------------------------------------
 # agents:
 #   - name: 写手
@@ -69,7 +70,6 @@ fallback:
 #   - name: 快手
 #     provider: deepseek
 #     model: deepseek-chat
-#     tier: simple
 #   - name: 码农
 #     provider: deepseek
 #     model: deepseek-reasoner

@@ -322,14 +322,15 @@ func TestDelegate_评分高的任务模型优先(t *testing.T) {
 	}
 }
 
-func TestDelegate_按难度交给不同的任务模型(t *testing.T) {
+func TestDelegate_简单的主模型自己办复杂的按难度交给任务模型(t *testing.T) {
 	ctx := context.Background()
 	board := team.NewBoard(team.NewMemStore(), []team.Worker{
 		{Name: "快手", Tier: team.TierSimple},
 		{Name: "强手", Tier: team.TierComplex},
 	})
 	cases := []struct{ reply, want, tier string }{
-		{`{"category":"other","tier":"simple","title":"查天气"}`, "快手", "simple"},
+		// 简单的不派出去：指派记录里没有任务模型。
+		{`{"category":"other","tier":"simple","title":"查天气"}`, "", "simple"},
 		{`{"category":"analysis","tier":"complex","title":"规划行程"}`, "强手", "complex"},
 		// 没写难度的按复杂算。
 		{`{"category":"analysis","title":"规划行程"}`, "强手", "complex"},
@@ -340,20 +341,22 @@ func TestDelegate_按难度交给不同的任务模型(t *testing.T) {
 		d, err := p.Decide(ctx, core.NewTask("t", "g", core.TrustUser), nil)
 		var assign assignRecord
 		if err != nil || json.Unmarshal(d.Input, &assign) != nil || assign.Worker != c.want || assign.Tier != c.tier {
-			t.Fatalf("%s 应交给 %s（%s）: %+v %v", c.reply, c.want, c.tier, assign, err)
+			t.Fatalf("%s 应交给 %q（%s）: %+v %v", c.reply, c.want, c.tier, assign, err)
 		}
 	}
 }
 
-func TestDelegate_简单的事不写方案不经审核直接答复(t *testing.T) {
+func TestDelegate_简单的事主模型直接办不写方案不经审核(t *testing.T) {
 	ctx := context.Background()
 	task := core.NewTask("查天气", "上海明天天气", core.TrustUser)
-	main := &fakeModel{replies: []string{`{"category":"analysis","tier":"simple","title":"查天气"}`}}
-	workers := &scriptedWorkers{replies: []string{
+	main := &fakeModel{replies: []string{
+		`{"category":"other","tier":"simple","title":"查天气"}`,
 		`{"action":"tool","tool":"demo.weather","params":{"city":"上海"},"reason":"查天气"}`,
 		`{"action":"finish","reason":"上海明天晴，21 度。"}`,
 	}}
+	workers := &scriptedWorkers{replies: []string{`{"action":"fail","reason":"不该叫到任务模型"}`}}
 	p, store, run := delegated(t, main, workers)
+	p = p.WithVoice(shortVoice{})
 
 	d, err := p.Decide(ctx, task, nil)
 	if err != nil || d.ToolName != ToolAssign {
@@ -361,27 +364,26 @@ func TestDelegate_简单的事不写方案不经审核直接答复(t *testing.T)
 	}
 	history := run(task, nil, d)
 
-	// 指派之后直接由任务模型调工具，没有方案这一步。
+	// 指派之后主模型直接调工具，没有方案这一步；它照常看得到用户的表达风格。
 	d, err = p.Decide(ctx, task, history)
 	if err != nil || d.ToolName != "demo.weather" {
-		t.Fatalf("简单的事应由任务模型直接动手: %+v %v", d, err)
+		t.Fatalf("简单的事应由主模型直接动手: %+v %v", d, err)
 	}
-	system := workers.reqs[0].Messages[0].Content
-	if !strings.Contains(system, "handling a simple task directly") || strings.Contains(system, "goes to the main model for review") {
-		t.Fatal("任务模型应拿到直接办理的说明，而不是交给主模型审核的那一段")
+	if seen := text(main.lastReq); !strings.Contains(seen, "说话很短，不用客套") || strings.Contains(seen, "You are the task model") {
+		t.Fatal("主模型自己办时应看到表达风格，且不该拿到任务模型的说明")
 	}
 	history = append(history, weatherStep(task.ID, len(history)+1, "demo.weather", `{"city":"上海"}`, `{"temp":21}`))
 
-	// 任务模型说办完了，结论原样给用户，主模型不再审核。
+	// 主模型说办完了就是办完了，不再审核自己。
 	d, err = p.Decide(ctx, task, history)
 	if err != nil || d.Kind != kernel.DecideFinish || d.Reason != "上海明天晴，21 度。" {
-		t.Fatalf("应以任务模型的结论结束: %+v %v", d, err)
+		t.Fatalf("应以主模型的结论结束: %+v %v", d, err)
 	}
-	if main.calls != 1 {
-		t.Fatalf("主模型只应在指派时被叫到一次，实际 %d 次", main.calls)
+	if len(workers.reqs) != 0 || main.calls != 3 {
+		t.Fatalf("任务模型不应被叫到，主模型只指派、调工具、结束各一次: workers=%d main=%d", len(workers.reqs), main.calls)
 	}
-	if works, _ := store.WorkOfTask(ctx, task.ID); len(works) != 1 || works[0].Worker != "分析师" {
-		t.Fatalf("应记下是谁办的，供用户评分: %+v", works)
+	if works, _ := store.WorkOfTask(ctx, task.ID); len(works) != 0 {
+		t.Fatalf("主模型自己办的不记成可评分的活: %+v", works)
 	}
 }
 

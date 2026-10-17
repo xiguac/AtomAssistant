@@ -25,7 +25,8 @@ import (
 //  5. 换人（主模型）：退回了几轮仍不满意，主模型可以把这件事改派给另一个任务模型，
 //     从方案开始重来。
 //
-// 主模型指派时判为简单（simple）的事不走 2、4、5：任务模型直接办完，它的结论就是给用户的答复。
+// 主模型指派时判为简单（simple）的事——一两步就办完的查询、记一件事——不派出去，由主模型自己一步步办，
+// 和没配任务模型时一样。只有要规划的、长程的、复杂的事才走上面这套。
 //
 // 任务模型选谁不由主模型点名：主模型只判断类别，人选由评分决定——用户对回答的评分记在
 // 办这件事的那个模型名下，同类的事优先交给评分高的，见 internal/team。
@@ -70,6 +71,7 @@ type TaskAssigner interface {
 
 // assignRecord 是一次指派，存在 task.assign 这一步里。
 type assignRecord struct {
+	// Worker 为空表示这件事简单，主模型自己办。
 	Worker   string `json:"worker"`
 	Category string `json:"category"`
 	// Tier 是主模型判断的难度：simple 或 complex。
@@ -256,19 +258,13 @@ func (p *Planner) decideDelegated(ctx context.Context, t *core.Task, history []*
 	if cur == nil {
 		return p.assign(ctx, t, history)
 	}
+	if cur.Worker == "" {
+		// 简单的事主模型自己办：起草、评估方案和审核结果各要一次带全部上下文的调用，
+		// 建一条日程这样的事光这三次就占了一半的用量。主模型办的不记成可评分的活：评分是用来挑任务模型的。
+		return p.decide(ctx, t, history)
+	}
 	cp := *p
 	cp.worker = cur.Worker
-	if team.Tier(cur.Tier) == team.TierSimple {
-		// 简单的事由任务模型直接办完：起草、评估方案和审核结果各要一次带全部上下文的调用，
-		// 建一条日程这样的事光这三次就占了一半的用量。改、删已有东西照旧由主模型把关（decide 里的 guard）。
-		// 改派一律按复杂的办，所以走到这里的总是第一次指派。
-		cp.direct = true
-		d, err := cp.decide(ctx, t, history)
-		if err != nil || d.Kind != kernel.DecideFinish {
-			return d, err
-		}
-		return d, p.recordWork(ctx, t, state)
-	}
 	if state.brief == nil {
 		return cp.draft(ctx, t, history)
 	}
@@ -395,6 +391,12 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	}
 	if strings.TrimSpace(out.Title) == "" {
 		out.Title = t.Title
+	}
+	if team.Tier(out.Tier) == team.TierSimple {
+		// 一两步就能办完的事不派出去，主模型自己办。指派仍然记一条，之后每一步据此知道该谁做。
+		return internalStep(spent, ToolAssign,
+			assignRecord{Category: out.Category, Tier: out.Tier, Title: out.Title, Round: 1},
+			fmt.Sprintf("按「%s · %s」由主模型直接办理", team.CategoryName(team.Category(out.Category)), team.TierName(team.TierSimple)))
 	}
 	w, err := p.team.PickExcept(ctx, team.Category(out.Category), team.Tier(out.Tier), nil)
 	if err != nil {
