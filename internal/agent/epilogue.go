@@ -15,15 +15,15 @@ import (
 	"github.com/xiguac/atomhelper/internal/style"
 )
 
-const epilogueSystemPrompt = `Your job, after a task has finished, is to distill what is worth remembering long-term. The goal is for the assistant to understand this user better with every use, and to turn what was done into a standard procedure that can be followed next time.
+const epilogueSystemPrompt = `Your job, after a task has finished, is to distill what is worth remembering long-term about the user. The goal is for the assistant to understand this user better with every use.
 
 Output exactly one JSON object and nothing else:
 {
   "memories": [
     {
-      "kind": "fact" | "preference" | "entity" | "playbook",
+      "kind": "fact" | "preference" | "entity",
       "subject": "user, or what a related person/place is called (e.g. 客户张总)",
-      "domain": "the area, e.g. 居住, 出行, 饮食, 旅游出行规划",
+      "domain": "the area, e.g. 居住, 出行, 饮食",
       "attribute": "required when kind=entity: the attribute name, e.g. 忌口",
       "condition": {"场景": "the scene in which the preference applies; an empty object if none"},
       "value": "what to remember",
@@ -43,11 +43,7 @@ What to record:
 - preference: the user's habits and preferences, always with the scene in which they apply. "Prefers high-speed rail for travel" is not enough;
   write it as condition {场景: 800公里以内} → 高铁. One area may have several entries for different scenes.
 - entity: attributes of related people or places, such as a client's dietary restrictions or a family member's birthday. Mark allergies, illnesses and taboos as safety_critical.
-- playbook: when this kind of task will come up again, write the method as a general procedure. domain is the task type,
-  value is numbered steps: what to confirm first, which factors to check, in what order, how to reach the conclusion, and where things went wrong.
-  A procedure contains only the method, never this run's specific data (no fares, dates or order numbers).
-  For "what to confirm first", separate two cases: where the user gave an answer this time that holds from now on, write the answer into the procedure so it need not be asked again;
-  where the situation differs every time and must be asked anew, state what to ask.
+- How to do a kind of task (steps, order of checks, pitfalls) is not a memory. Never write methods into memories.
 
 What not to record:
 - Things that only matter for this one task (which restaurant tonight, this order number).
@@ -63,15 +59,17 @@ type MemoryWriter interface {
 	Ingest(ctx context.Context, cands []memory.Candidate) ([]memory.Outcome, error)
 }
 
-// Epilogue 在任务完成后提炼记忆与流程。
+// Epilogue 在任务完成后提炼记忆，并把值得复用的办事方法写成 Skill。
 //
-// 这是"越用越懂你"的落点：对话里透露的住址、习惯、相关的人，
-// 以及这类事情该怎么办，都在这里沉淀下来，而不是随任务结束一起消失。
+// 这是"越用越懂你"的落点：对话里透露的住址、习惯、相关的人记进记忆，
+// 这类事情该怎么办写成 Skill，都在这里沉淀下来，而不是随任务结束一起消失。
 type Epilogue struct {
 	model  Completer
 	writer MemoryWriter
 	voice  VoiceLearner
 	team   WorkRater
+	// skills 非空时，值得复用的办事方法写成 Skill，见 learnskill.go。
+	skills SkillWriter
 	// tidy 非空时，收尾顺带整理推断出来的记忆，见 tidy.go。
 	tidy     *tidier
 	maxChars int
@@ -173,8 +171,26 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 		})
 	}
 
+	// 任务读过外部内容没有，决定了"不是用户说的"那部分算推断还是算外来的，也决定了要不要总结方法。
+	tainted := t.Origin < core.TrustUser
+	for _, s := range history {
+		if s.Status == core.StepDone && s.OutputTrust == core.TrustExternal &&
+			s.ToolName != ToolCalendarEvents && s.ToolName != ToolCalendarList {
+			tainted = true
+		}
+	}
+
+	system := epilogueSystemPrompt
+	learn := e.skillWorthy(history, tainted)
+	if learn {
+		section, err := e.skillSection(ctx)
+		if err != nil {
+			return kernel.Cost{}, err
+		}
+		system += "\n\n" + section
+	}
 	msgs, err := llm.Build(segs, llm.BuildOptions{
-		SystemPrompt: epilogueSystemPrompt + "\n\nCurrent time: " + e.now().Local().Format(time.RFC3339),
+		SystemPrompt: system + "\n\nCurrent time: " + e.now().Local().Format(time.RFC3339),
 		MaxChars:     e.maxChars,
 	})
 	if err != nil {
@@ -192,18 +208,10 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 
 	var out struct {
 		Memories []extractedMemory `json:"memories"`
+		Skills   []learnedSkill    `json:"skills"`
 	}
 	if err := json.NewDecoder(strings.NewReader(stripFence(resp.Content))).Decode(&out); err != nil {
 		return cost, fmt.Errorf("agent: 提炼结果不是合法 JSON: %w (原文: %s)", err, truncate(resp.Content, 200))
-	}
-
-	// 任务读过外部内容没有，决定了"不是用户说的"那部分算推断还是算外来的。
-	tainted := t.Origin < core.TrustUser
-	for _, s := range history {
-		if s.Status == core.StepDone && s.OutputTrust == core.TrustExternal &&
-			s.ToolName != ToolCalendarEvents && s.ToolName != ToolCalendarList {
-			tainted = true
-		}
 	}
 
 	// 逐条写入：一条不合法不该让其余的也记不下来。
@@ -217,6 +225,10 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 		if _, err := e.writer.Ingest(ctx, []memory.Candidate{cand}); err != nil {
 			errs = append(errs, fmt.Errorf("agent: 写入记忆 %q 失败: %w", truncate(em.Value, 40), err))
 		}
+	}
+	// 没请它总结方法时，它自己写出来的也不要。
+	if learn && len(out.Skills) > 0 {
+		errs = append(errs, e.saveSkills(ctx, t, out.Skills))
 	}
 	return cost, errors.Join(errs...)
 }
@@ -255,9 +267,9 @@ func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string
 		}
 		cand.ValidUntil = &at
 	}
-	// 收尾只产出这四类；情景摘要由任务归档负责。
+	// 收尾只产出这三类：办事方法写成 Skill（见 learnskill.go），情景摘要由任务归档负责。
 	switch cand.Kind {
-	case memory.KindFact, memory.KindPreference, memory.KindEntity, memory.KindPlaybook:
+	case memory.KindFact, memory.KindPreference, memory.KindEntity:
 	default:
 		return cand, fmt.Errorf("agent: 不支持提炼 %q 类型的记忆", em.Kind)
 	}
@@ -269,9 +281,7 @@ func (e *Epilogue) candidate(t *core.Task, em extractedMemory, userSaid []string
 	if tainted {
 		cand.Source.Trust = core.TrustExternal
 	}
-	// 流程不适用引文核验：引文只能证明用户说过某句话，证明不了整套做法是用户认可的。
-	// 所以流程总是算作助手的推断，在上下文里标成"参考做法"而不是必须遵守的标准流程。
-	if cand.Kind != memory.KindPlaybook && quoted(em.Quote, userSaid) {
+	if quoted(em.Quote, userSaid) {
 		cand.Source = memory.Source{Kind: memory.SourceUser, Ref: t.ID, Trust: core.TrustUser}
 		cand.Evidence = append(cand.Evidence, "用户原话: "+strings.TrimSpace(em.Quote))
 	}

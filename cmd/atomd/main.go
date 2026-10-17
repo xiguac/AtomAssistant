@@ -33,6 +33,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomhelper/internal/skill"
 	"github.com/xiguac/atomhelper/internal/skillscan"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/style"
@@ -401,8 +402,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	// 记忆与任务同库，共用连接池。
 	memStore := st.Memories()
-	if err := memory.Seed(ctx, memStore, time.Now().UTC()); err != nil {
+	// 办事的方法放在 Skill 里，不放在记忆里：出厂的流程写成内置 Skill，记忆里以前总结的流程挪过去。
+	if err := skill.SeedBuiltin(ctx, st.Skills(), time.Now().UTC()); err != nil {
 		return nil, fmt.Errorf("写入内置流程失败: %w", err)
+	}
+	if n, err := agent.MovePlaybooks(ctx, memStore, st.Skills(), time.Now().UTC()); err != nil {
+		return nil, fmt.Errorf("把记忆里的流程挪成 Skill 失败: %w", err)
+	} else if n > 0 {
+		log.Info("记忆里的流程已挪成 Skill，原记忆已归档", "条数", n)
 	}
 	mem := memory.NewRetriever(memStore, nil)
 	log.Info("记忆系统就绪")
@@ -446,7 +453,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	pipeline := memory.NewPipeline(memStore, nil)
 	// 推断出来的记忆攒多了，由主模型把说的是同一件事的并成一条，免得用户要逐条确认一大堆。
-	epilogue := agent.NewEpilogue(router, pipeline).WithMemoryTidy(pipeline)
+	epilogue := agent.NewEpilogue(router, pipeline).WithMemoryTidy(pipeline).WithSkills(st.Skills())
 	// 表达风格：从用户亲口说的话里学，替他写东西、对他说话时用。
 	if file.Reply.LearnVoice() {
 		voice := style.NewLearner(st.Style(), router)

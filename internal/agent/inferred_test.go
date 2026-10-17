@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/memory"
@@ -24,8 +25,6 @@ func TestEpilogue_助手的推断直接以轻分量记下(t *testing.T) {
 	  {"kind":"preference","subject":"user","domain":"出行","condition":{"场景":"周末短途"},
 	   "value":"车程两小时以内","temporality":"durable","quote":"开车两小时以内吧"},
 	  {"kind":"fact","subject":"user","domain":"居住","value":"住在杭州一带","temporality":"durable","quote":""},
-	  {"kind":"playbook","subject":"user","domain":"周末短途出行",
-	   "value":"1. 确认车程上限 2. 查天气 3. 给两个备选","temporality":"durable","quote":""},
 	  {"kind":"entity","subject":"user","domain":"饮食","attribute":"过敏","value":"可能对海鲜过敏",
 	   "temporality":"permanent","safety_critical":true,"quote":""}
 	]}`}}
@@ -42,12 +41,9 @@ func TestEpilogue_助手的推断直接以轻分量记下(t *testing.T) {
 	if p := byKind[memory.KindPreference]; p == nil || p.Inferred() || p.Confidence < 0.9 {
 		t.Fatalf("用户亲口说的偏好应直接以重分量生效: %+v", p)
 	}
-	// 助手自己推断的事实和总结的流程：不问用户，直接记下，但分量轻、标明是推断。
-	for _, kind := range []memory.Kind{memory.KindFact, memory.KindPlaybook} {
-		m := byKind[kind]
-		if m == nil || !m.Inferred() || m.Confidence != memory.InferredConfidence {
-			t.Fatalf("%s 应作为推断以轻分量记下: %+v", kind, m)
-		}
+	// 助手自己推断的事实：不问用户，直接记下，但分量轻、标明是推断。
+	if m := byKind[memory.KindFact]; m == nil || !m.Inferred() || m.Confidence != memory.InferredConfidence {
+		t.Fatalf("推断的事实应以轻分量记下: %+v", m)
 	}
 	// 安全相关的推断是例外：记错一次就是事故，仍然等用户点头。
 	pending, _ := st.ListPending(ctx, "")
@@ -55,7 +51,14 @@ func TestEpilogue_助手的推断直接以轻分量记下(t *testing.T) {
 		t.Fatalf("安全相关的推断应挂起等确认，且只有它: %+v", pending)
 	}
 
-	// 助手自己总结的流程进上下文时标成"参考做法"，不是必须遵守的标准流程。
+	// 记忆里留下的、助手自己总结的流程进上下文时标成"参考做法"，不是必须遵守的标准流程。
+	// 收尾已经不再把流程写进记忆，这里直接放一条，模拟以前留下来的。
+	pb := memory.New(memory.KindPlaybook, "user", "周末短途出行", "1. 确认车程上限 2. 查天气 3. 给两个备选",
+		memory.Source{Kind: memory.SourceTask, Ref: task.ID, Trust: core.TrustToolOutput}, time.Now().UTC())
+	pb.Temporality = memory.TemporalDurable
+	if err := st.Put(ctx, pb); err != nil {
+		t.Fatalf("写入流程失败: %v", err)
+	}
 	m := &fakeModel{replies: []string{`{"action":"finish"}`}}
 	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithMemory(memory.NewRetriever(st, nil))
 	if _, err := p.Decide(ctx, core.NewTask("周末短途出行", "这周末短途出行去哪好", core.TrustUser), nil); err != nil {

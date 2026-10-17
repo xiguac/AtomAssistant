@@ -54,8 +54,6 @@ func TestEpilogue_只有逐字出自用户原话的才直接记住(t *testing.T)
 	   "value":"优先高铁，不坐飞机","temporality":"durable","quote":"一般出门都坐高铁，不喜欢坐飞机"},
 	  {"kind":"fact","subject":"user","domain":"工作","value":"在北京上班","temporality":"durable",
 	   "quote":"用户住在北京"},
-	  {"kind":"playbook","subject":"user","domain":"短途出行规划",
-	   "value":"1. 确认出发地 2. 查高铁 3. 查天气 4. 给建议","temporality":"durable","quote":"我住在杭州"},
 	  {"kind":"episode","subject":"user","value":"不该提炼的类型","temporality":"durable"}
 	]}`}}
 	ep := NewEpilogue(model, memory.NewPipeline(st, nil))
@@ -86,10 +84,10 @@ func TestEpilogue_只有逐字出自用户原话的才直接记住(t *testing.T)
 		}
 	}
 
-	// 引文出自邮件而不是用户原话的那条、以及流程，只能挂为候选。
+	// 引文出自邮件而不是用户原话的那条，只能挂为候选。
 	pending, _ := st.ListPending(ctx, "")
-	if len(pending) != 2 {
-		t.Fatalf("应有 2 条待确认，实际 %d 条", len(pending))
+	if len(pending) != 1 {
+		t.Fatalf("应有 1 条待确认，实际 %d 条", len(pending))
 	}
 	kinds := map[memory.Kind]string{}
 	for _, p := range pending {
@@ -98,8 +96,8 @@ func TestEpilogue_只有逐字出自用户原话的才直接记住(t *testing.T)
 			t.Fatalf("候选不应具备直接写入的资格: %+v", p.Candidate.Source)
 		}
 	}
-	if kinds[memory.KindFact] != "在北京上班" || kinds[memory.KindPlaybook] == "" {
-		t.Fatalf("待确认的应是邮件里的说法和提炼的流程: %v", kinds)
+	if kinds[memory.KindFact] != "在北京上班" {
+		t.Fatalf("待确认的应是邮件里的说法: %v", kinds)
 	}
 }
 
@@ -256,8 +254,12 @@ func TestPlan_清单经校验保存并始终钉在上下文里(t *testing.T) {
 
 func TestPlanner_适用的流程单独成段(t *testing.T) {
 	mem := memoryWith(t, func(st *memstore.Store) {
-		if err := memory.Seed(context.Background(), st, time.Now().UTC()); err != nil {
-			t.Fatalf("写入内置流程失败: %v", err)
+		// 流程已经改存成 Skill；记忆里若还有（比如用户后来确认了一条旧的候选），照旧单独成段。
+		m := memory.New(memory.KindPlaybook, "user", "旅游出行规划", "1. 确认出发地 2. 查人流 3. 给建议",
+			memory.Source{Kind: memory.SourceBuiltin, Ref: "test", Trust: core.TrustSystem}, time.Now().UTC())
+		m.Temporality, m.Tags = memory.TemporalPermanent, []string{"domain:旅游"}
+		if err := st.Put(context.Background(), m); err != nil {
+			t.Fatalf("写入流程失败: %v", err)
 		}
 	})
 	m := &fakeModel{replies: []string{`{"action":"finish"}`}}

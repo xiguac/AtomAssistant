@@ -3,7 +3,6 @@ package memory_test
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/memory"
@@ -68,45 +67,6 @@ func TestDismiss_否决的候选不生效(t *testing.T) {
 	}
 	if pend, _ := st.ListPending(ctx(), ""); len(pend) != 0 {
 		t.Fatal("被否决的候选不应再待确认")
-	}
-}
-
-func TestSeed_内置流程可重复写入且不覆盖用户版本(t *testing.T) {
-	st := memstore.New()
-	now := time.Now().UTC()
-	for i := 0; i < 2; i++ {
-		if err := memory.Seed(ctx(), st, now); err != nil {
-			t.Fatalf("第 %d 次写入内置流程失败: %v", i+1, err)
-		}
-	}
-	list, err := st.List(ctx(), memory.Query{Kinds: []memory.Kind{memory.KindPlaybook}})
-	if err != nil || len(list) == 0 {
-		t.Fatalf("应有内置流程: %v, %d 条", err, len(list))
-	}
-	var travel *memory.Memory
-	for _, m := range list {
-		if len(m.History) != 0 {
-			t.Fatalf("内容没变时重复写入不应产生新版本: %s", m.Domain)
-		}
-		if m.Domain == "旅游出行规划" {
-			travel = m
-		}
-	}
-	if travel == nil || travel.Current.Source.Trust != core.TrustSystem {
-		t.Fatalf("应有系统等级的旅游规划流程: %+v", travel)
-	}
-
-	// 用户改过的版本优先于出厂的。
-	memory.UserOverride(travel, "我自己的旅游规划流程", now)
-	if err := st.Put(ctx(), travel); err != nil {
-		t.Fatalf("覆盖失败: %v", err)
-	}
-	if err := memory.Seed(ctx(), st, now); err != nil {
-		t.Fatalf("再次写入失败: %v", err)
-	}
-	got, _ := st.Get(ctx(), travel.ID)
-	if got.Current.Value != "我自己的旅游规划流程" {
-		t.Fatalf("用户的版本被出厂版本覆盖了: %s", got.Current.Value)
 	}
 }
 

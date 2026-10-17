@@ -284,6 +284,9 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		if s.ToolName == ToolCapabilityInstall && !strings.Contains(string(out), `"needs_approval":true`) {
 			trust = core.TrustToolOutput
 		}
+		if s.ToolName == ToolSkillRead {
+			trust = a.skillTrust(ctx, s)
+		}
 		return kernel.Result{Output: out, Trust: trust}, nil
 	}
 	if s.ToolName == ToolHolidays {
