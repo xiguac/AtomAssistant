@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -56,9 +57,13 @@ type learnedSkill struct {
 //
 // 读过外部内容（邮件、网页）的任务不总结：分不清那套"方法"是助手自己摸索的，
 // 还是别人借邮件塞进来、想让它以后照着做的。记忆在这种情况下挂候选等用户确认，Skill 没有这一道，干脆不写。
+// 照着一份 Skill 办过的不论几步都要看：用户可能纠正了里面的做法，那份 Skill 得跟着改。
 func (e *Epilogue) skillWorthy(history []*core.Step, tainted bool) bool {
 	if e.skills == nil || tainted {
 		return false
+	}
+	if len(skillsRead(history)) > 0 {
+		return true
 	}
 	n := 0
 	for _, s := range history {
@@ -71,7 +76,7 @@ func (e *Epilogue) skillWorthy(history []*core.Step, tainted bool) bool {
 }
 
 // skillSection 是提炼时附在系统提示后面的一节：怎么写 Skill，以及已经有哪些。
-func (e *Epilogue) skillSection(ctx context.Context) (string, error) {
+func (e *Epilogue) skillSection(ctx context.Context, history []*core.Step) (string, error) {
 	items, err := e.skills.ListSkills(ctx)
 	if err != nil {
 		return "", fmt.Errorf("agent: 读取已有的 Skill 失败: %w", err)
@@ -91,7 +96,40 @@ func (e *Epilogue) skillSection(ctx context.Context) (string, error) {
 		}
 		fmt.Fprintf(&sb, "- %s%s: %s —— %s\n", s.ID, mark, truncate(s.Name, 60), truncate(oneLine(s.Goal), 200))
 	}
+	// 这次照着办过的，给出全文：只看名字看不出用户纠正的是哪一步。
+	for _, id := range skillsRead(history) {
+		s, err := e.skills.GetSkill(ctx, id)
+		if errors.Is(err, skill.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("agent: 读取 Skill %s 失败: %w", id, err)
+		}
+		if s.Learned() {
+			sb.WriteString("\nThis task followed the Skill below. If the user corrected or contradicted any of it, update it (same id, complete new version) so it matches what the user wants:\n" + s.Render())
+		}
+	}
 	return sb.String(), nil
+}
+
+// skillsRead 列出这个任务里用 skill.read 读过的 Skill，按先后，不重复。
+func skillsRead(history []*core.Step) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range history {
+		if s.ToolName != ToolSkillRead || s.Status != core.StepDone {
+			continue
+		}
+		var in capabilityInput
+		if json.Unmarshal(s.Input, &in) != nil {
+			continue
+		}
+		if id := strings.TrimSpace(in.ID); id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // saveSkills 把提炼出的方法写成 Skill。同 ID 已有的：助手自己总结的整份换成新的，别的不动。

@@ -45,6 +45,11 @@ What to record:
 - entity: attributes of related people or places, such as a client's dietary restrictions or a family member's birthday. Mark allergies, illnesses and taboos as safety_critical.
 - How to do a kind of task (steps, order of checks, pitfalls) is not a memory. Never write methods into memories.
 
+Existing memories (the 「已有记忆」 section, when present):
+- When this task confirms, corrects or updates one of them, output it again with exactly the same kind, subject, domain, attribute and condition, and the current value. The system then updates or reinforces that entry instead of adding a duplicate.
+- When what the user said contradicts one of them, output the new value the same way, with the quote; the system decides whether to replace it or ask the user.
+- Do not repeat an existing memory that this task neither confirms nor changes.
+
 What not to record:
 - Things that only matter for this one task (which restaurant tonight, this order number).
 - Guesses without evidence. Something done once does not make it the user's preference.
@@ -70,6 +75,8 @@ type Epilogue struct {
 	team   WorkRater
 	// skills 非空时，值得复用的办事方法写成 Skill，见 learnskill.go。
 	skills SkillWriter
+	// recall 非空时，提炼前先取出这件事相关的已有记忆给模型看，见 WithRecall。
+	recall MemoryProvider
 	// tidy 非空时，收尾顺带整理推断出来的记忆，见 tidy.go。
 	tidy     *tidier
 	maxChars int
@@ -92,6 +99,56 @@ func NewEpilogue(model Completer, writer MemoryWriter) *Epilogue {
 func (e *Epilogue) WithVoice(v VoiceLearner) *Epilogue {
 	e.voice = v
 	return e
+}
+
+// WithRecall 让收尾提炼前先看到这件事相关的已有记忆。
+//
+// 不看的话，模型只能凭空起名字：同一件事换个说法（"周静办公室"与"校园办事"）就成了另一条，
+// 用户纠正了一条旧记忆，记下来的却是一条新的，旧的还在。看得到原来的字段，它才能照原样写回去，
+// 让写入管线按同一条去更新、印证或者标出分歧。
+func (e *Epilogue) WithRecall(r MemoryProvider) *Epilogue {
+	e.recall = r
+	return e
+}
+
+// recallChars 是提炼时给模型看的已有记忆的字数上限。
+const recallChars = 6000
+
+// recallSegment 列出这件事相关的已有记忆，每条带上它的身份字段。办事方法不在其中，见 learnskill.go。
+func (e *Epilogue) recallSegment(ctx context.Context, t *core.Task) (llm.Segment, bool, error) {
+	if e.recall == nil {
+		return llm.Segment{}, false, nil
+	}
+	asm, err := e.recall.Assemble(ctx, memorySubject(t), sceneOf(t), memory.Budget{Total: recallChars})
+	if err != nil {
+		return llm.Segment{}, false, fmt.Errorf("agent: 读取已有记忆失败: %w", err)
+	}
+	var sb strings.Builder
+	for _, ring := range [][]memory.Item{asm.Critical, asm.High, asm.Medium, asm.Index} {
+		for _, it := range ring {
+			m := it.Memory
+			if m.Kind == memory.KindPlaybook {
+				continue
+			}
+			fmt.Fprintf(&sb, "- kind=%s subject=%s domain=%s attribute=%s", m.Kind, m.Subject, m.Domain, m.Attribute)
+			if len(m.Condition) > 0 {
+				// 写成和输出格式一样的 JSON，照抄回去才对得上。
+				cond, err := json.Marshal(m.Condition)
+				if err != nil {
+					return llm.Segment{}, false, fmt.Errorf("agent: 序列化记忆条件失败: %w", err)
+				}
+				fmt.Fprintf(&sb, " condition=%s", cond)
+			}
+			fmt.Fprintf(&sb, " value=%s\n", oneLine(m.Current.Value))
+		}
+	}
+	if sb.Len() == 0 {
+		return llm.Segment{}, false, nil
+	}
+	return llm.Segment{
+		Role: llm.RoleUser, Content: "已有记忆：\n" + sb.String(),
+		Trust: core.TrustConnector, Source: "已有记忆", Pinned: true,
+	}, true, nil
 }
 
 // learnVoice 把这次任务里用户亲口说的话收作风格样本，样本攒够了就重新提炼概述。
@@ -158,6 +215,11 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 			Source:  "用户原话",
 		})
 	}
+	if seg, ok, err := e.recallSegment(ctx, t); err != nil {
+		return kernel.Cost{}, err
+	} else if ok {
+		segs = append(segs, seg)
+	}
 	for _, s := range history {
 		// 用户的话已经单列；其余步骤带着各自的信任等级进上下文。
 		if s.OutputTrust >= core.TrustUser {
@@ -183,7 +245,7 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 	system := epilogueSystemPrompt
 	learn := e.skillWorthy(history, tainted)
 	if learn {
-		section, err := e.skillSection(ctx)
+		section, err := e.skillSection(ctx, history)
 		if err != nil {
 			return kernel.Cost{}, err
 		}

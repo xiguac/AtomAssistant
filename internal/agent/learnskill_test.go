@@ -143,3 +143,58 @@ func TestMovePlaybooks_记忆里的流程挪成Skill原记忆归档(t *testing.T
 		t.Fatal("别的记忆不该动")
 	}
 }
+
+func TestEpilogue_用户纠正了已有记忆就更新那一条不另起一条(t *testing.T) {
+	ctx := context.Background()
+	st := memstore.New()
+	old := memory.New(memory.KindFact, "user", "居住", "常住杭州",
+		memory.Source{Kind: memory.SourceUser, Ref: "t0", Trust: core.TrustUser}, time.Now().UTC())
+	old.Temporality = memory.TemporalDurable
+	putMemory(t, st, old)
+
+	task := core.NewTask("天气", "明天天气怎么样", core.TrustUser)
+	history := []*core.Step{userReplyStep(task.ID, 1, "我已经搬到南京了，查南京的")}
+	model := &fakeModel{replies: []string{`{"memories":[{"kind":"fact","subject":"user","domain":"居住","attribute":"",
+	  "value":"常住南京","temporality":"durable","quote":"我已经搬到南京了"}]}`}}
+	ep := NewEpilogue(model, memory.NewPipeline(st, nil)).WithRecall(memory.NewRetriever(st, nil))
+	if _, err := ep.TaskFinished(ctx, task, history); err != nil {
+		t.Fatal(err)
+	}
+	if seen := text(model.lastReq); !strings.Contains(seen, "已有记忆") || !strings.Contains(seen, "kind=fact subject=user domain=居住 attribute= value=常住杭州") {
+		t.Fatalf("提炼时应看到已有记忆和它的身份字段:\n%s", seen)
+	}
+	active, _ := st.List(ctx, memory.Query{Kinds: []memory.Kind{memory.KindFact}})
+	if len(active) != 1 || active[0].ID != old.ID || active[0].Current.Value != "常住南京" {
+		t.Fatalf("应更新原来那一条: %+v", active)
+	}
+}
+
+func TestEpilogue_照着Skill办过且用户纠正了就更新那份Skill(t *testing.T) {
+	ctx := context.Background()
+	shelf := skillShelf{}
+	learned, err := skill.Compose(&skill.Skill{ID: "calendar.reschedule", Name: "日程改期", Goal: "改期",
+		Steps: []string{"直接改到用户说的时间"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	learned.Source = skill.SourceLearned + "（任务 t0）"
+	shelf[learned.ID] = learned
+
+	task := core.NewTask("改日程", "把组会挪到下午三点", core.TrustUser)
+	read := trustedStep(task.ID, 1, ToolSkillRead)
+	read.Input = []byte(`{"id":"calendar.reschedule"}`)
+	read.OutputTrust = core.TrustToolOutput
+	history := []*core.Step{read, userReplyStep(task.ID, 2, "改之前先看看那天有没有课")}
+	model := &fakeModel{replies: []string{`{"memories":[],"skills":[{"id":"calendar.reschedule","name":"日程改期","goal":"改期",
+	  "steps":["先查那天的课和其他日程","没有冲突再改"],"tools":["calendar.events","calendar.update"]}]}`}}
+	ep := NewEpilogue(model, memory.NewPipeline(memstore.New(), nil)).WithSkills(shelf)
+	if _, err := ep.TaskFinished(ctx, task, history); err != nil {
+		t.Fatal(err)
+	}
+	if system := model.lastReq.Messages[0].Content; !strings.Contains(system, "This task followed the Skill below") || !strings.Contains(system, "直接改到用户说的时间") {
+		t.Fatal("只走了一步也应请模型对照照着办过的 Skill 全文")
+	}
+	if got := shelf["calendar.reschedule"]; len(got.Steps) != 2 || !strings.Contains(got.Steps[0], "课") {
+		t.Fatalf("Skill 应按用户的纠正更新: %+v", got.Steps)
+	}
+}
