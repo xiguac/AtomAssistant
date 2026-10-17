@@ -123,6 +123,9 @@ type Planner struct {
 	// worker 是当前这次决策由哪个任务模型来做。它只存在于 decideDelegated 内部的副本上，
 	// 共享的 Planner 上永远是空的。
 	worker string
+	// direct 为真表示 worker 在直接办一件简单的事：没有方案、不经审核，结论直接答复用户。
+	// 与 worker 一样只存在于 decideDelegated 内部的副本上。
+	direct bool
 	// reviewActions 为真时，会修改、删除已有东西的动作在执行前先由主模型把关，见 guard。
 	reviewActions bool
 	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
@@ -488,7 +491,9 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	if p.library != nil && p.scope == nil {
 		parts = append(parts, ps.get(PromptCapability))
 	}
-	if p.worker != "" {
+	if p.worker != "" && p.direct {
+		parts = append(parts, ps.get(PromptDirect))
+	} else if p.worker != "" {
 		parts = append(parts, ps.get(PromptWorker))
 	}
 	// 当前时间不放在这里：它每次都变，放在前面会让后面整段都命中不了缓存。见 taskctx.go。

@@ -25,6 +25,8 @@ import (
 //  5. 换人（主模型）：退回了几轮仍不满意，主模型可以把这件事改派给另一个任务模型，
 //     从方案开始重来。
 //
+// 主模型指派时判为简单（simple）的事不走 2、4、5：任务模型直接办完，它的结论就是给用户的答复。
+//
 // 任务模型选谁不由主模型点名：主模型只判断类别，人选由评分决定——用户对回答的评分记在
 // 办这件事的那个模型名下，同类的事优先交给评分高的，见 internal/team。
 // 只有答复最终到了用户手里的那个模型才记一份可以评分的活；中途被换下去的不记。
@@ -256,6 +258,17 @@ func (p *Planner) decideDelegated(ctx context.Context, t *core.Task, history []*
 	}
 	cp := *p
 	cp.worker = cur.Worker
+	if team.Tier(cur.Tier) == team.TierSimple {
+		// 简单的事由任务模型直接办完：起草、评估方案和审核结果各要一次带全部上下文的调用，
+		// 建一条日程这样的事光这三次就占了一半的用量。改、删已有东西照旧由主模型把关（decide 里的 guard）。
+		// 改派一律按复杂的办，所以走到这里的总是第一次指派。
+		cp.direct = true
+		d, err := cp.decide(ctx, t, history)
+		if err != nil || d.Kind != kernel.DecideFinish {
+			return d, err
+		}
+		return d, p.recordWork(ctx, t, state)
+	}
 	if state.brief == nil {
 		return cp.draft(ctx, t, history)
 	}

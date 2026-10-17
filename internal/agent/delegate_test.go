@@ -345,6 +345,46 @@ func TestDelegate_按难度交给不同的任务模型(t *testing.T) {
 	}
 }
 
+func TestDelegate_简单的事不写方案不经审核直接答复(t *testing.T) {
+	ctx := context.Background()
+	task := core.NewTask("查天气", "上海明天天气", core.TrustUser)
+	main := &fakeModel{replies: []string{`{"category":"analysis","tier":"simple","title":"查天气"}`}}
+	workers := &scriptedWorkers{replies: []string{
+		`{"action":"tool","tool":"demo.weather","params":{"city":"上海"},"reason":"查天气"}`,
+		`{"action":"finish","reason":"上海明天晴，21 度。"}`,
+	}}
+	p, store, run := delegated(t, main, workers)
+
+	d, err := p.Decide(ctx, task, nil)
+	if err != nil || d.ToolName != ToolAssign {
+		t.Fatalf("第一步仍是主模型的指派: %+v %v", d, err)
+	}
+	history := run(task, nil, d)
+
+	// 指派之后直接由任务模型调工具，没有方案这一步。
+	d, err = p.Decide(ctx, task, history)
+	if err != nil || d.ToolName != "demo.weather" {
+		t.Fatalf("简单的事应由任务模型直接动手: %+v %v", d, err)
+	}
+	system := workers.reqs[0].Messages[0].Content
+	if !strings.Contains(system, "handling a simple task directly") || strings.Contains(system, "goes to the main model for review") {
+		t.Fatal("任务模型应拿到直接办理的说明，而不是交给主模型审核的那一段")
+	}
+	history = append(history, weatherStep(task.ID, len(history)+1, "demo.weather", `{"city":"上海"}`, `{"temp":21}`))
+
+	// 任务模型说办完了，结论原样给用户，主模型不再审核。
+	d, err = p.Decide(ctx, task, history)
+	if err != nil || d.Kind != kernel.DecideFinish || d.Reason != "上海明天晴，21 度。" {
+		t.Fatalf("应以任务模型的结论结束: %+v %v", d, err)
+	}
+	if main.calls != 1 {
+		t.Fatalf("主模型只应在指派时被叫到一次，实际 %d 次", main.calls)
+	}
+	if works, _ := store.WorkOfTask(ctx, task.ID); len(works) != 1 || works[0].Worker != "分析师" {
+		t.Fatalf("应记下是谁办的，供用户评分: %+v", works)
+	}
+}
+
 func TestDelegate_提问直接到用户审核结果不可用时报错(t *testing.T) {
 	ctx := context.Background()
 	task := core.NewTask("t", "g", core.TrustUser)

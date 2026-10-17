@@ -20,6 +20,7 @@ const (
 	PromptDraft      = "draft"
 	PromptPlanReview = "plan_review"
 	PromptWorker     = "worker"
+	PromptDirect     = "worker_direct"
 	PromptReview     = "review"
 	PromptGuard      = "guard"
 )
@@ -47,6 +48,7 @@ func PromptSpecs() []PromptSpec {
 		{PromptDraft, "起草方案", "配置了协作模型时，任务模型在动手之前起草方案。", draftPrompt, true},
 		{PromptPlanReview, "评估方案", "配置了协作模型时，主模型评估任务模型起草的方案。", planReviewPrompt, true},
 		{PromptWorker, "任务模型", "任务模型执行任务的每一步时加载。规定其职责与语言。", delegateRule, false},
+		{PromptDirect, "任务模型（直接办理）", "难度为简单的任务由任务模型直接办完时，替代上一段加载。不写方案、不经审核，结论直接答复用户。", delegateDirectRule, false},
 		{PromptReview, "审核结果", "配置了协作模型时，主模型审核任务模型交回的结果。", reviewPrompt, true},
 		{PromptGuard, "动作把关", "自主模式下，修改或删除已有内容的动作执行前由主模型把关。", guardPrompt, true},
 	}
