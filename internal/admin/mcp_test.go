@@ -496,6 +496,68 @@ func TestAdmin_系统提示词页逐段改写停用与恢复默认(t *testing.T)
 	}
 }
 
+func TestAdmin_系统提示词页可以自己添加段落(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	ctx := context.Background()
+	extras := func() []agent.ExtraPrompt {
+		t.Helper()
+		saved, err := agent.SettingPrompts{Store: e.store}.Prompts(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		list, err := agent.ParseExtraPrompts(saved[agent.PromptExtraKey])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return list
+	}
+
+	if _, body := e.get("/prompts"); !strings.Contains(body, "暂无自定义段落") || !strings.Contains(body, "添加段落") {
+		t.Fatal("没有自定义段落时应提示可以添加")
+	}
+	if loc := post("/prompts/extra", url.Values{"title": {"x"}, "text": {"  "}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("空内容应被拒绝: %s", loc)
+	}
+	if loc := post("/prompts/extra", url.Values{"title": {"Calendar"}, "text": {"Courses go in 个人.\r\nKeep titles short."}}); !strings.Contains(loc, "已添加") {
+		t.Fatalf("添加失败: %s", loc)
+	}
+	list := extras()
+	if len(list) != 1 || list[0].ID == "" || list[0].Text != "Courses go in 个人.\nKeep titles short." || list[0].Off {
+		t.Fatalf("助手读到的自定义段落不对: %+v", list)
+	}
+	id := list[0].ID
+	if _, body := e.get("/prompts"); !strings.Contains(body, "Calendar") || !strings.Contains(body, "自定义") {
+		t.Fatal("页面应列出添加的段落")
+	}
+
+	// 修改、停用、删除都按 id 找到那一段。
+	if loc := post("/prompts/extra", url.Values{"id": {id}, "title": {"Calendar rules"}, "text": {"Courses go in 个人."}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("修改失败: %s", loc)
+	}
+	if loc := post("/prompts/extra/toggle", url.Values{"id": {id}}); !strings.Contains(loc, "已停用") {
+		t.Fatalf("停用失败: %s", loc)
+	}
+	if list = extras(); len(list) != 1 || list[0].Title != "Calendar rules" || !list[0].Off {
+		t.Fatalf("修改和停用应存下来: %+v", list)
+	}
+	if loc := post("/prompts/extra/toggle", url.Values{"id": {"no-such"}, "on": {"1"}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("不存在的段落应报错: %s", loc)
+	}
+	if loc := post("/prompts/extra/delete", url.Values{"id": {id}}); !strings.Contains(loc, "已删除") {
+		t.Fatalf("删除失败: %s", loc)
+	}
+	if list = extras(); len(list) != 0 {
+		t.Fatalf("删除后不应还有: %+v", list)
+	}
+}
+
 func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T) {
 	e := setup(t)
 	e.login()

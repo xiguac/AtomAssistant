@@ -481,7 +481,7 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	}
 	// 基础约束永远排在最前面，后面才是这一步具体怎么做。
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	parts := []string{ps.get(PromptBase), ps.get(PromptPlanner)}
+	parts := []string{ps.base(), ps.get(PromptPlanner)}
 	if p.hasWeb && p.permits(ToolWebSearch) {
 		parts = append(parts, ps.get(PromptWeb))
 	}

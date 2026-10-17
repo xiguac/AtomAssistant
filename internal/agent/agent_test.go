@@ -635,6 +635,16 @@ func TestPlanner_系统提示可以逐段改写与停用(t *testing.T) {
 	if !strings.Contains(got, plannerSystemPrompt) {
 		t.Fatal("必需的段落不应被停用")
 	}
+	// 用户自己添加的段落接在基础约束后面；停用的不加载。
+	extra := `[{"id":"1","title":"Calendar","text":"Courses go in the 个人 calendar."},{"id":"2","title":"Old","text":"Never load me.","off":true}]`
+	got = system(planner(fakePrompts{PromptExtraKey: extra}))
+	if !strings.HasPrefix(got, baseRules+"\n\n# Calendar\nCourses go in the 个人 calendar.\n\n"+plannerSystemPrompt) || strings.Contains(got, "Never load me") {
+		t.Fatalf("自定义段落应紧跟基础约束，停用的不加载: %s", truncate(got, 300))
+	}
+	// 存坏了的设置要报出来，不能悄悄当作没有。
+	if _, err := planner(fakePrompts{PromptExtraKey: "{"}).Decide(context.Background(), task, nil); err == nil {
+		t.Fatal("自定义段落无法解析时应报错")
+	}
 	// 每一段都登记了名字和用途，标识不重复。
 	seen := map[string]bool{}
 	for _, spec := range PromptSpecs() {

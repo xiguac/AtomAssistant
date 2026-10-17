@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -84,9 +85,43 @@ func (p *Planner) WithPrompts(s PromptSource) *Planner {
 	return p
 }
 
+// PromptExtraKey 是用户自己添加的段落在设置里的名字，值是 ExtraPrompt 列表的 JSON。
+const PromptExtraKey = promptSettingPrefix + "extra"
+
+// ExtraPrompt 是用户在后台自己添加的一段系统提示。
+//
+// 内置的段落各有固定的用处（指派、起草、审核……），用户想加一条自己的规矩时没有地方放。
+// 这一类每次决策都加载，主模型和任务模型都看得到，紧跟在基础约束后面。
+type ExtraPrompt struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Text  string `json:"text"`
+	// Off 为真表示停用：留着，但不加载。
+	Off bool `json:"off,omitempty"`
+}
+
+// ParseExtraPrompts 解析设置里存的自定义段落，没有存过时为空。
+func ParseExtraPrompts(raw string) ([]ExtraPrompt, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var out []ExtraPrompt
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, fmt.Errorf("agent: 自定义的系统提示段落无法解析: %w", err)
+	}
+	return out, nil
+}
+
 // promptSet 是一次决策里各段系统提示当前生效的内容。
 type promptSet struct {
 	saved map[string]string
+	// extras 是用户自己添加的、在加载的段落。
+	extras []string
+}
+
+// base 返回基础约束，后面接上用户自己添加的段落。每一次决策都从它开头。
+func (s promptSet) base() string {
+	return sections(append([]string{s.get(PromptBase)}, s.extras...)...)
 }
 
 // loadPrompts 读出各段当前生效的内容。
@@ -98,7 +133,17 @@ func (p *Planner) loadPrompts(ctx context.Context) (promptSet, error) {
 	if err != nil {
 		return promptSet{}, fmt.Errorf("agent: 读取系统提示失败: %w", err)
 	}
-	return promptSet{saved: saved}, nil
+	extras, err := ParseExtraPrompts(saved[PromptExtraKey])
+	if err != nil {
+		return promptSet{}, err
+	}
+	set := promptSet{saved: saved}
+	for _, e := range extras {
+		if !e.Off && strings.TrimSpace(e.Text) != "" {
+			set.extras = append(set.extras, "# "+strings.TrimSpace(e.Title)+"\n"+strings.TrimSpace(e.Text))
+		}
+	}
+	return set, nil
 }
 
 // get 返回一段当前生效的内容：停用了的是空的，改写过的用改写的，否则用内置的。

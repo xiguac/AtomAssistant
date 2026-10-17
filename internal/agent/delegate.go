@@ -367,7 +367,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	for _, c := range team.Categories {
 		cats = append(cats, fmt.Sprintf("- %s (%s): %s", c.ID, c.Name, c.Hint))
 	}
-	system := sections(ps.get(PromptBase), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n"))
+	system := sections(ps.base(), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n"))
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -420,7 +420,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 	}
 	var spent kernel.Decision
 	var plan briefRecord
-	if err := p.askJSON(ctx, t, false, sections(ps.get(PromptBase), ps.get(PromptDraft))+tools,
+	if err := p.askJSON(ctx, t, false, sections(ps.base(), ps.get(PromptDraft))+tools,
 		segs, &spent, "方案", &plan); err != nil {
 		return spent, err
 	}
@@ -436,7 +436,7 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 		Role: llm.RoleUser, Content: "任务模型起草的方案：\n" + plan.render(),
 		Trust: core.TrustToolOutput, Source: "任务模型的方案", Pinned: true,
 	})
-	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptPlanReview))+tools,
+	if err := p.askJSON(ctx, t, true, sections(ps.base(), ps.get(PromptPlanReview))+tools,
 		review, &spent, "方案评估结果", &verdict); err != nil {
 		return spent, err
 	}
@@ -511,7 +511,7 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 		body += "\n{{rules}}"
 	}
 	body = strings.NewReplacer("{{verdicts}}", verdicts, "{{rules}}", extra).Replace(body)
-	system := sections(ps.get(PromptBase), body, style)
+	system := sections(ps.base(), body, style)
 	var out struct {
 		Verdict  string `json:"verdict"`
 		Answer   string `json:"answer"`
@@ -613,7 +613,7 @@ func (p *Planner) guard(ctx context.Context, t *core.Task, history []*core.Step,
 		Verdict string `json:"verdict"`
 		Reason  string `json:"reason"`
 	}
-	if err := p.askJSON(ctx, t, true, sections(ps.get(PromptBase), ps.get(PromptGuard)), segs, &spent, "把关结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, sections(ps.base(), ps.get(PromptGuard)), segs, &spent, "把关结果", &out); err != nil {
 		return spent, err
 	}
 	switch out.Verdict {
