@@ -127,8 +127,9 @@ type Planner struct {
 	reviewActions bool
 	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
 	canSendFiles bool
-	// hasWeb 为真表示接入了联网搜索。
-	hasWeb bool
+	// hasWeb 为真表示接入了联网搜索，hasFetch 为真表示可以读网页。
+	hasWeb   bool
+	hasFetch bool
 	// library 非空表示助手可以自己查找、安装能力，并能读已安装的 Skill。
 	library SkillLibrary
 	// scope 是当前这次决策所绑定的 Skill。它只存在于 Decide 内部的副本上，
@@ -295,6 +296,9 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 联网搜索会把问题交给模型服务去网上查，别人写的流程没声明就不能用。
 	if p.hasWeb {
 		gated = append(gated, webSearchTool)
+	}
+	if p.hasFetch {
+		gated = append(gated, webFetchTool)
 	}
 	// 别人写的流程不能自己再去装东西、读别的流程。
 	if p.library != nil {
@@ -484,6 +488,9 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	parts := []string{ps.base(), ps.get(PromptPlanner)}
 	if p.hasWeb && p.permits(ToolWebSearch) {
 		parts = append(parts, ps.get(PromptWeb))
+	}
+	if p.hasFetch && p.permits(ToolWebFetch) {
+		parts = append(parts, ps.get(PromptFetch))
 	}
 	if p.library != nil && p.scope == nil {
 		parts = append(parts, ps.get(PromptCapability))
@@ -863,7 +870,11 @@ func outputChars(s *core.Step) int {
 	// 搜索结果就是这一步的全部价值，截得太短等于白查；但也不能太长，
 	// 几步搜索就把上下文占满的话，别的内容会被挤出去。
 	if s.ToolName == ToolWebSearch {
-		return 4000
+		return 6000
+	}
+	// 网页正文已在取回时截到 fetchChars，这里不再截。
+	if s.ToolName == ToolWebFetch {
+		return fetchChars + 1000
 	}
 	// 读文件一次返回一段，后面跟着"下一段从哪读"。截断了模型就看不到这一段的结尾和续读位置，
 	// 只会在同一个文件上来回读。

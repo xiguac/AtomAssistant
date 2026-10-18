@@ -187,6 +187,45 @@ func (a *Approver) strangerAddress(ctx context.Context, t *core.Task, d kernel.D
 	return ask, true
 }
 
+// knownURL 报告 web.fetch 要读的网址是否原样出现在用户说过的话里，或者之前搜索、读网页取回的内容里。
+// 核对不了时按不认得处理。
+func (a *Approver) knownURL(ctx context.Context, t *core.Task, input json.RawMessage) bool {
+	var in struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return false
+	}
+	addr := strings.TrimSpace(in.URL)
+	if addr == "" || a.history == nil {
+		return false
+	}
+	steps, err := a.history.ListSteps(ctx, t.ID)
+	if err != nil {
+		return false
+	}
+	// 步骤的输出是 JSON，网址里的 & 之类会被转义，按转义后的样子也比一次。
+	quoted, err := json.Marshal(addr)
+	if err != nil {
+		return false
+	}
+	escaped := string(quoted[1 : len(quoted)-1])
+	texts := userStatements(t, steps)
+	// 只认网上取回的内容。邮件、日历里的链接可能带着用户自己的凭据（退订、确认、免登录链接），
+	// 打开一次就算办了一件事。
+	for _, s := range steps {
+		if s.Status == core.StepDone && (s.ToolName == ToolWebSearch || s.ToolName == ToolWebFetch) {
+			texts = append(texts, string(s.Output))
+		}
+	}
+	for _, text := range texts {
+		if strings.Contains(text, addr) || strings.Contains(text, escaped) {
+			return true
+		}
+	}
+	return false
+}
+
 // inHouse 是会改动东西、但改的是用户自己地盘上的东西的内置工具：他的日历、他的邮箱、本机的工作区。
 // 它们不把内容交给任何第三方。
 var inHouse = map[string]bool{
@@ -277,6 +316,11 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 		if maxPrivacy < core.PrivacySensitive {
 			maxPrivacy = core.PrivacySensitive
 		}
+	}
+	// 读网页也是只读的，但网址能带东西出去：网址是用户给的、或者原样出现在之前取回的内容里，
+	// 就没有夹带什么；模型自己拼出来的网址按对外发送对待。
+	if d.ToolName == ToolWebFetch && !a.knownURL(ctx, t, d.Input) {
+		out = true
 	}
 	decision := a.policy.Decide(policy.Request{
 		Outbound:    out,

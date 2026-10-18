@@ -437,6 +437,22 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	} else {
 		log.Warn("配置的模型服务里没有认得的自带联网搜索的，助手不能上网查东西")
 	}
+	// 配置了 DeepSeek 时接上它的搜索、抓取接口：可以读网页；没有指定用哪个模型搜时，搜索也改走这个接口。
+	webTools, err := file.WebTools(ctx, safe)
+	if err != nil {
+		return nil, fmt.Errorf("接通 DeepSeek 搜索接口失败: %w", err)
+	}
+	if webTools != nil {
+		planner = planner.WithWebFetch(true)
+		if file.SearchRouteSet() {
+			actuator = actuator.WithWebFetchOnly(webTools)
+			log.Info("已启用读网页（DeepSeek 抓取接口），联网搜索按 purpose: search 指定的模型")
+		} else {
+			planner = planner.WithWebSearch(true)
+			actuator = actuator.WithWebTools(webTools)
+			log.Info("已启用 DeepSeek 搜索与读网页接口")
+		}
+	}
 
 	// 付款能力默认关闭。开了之后每一笔仍然要过审批，并且要用户本人在支付宝里授权。
 	if file.Payment.Alipay.Enabled {

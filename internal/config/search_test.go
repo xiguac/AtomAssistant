@@ -93,3 +93,29 @@ func TestSearch_用户可以指定用哪个模型来搜(t *testing.T) {
 		t.Fatalf("指定了不能搜的服务应报错: %v", err)
 	}
 }
+
+func TestWebTools_配置了DeepSeek就用它的密钥接通搜索接口(t *testing.T) {
+	f, err := LoadFile(writeConfig(t, twoProviders))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lender := &fakeLender{}
+	c, err := f.WebTools(context.Background(), lender)
+	if err != nil || c == nil || c.BaseURL != "https://api.deepseek.com" {
+		t.Fatalf("应接通 DeepSeek 的搜索接口: %+v %v", c, err)
+	}
+	if !strings.Contains(strings.Join(lender.asked, ","), "provider.deepseek=vault://deepseek") {
+		t.Fatalf("应以这家服务的名义取密钥: %v", lender.asked)
+	}
+	if f.SearchRouteSet() {
+		t.Fatal("没写 purpose: search 时不该报告已指定")
+	}
+
+	other, err := LoadFile(writeConfig(t, strings.Replace(twoProviders, "https://api.deepseek.com/v1", "https://llm.example.com/v1", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := other.WebTools(context.Background(), &fakeLender{}); c != nil || err != nil {
+		t.Fatalf("没配 DeepSeek 时不接: %+v %v", c, err)
+	}
+}

@@ -15,6 +15,7 @@ const (
 	PromptBase       = "base"
 	PromptPlanner    = "planner"
 	PromptWeb        = "web"
+	PromptFetch      = "fetch"
 	PromptCapability = "capability"
 	PromptVoice      = "voice"
 	PromptAssign     = "assign"
@@ -42,6 +43,7 @@ func PromptSpecs() []PromptSpec {
 		{PromptBase, "基础约束", "每一次模型调用都加载，位于系统提示最前面，优先级高于其余各段。含语言要求。", baseRules, false},
 		{PromptPlanner, "规划说明", "模型决定任务的下一步时加载。规定输出的 JSON 格式与决策方法，含主模型接手任务后的要求。", plannerSystemPrompt, true},
 		{PromptWeb, "联网搜索", "已接入联网搜索时加载。规定何时搜索、如何节省搜索次数。", webRule, false},
+		{PromptFetch, "读网页", "已接入读网页时加载。规定读哪些网页、怎么用读到的内容。", fetchRule, false},
 		{PromptCapability, "查找与安装能力", "模型可自行查找、安装 Skill 与 MCP server 时加载。", capabilityRule, false},
 		{PromptVoice, "表达风格", "已学到用户的表达风格时加载，仅主模型使用。", voiceRule, false},
 		{PromptAssign, "指派任务", "配置了协作模型时，主模型判断任务类别以选出任务模型。", assignPrompt, true},

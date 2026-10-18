@@ -6,11 +6,14 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/xiguac/atomhelper/internal/connector/deepseek"
 	"github.com/xiguac/atomhelper/internal/llm"
 )
 
-// 联网搜索用的是模型服务自带的搜索能力，不另接搜索引擎。
+// 联网搜索用的是模型服务自带的搜索能力。配置了 DeepSeek 时另有它的搜索、抓取接口（见 WebTools），
+// 没有指定 purpose: search 的路由时，搜索改走那个接口。
 //
+// 模型服务自带的搜索，
 // 各家的开法不一样，目前认得三种：
 //   - 阿里云百炼：OpenAI 兼容接口上加 enable_search。
 //   - DeepSeek：只在它的 Anthropic 兼容接口（/anthropic）上提供，是服务端执行的 web_search 工具。
@@ -105,6 +108,44 @@ func (f *File) searchRoute() (pc ProviderConfig, route RouteConfig, ok bool, err
 		return p, RouteConfig{Purpose: string(llm.PurposeSearch), Provider: p.Name, Model: model}, true, nil
 	}
 	return pc, route, false, nil
+}
+
+// WebTools 用配置过的 DeepSeek 服务的密钥接通它的联网搜索与网页抓取接口（/v1/tools/search、/v1/tools/fetch）。
+// 没有配置 DeepSeek 时返回 nil。有多个时主 AI 所在的那个优先。
+func (f *File) WebTools(ctx context.Context, secrets SecretLender) (*deepseek.Client, error) {
+	main, _ := (&Models{Routes: f.Routes, Fallback: f.Fallback}).Main()
+	var pick *ProviderConfig
+	for i := range f.Providers {
+		p := &f.Providers[i]
+		if p.searchKind() != searchDeepSeek {
+			continue
+		}
+		if pick == nil || p.Name == main {
+			pick = p
+		}
+	}
+	if pick == nil {
+		return nil, nil
+	}
+	key, err := f.apiKey(ctx, *pick, secrets)
+	if err != nil {
+		return nil, err
+	}
+	u, err := url.Parse(pick.BaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("config: provider %s 的 base_url 不合法: %w", pick.Name, err)
+	}
+	return &deepseek.Client{BaseURL: u.Scheme + "://" + u.Host, Key: key}, nil
+}
+
+// SearchRouteSet 报告用户是否写了 purpose: search 的路由，指定用某个模型来联网搜索。
+func (f *File) SearchRouteSet() bool {
+	for _, r := range f.Routes {
+		if r.Purpose == string(llm.PurposeSearch) {
+			return true
+		}
+	}
+	return false
 }
 
 // addSearch 给路由接上联网搜索。配置过的服务里没有能搜的就什么都不做。

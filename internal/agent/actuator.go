@@ -53,8 +53,10 @@ type Actuator struct {
 	workers WorkerModel
 	// chat 非空时可以把工作区里的文件发到用户的聊天窗口里。
 	chat ChatFiles
-	// searcher 非空时可以联网搜索。
-	searcher Searcher
+	// searcher 非空时可以联网搜索。webTools 非空时可以读网页，searchByTools 为真时搜索也改走它。
+	searcher      Searcher
+	webTools      WebTools
+	searchByTools bool
 	// capabilities 非空时助手可以自己查找、安装能力；library 用来读已安装的 Skill。
 	capabilities CapabilityService
 	// secretRequests 非空时助手可以在后台登记待用户填写的环境变量。
@@ -254,8 +256,12 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 但文件里的文字不是用户此刻的指示，仍然低于 user，进上下文时在围栏里。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
-	if s.ToolName == ToolWebSearch {
-		res, err := a.runWebSearch(ctx, s)
+	if s.ToolName == ToolWebSearch || s.ToolName == ToolWebFetch {
+		run := a.runWebSearch
+		if s.ToolName == ToolWebFetch {
+			run = a.runWebFetch
+		}
+		res, err := run(ctx, s)
 		if a.audit != nil {
 			detail := "成功"
 			if err != nil {
