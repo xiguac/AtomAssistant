@@ -228,6 +228,9 @@ func TestRoute_回话表态和新任务(t *testing.T) {
 	mail.State, trip.State = core.StateDone, core.StateDone
 	other := tasks.add("别处的任务")
 	ask(other, "？")
+	// 半小时之内用户刚说过的事还在办时，这句话会算接着说；这里看的是过了那段时间之后。
+	later := time.Now().Add(continueWindow + time.Minute)
+	h.now = func() time.Time { return later }
 	say("今天有啥安排")
 	if last() != "create:今天有啥安排|今天有啥安排" {
 		t.Fatalf("没有任务在等时应新建: %s", last())
@@ -582,7 +585,9 @@ func TestRoute_换一个消息源也能回答进展跟着走(t *testing.T) {
 
 // fakeTriage 按预先写好的话回答：pick 是第几个候选（从 1 起），0 表示新的事，-1 表示拿不准。
 type fakeTriage struct {
-	pick  int
+	pick int
+	// id 非空时判给这个编号的任务，不看 pick。
+	id    string
 	err   error
 	asked []string
 	seen  []Candidate
@@ -593,6 +598,8 @@ func (f *fakeTriage) Triage(_ context.Context, text string, cands []Candidate) (
 	switch {
 	case f.err != nil:
 		return Verdict{}, f.err
+	case f.id != "":
+		return Verdict{TaskID: f.id}, nil
 	case f.pick == 0:
 		return Verdict{New: true}, nil
 	case f.pick > 0 && f.pick <= len(cands):
@@ -636,8 +643,19 @@ func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t
 	weather := tasks.tasks[0]
 	weather.State = core.StateRunning
 
-	// 模型拿不准：问用户，这句话先不办。
+	// 模型拿不准，而用户半小时之内刚说过一件事：多半是接着它说的，不去打扰用户。
 	tri.pick = -1
+	say("改成上午的")
+	if last() != "reply:今天天气怎么样|改成上午的|qq" {
+		t.Fatalf("拿不准时应归给刚说过的那件事: %s", last())
+	}
+	if len(tri.seen) != 2 || tri.seen[0].ID != weather.ID {
+		t.Fatalf("候选应把最近说到的排在前面: %+v", tri.seen)
+	}
+
+	// 过了半小时还拿不准：问用户，这句话先不办。
+	now := time.Now().Add(continueWindow + time.Minute)
+	h.now = func() time.Time { return now }
 	before, sent := len(tasks.log), len(qq.sent)
 	say("再便宜点的")
 	if len(tasks.log) != before || len(qq.sent) != sent+1 {
@@ -652,7 +670,8 @@ func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t
 	if last() != "reply:帮我订周五去苏州的高铁|再便宜点的|qq" || len(tri.asked) != asked {
 		t.Fatalf("回序号后应把之前那句话送给选中的任务: %s", last())
 	}
-	// 回 0：之前那句话算一件新的事。
+	// 回 0：之前那句话算一件新的事。又过了半小时，免得刚才那句把它算成接着说。
+	now = now.Add(continueWindow + time.Minute)
 	say("另外一件说不清的事")
 	say("0")
 	if last() != "create:另外一件说不清的事|另外一件说不清的事" {
@@ -682,7 +701,7 @@ func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t
 		t.Fatalf("同意应直接放行: %s", last())
 	}
 	awaitApproval(tasks, pay, "s2", "pay.send", `{"amount":"10"}`, "")
-	tri.pick = 1
+	tri.id = pay.ID
 	say("金额改成 8 块")
 	if last() != "reject:付款|金额改成 8 块" {
 		t.Fatalf("判给等确认的任务时这句话是修改意见: %s", last())
@@ -777,5 +796,42 @@ func TestRoute_没有模型看得了图片时直接告诉用户(t *testing.T) {
 	h.Handle(ctx, "qq", from("OWNER", "", "m3"))
 	if last := qq.sent[len(qq.sent)-1].Text; !strings.Contains(last, "我还看不懂这个类型的数据哦") {
 		t.Fatalf("空消息应回复看不懂: %q", last)
+	}
+}
+
+func TestRoute_接着刚办完的事说的话另起任务不错归给别的事(t *testing.T) {
+	h, _, tasks := hub(t)
+	tri := &fakeTriage{}
+	h = h.WithTriage(tri)
+	ctx := context.Background()
+	tag := Tag("qq", "c2c:OWNER")
+	say := func(text string) { h.Handle(ctx, "qq", from("OWNER", text, "m")) }
+	last := func() string { return tasks.log[len(tasks.log)-1] }
+
+	// 一件事在办（很早以前交代的），一件事刚办完。
+	report := tasks.add("写周报", tag)
+	report.CreatedAt = time.Now().Add(-3 * time.Hour)
+	hotel := tasks.add("订酒店", tag)
+	hotel.State, hotel.Reason, hotel.UpdatedAt = core.StateDone, "订好了观前街的全季", time.Now()
+
+	// 用户接着说酒店的事：刚办完的那件在候选里，排在前面；判给它就另起一个任务接着办。
+	tri.id = hotel.ID
+	say("帮我把入住改成晚一天")
+	if len(tri.seen) != 2 || tri.seen[0].ID != hotel.ID || !tri.seen[0].Finished || tri.seen[1].ID != report.ID {
+		t.Fatalf("刚办完的事应列在候选里且排在前面: %+v", tri.seen)
+	}
+	if last() != "create:帮我把入住改成晚一天|帮我把入住改成晚一天" {
+		t.Fatalf("判给刚办完的事时应另起任务: %s", last())
+	}
+
+	// 办完很久的不列。
+	hotel.UpdatedAt = time.Now().Add(-2 * time.Hour)
+	tri.id = ""
+	tri.pick = 0
+	say("今天有什么新闻")
+	for _, c := range tri.seen {
+		if c.ID == hotel.ID {
+			t.Fatalf("办完很久的事不应列为候选: %+v", tri.seen)
+		}
 	}
 }

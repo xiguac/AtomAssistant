@@ -259,6 +259,8 @@ type Hub struct {
 	files FileSink
 	// noImages 为真表示配置的模型没有一个看得了图片：收到图片直接告诉用户，不交给任务。
 	noImages bool
+	// saidAt 是用户最近说到各件事的时间，判断新的话归给谁时用，见 triage.go。
+	saidAt map[string]time.Time
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -507,25 +509,46 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		return h.routeByRule(ctx, channel, m.Chat, text, tag, active)
 	}
 	// 手头有事在办：这句话是说其中哪一件，还是另起一件新的，由主模型判断。
-	cands := candidatesOf(active)
+	// 刚办完的事也列上：接着它说的话不该被错归到另一件不相干的、还在办的事上。
+	all, err := h.tasks.ByTag(ctx, ConversationTag, false, 20)
+	if err != nil {
+		return err
+	}
+	cands := h.candidatesOf(active, h.justFinished(all))
 	verdict, err := h.triage.Triage(ctx, text, cands)
 	if err != nil {
 		// 判断不了不能把话丢了：退回老办法，并留下痕迹。
 		h.log.Error("判断消息归属失败，按规则处理", "err", err)
 		return h.routeByRule(ctx, channel, m.Chat, text, tag, active)
 	}
+	pick := func(id string) error {
+		if t := find(active, id); t != nil {
+			return h.deliver(ctx, t, channel, m.Chat, text)
+		}
+		// 刚办完的事，或者判断的这会儿结束了的：另起一个任务接着办，之前的对话随上下文带过去。
+		return h.create(ctx, text, tag)
+	}
 	switch {
 	case verdict.New:
 		return h.create(ctx, text, tag)
 	case verdict.TaskID != "":
-		for _, t := range active {
-			if t.ID == verdict.TaskID {
-				return h.deliver(ctx, t, channel, m.Chat, text)
-			}
+		return pick(verdict.TaskID)
+	}
+	// 模型也拿不准：刚说过的那件事最可能是在接着说；时间窗里没有，才问用户。
+	if c, ok := recent(cands); ok {
+		return pick(c.ID)
+	}
+	h.askWhich(ctx, channel, m.Chat, tag, text, cands)
+	return nil
+}
+
+// find 从任务列表里按编号找出一个，没有返回 nil。
+func find(tasks []*core.Task, id string) *core.Task {
+	for _, t := range tasks {
+		if t.ID == id {
+			return t
 		}
 	}
-	// 模型也拿不准：问用户。
-	h.askWhich(ctx, channel, m.Chat, tag, text, cands)
 	return nil
 }
 
@@ -542,6 +565,10 @@ func (h *Hub) routeByRule(ctx context.Context, channel, chat, text, tag string, 
 			return h.deliver(ctx, t, channel, chat, text)
 		}
 	}
+	// 用户刚说过的那件事还在办：多半是在接着说。
+	if c, ok := recent(h.candidatesOf(active, nil)); ok {
+		return h.deliver(ctx, find(active, c.ID), channel, chat, text)
+	}
 	return h.create(ctx, text, tag)
 }
 
@@ -552,7 +579,10 @@ func asking(t *core.Task) bool {
 }
 
 func (h *Hub) create(ctx context.Context, text, tag string) error {
-	_, err := h.createTask(ctx, text, text, tag)
+	id, err := h.createTask(ctx, text, text, tag)
+	if err == nil {
+		h.noteSaid(id)
+	}
 	return err
 }
 

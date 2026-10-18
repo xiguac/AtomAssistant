@@ -89,7 +89,8 @@ func TestConversation_新任务带上同一个会话里最近的对话(t *testin
 func TestTriager_按模型的回答定出归属(t *testing.T) {
 	cands := []channel.Candidate{
 		{ID: "A", Title: "订高铁", Goal: "周五去苏州", Status: "正在办"},
-		{ID: "B", Title: "订酒店", Goal: "苏州住一晚", Status: "正在等用户回答：住哪一带？"},
+		{ID: "B", Title: "订酒店", Goal: "苏州住一晚", Status: "正在等用户回答：住哪一带？", Idle: 3 * time.Minute},
+		{ID: "C", Title: "查天气", Goal: "苏州周五天气", Status: "刚办完：周五多云", Idle: 2 * time.Hour, Finished: true},
 	}
 	for reply, want := range map[string]channel.Verdict{
 		`{"target": "2"}`:      {TaskID: "B"},
@@ -107,6 +108,11 @@ func TestTriager_按模型的回答定出归属(t *testing.T) {
 		user := m.lastReq.Messages[len(m.lastReq.Messages)-1].Content
 		if m.lastPurp != llm.PurposePlan || !m.lastReq.JSONMode || !strings.Contains(user, "订酒店") || !strings.Contains(user, "住观前街附近") {
 			t.Fatalf("交给模型的内容不对: %s", user)
+		}
+		// 每件事带上用户上次说到它是多久以前，刚办完的标出来；系统提示讲明半小时之内默认算接着说。
+		if !strings.Contains(user, "3 minutes ago") || !strings.Contains(user, "2 hours ago") || !strings.Contains(user, "just finished") ||
+			!strings.Contains(m.lastReq.Messages[0].Content, "within the last 30 minutes") {
+			t.Fatalf("交给模型的内容里应有时间线索: %s", user)
 		}
 	}
 	if _, err := NewTriager(&fakeModel{replies: []string{"不是 JSON"}}).Triage(context.Background(), "x", cands); err == nil {
