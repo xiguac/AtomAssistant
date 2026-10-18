@@ -183,9 +183,17 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 		case RoleSystem:
 			system = append(system, m.Content)
 		case RoleAssistant:
-			body.Messages = append(body.Messages, anthropicMessage(RoleAssistant, m))
+			msg, err := anthropicMessage(RoleAssistant, m)
+			if err != nil {
+				return Response{}, err
+			}
+			body.Messages = append(body.Messages, msg)
 		default:
-			body.Messages = append(body.Messages, anthropicMessage(RoleUser, m))
+			msg, err := anthropicMessage(RoleUser, m)
+			if err != nil {
+				return Response{}, err
+			}
+			body.Messages = append(body.Messages, msg)
 		}
 	}
 	body.System = strings.Join(system, "\n\n")

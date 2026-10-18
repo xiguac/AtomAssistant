@@ -28,11 +28,14 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/larksuite/oapi-sdk-go/v3 v3.12.1 // indirect
 	github.com/ledongthuc/pdf v0.0.0-20260907135840-6c8c28e0e8a0 // indirect
+	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/richardlehane/mscfb v1.0.4 // indirect
 	github.com/richardlehane/msoleps v1.0.4 // indirect
 	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/tiendc/go-deepcopy v1.7.1 // indirect
+	github.com/wdvxdr1123/go-silk v0.0.0-20220304095002-f67345df09ea // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/excelize/v2 v2.10.0 // indirect
@@ -44,5 +47,8 @@ require (
 	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	modernc.org/libc v1.8.1 // indirect
+	modernc.org/mathutil v1.2.2 // indirect
+	modernc.org/memory v1.0.4 // indirect
 	rsc.io/qr v0.2.0 // indirect
 )

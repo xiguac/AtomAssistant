@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 )
@@ -65,5 +66,26 @@ func TestTaskImages(t *testing.T) {
 	}
 	if none, err := s.TaskImages(ctx, core.NewID(), 4); err != nil || len(none) != 0 {
 		t.Fatalf("没有图片的任务应取到空: %v %v", none, err)
+	}
+
+	// 语音、视频和图片存在一起，按类型分开取：取图片时不会混进语音。
+	if _, err := s.PutTaskImage(ctx, task.ID, "audio/wav", []byte("RIFF-voice")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PutTaskImage(ctx, task.ID, "video/mp4", []byte("mp4-video")); err != nil {
+		t.Fatal(err)
+	}
+	if imgs, err := s.TaskImages(ctx, task.ID, 10); err != nil || len(imgs) != 5 {
+		t.Fatalf("取图片时不应混进语音、视频: %d %v", len(imgs), err)
+	}
+	voices, err := s.TaskMedia(ctx, task.ID, llm.InputAudio, 10)
+	if err != nil || len(voices) != 1 || voices[0].MIME != "audio/wav" || string(voices[0].Data) != "RIFF-voice" {
+		t.Fatalf("语音取得不对: %+v %v", voices, err)
+	}
+	if videos, err := s.TaskMedia(ctx, task.ID, llm.InputVideo, 10); err != nil || len(videos) != 1 || videos[0].MIME != "video/mp4" {
+		t.Fatalf("视频取得不对: %+v %v", videos, err)
+	}
+	if _, err := s.TaskMedia(ctx, task.ID, llm.InputText, 10); err == nil {
+		t.Fatal("文字不是媒体，应报错")
 	}
 }

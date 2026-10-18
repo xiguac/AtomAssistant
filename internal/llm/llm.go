@@ -29,6 +29,9 @@ type Message struct {
 	Content string `json:"content"`
 	// Images 是随这条消息一起给模型看的图片，只有多模态模型看得懂。绝大多数消息没有。
 	Images []Image `json:"-"`
+	// Audio 与 Video 是随这条消息给模型听、看的语音和视频，只有支持对应输入的模型收得了。
+	Audio []Image `json:"-"`
+	Video []Image `json:"-"`
 }
 
 // Request 是一次补全请求。

@@ -54,14 +54,18 @@ type Bot struct {
 	Secret func(ctx context.Context) (string, error)
 	// RobotCode 是机器人的编码，为空时用 AppID：企业内部应用的机器人两者相同。
 	RobotCode string
-	// APIBase 为空时用钉钉的正式地址，只在对着模拟服务测试时才需要。
-	APIBase string
-	HTTP    *http.Client
-	Log     *slog.Logger
+	// APIBase 与 OAPIBase（旧版接口）为空时用钉钉的正式地址，只在对着模拟服务测试时才需要。
+	APIBase  string
+	OAPIBase string
+	HTTP     *http.Client
+	Log      *slog.Logger
 
 	mu     sync.Mutex
 	token  string
 	expiry time.Time
+	// oapiToken 是旧版接口用的凭证，见 legacyToken。
+	oapiToken  string
+	oapiExpiry time.Time
 }
 
 var _ channel.Adapter = (*Bot)(nil)
@@ -216,6 +220,17 @@ func (b *Bot) convert(data *chatbot.BotCallbackDataModel) (channel.Message, bool
 			out.Images = append(out.Images, channel.Attachment{ContentType: "image/*",
 				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchImage(ctx, code) }})
 		}
+	case "audio", "video":
+		// 语音、视频消息的 content 形如 {"duration":4000,"downloadCode":"..."}（钉钉「机器人消息类型」文档），
+		// 取的办法和文件一样。只有人和机器人单聊时才收得到这两种。
+		if code := downloadCode(data.Content); code != "" {
+			a := channel.Attachment{Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, code) }}
+			if data.Msgtype == "audio" {
+				out.Voices = append(out.Voices, a)
+			} else {
+				out.Videos = append(out.Videos, a)
+			}
+		}
 	case "file":
 		// 文件消息的 content 形如 {"downloadCode":"...","fileName":"..."}，取文件的办法和图片一样。
 		if code := downloadCode(data.Content); code != "" {
@@ -342,13 +357,27 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 		return fmt.Errorf("%w: 会话标识 %q 不是钉钉单聊", ErrInvalid, m.Chat)
 	}
 	if m.File != nil {
-		return fmt.Errorf("dingtalk: 钉钉渠道暂不支持发送文件")
+		key, param, err := b.media(ctx, m.File)
+		if err != nil {
+			return err
+		}
+		if err := b.batchSend(ctx, staff, key, param); err != nil {
+			return err
+		}
+		if strings.TrimSpace(m.Text) == "" {
+			return nil
+		}
 	}
+	return b.batchSend(ctx, staff, "sampleText", map[string]string{"content": m.Text})
+}
+
+// batchSend 用"机器人批量发送单聊消息"接口发一条消息。
+func (b *Bot) batchSend(ctx context.Context, staff, msgKey string, msgParam map[string]string) error {
 	token, err := b.accessToken(ctx)
 	if err != nil {
 		return err
 	}
-	param, err := json.Marshal(map[string]string{"content": m.Text})
+	param, err := json.Marshal(msgParam)
 	if err != nil {
 		return err
 	}
@@ -357,7 +386,7 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 		FlowControlledStaffIDList []string `json:"flowControlledStaffIdList"`
 	}
 	if err := b.call(ctx, "/v1.0/robot/oToMessages/batchSend", token, map[string]any{
-		"robotCode": b.robot(), "userIds": []string{staff}, "msgKey": "sampleText", "msgParam": string(param),
+		"robotCode": b.robot(), "userIds": []string{staff}, "msgKey": msgKey, "msgParam": string(param),
 	}, &out); err != nil {
 		return err
 	}

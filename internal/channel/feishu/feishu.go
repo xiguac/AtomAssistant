@@ -30,6 +30,8 @@ import (
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
 	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/media"
+	"path"
 )
 
 // ErrInvalid 表示配置或参数不合法。
@@ -145,6 +147,23 @@ func (b *Bot) convert(ev *larkim.P2MessageReceiveV1) (channel.Message, bool) {
 	if ms, err := strconv.ParseInt(str(msg.CreateTime), 10, 64); err == nil && ms > 0 {
 		out.At = time.UnixMilli(ms)
 	}
+	// 语音与视频：内容里是 file_key，和文件走同一个接口取（字段取自官方 SDK 的 MessageAudio、MessageMedia）。
+	switch str(msg.MessageType) {
+	case "audio", "media":
+		var c struct {
+			FileKey string `json:"file_key"`
+		}
+		if json.Unmarshal([]byte(str(msg.Content)), &c) == nil && c.FileKey != "" {
+			key := c.FileKey
+			a := channel.Attachment{Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, id, key) }}
+			if str(msg.MessageType) == "audio" {
+				out.Voices = append(out.Voices, a)
+			} else {
+				out.Videos = append(out.Videos, a)
+			}
+		}
+		return out, true
+	}
 	if str(msg.MessageType) == "file" {
 		var c struct {
 			FileKey  string `json:"file_key"`
@@ -169,7 +188,7 @@ func (b *Bot) convert(ev *larkim.P2MessageReceiveV1) (channel.Message, bool) {
 
 // parseContent 从消息内容里取出文字和图片。content 是一段 JSON，形态随消息类型而不同。
 //
-// 认三种：纯文字、单张图片、富文本（文字和图片混排）。别的类型（语音、文件、卡片）返回空，
+// 认三种：纯文字、单张图片、富文本（文字和图片混排）。语音、视频、文件在 convert 里另外处理；别的类型（卡片等）返回空，
 // 由上层告诉用户这种消息暂时处理不了。
 func parseContent(msgType, content string) (text string, imageKeys []string) {
 	switch msgType {
@@ -291,15 +310,15 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 		return err
 	}
 	if m.File != nil {
-		key, err := b.upload(ctx, cli, m.File)
+		msgType, content, err := b.media(ctx, cli, m.File)
 		if err != nil {
 			return err
 		}
-		content, err := json.Marshal(map[string]string{"file_key": key})
+		raw, err := json.Marshal(content)
 		if err != nil {
 			return err
 		}
-		if err := b.post(ctx, cli, openID, "file", string(content)); err != nil {
+		if err := b.post(ctx, cli, openID, msgType, string(raw)); err != nil {
 			return err
 		}
 		if strings.TrimSpace(m.Text) == "" {
@@ -328,11 +347,78 @@ func (b *Bot) post(ctx context.Context, cli *lark.Client, openID, msgType, conte
 	return nil
 }
 
-// upload 把一个文件传到飞书，返回它的 file_key。
-func (b *Bot) upload(ctx context.Context, cli *lark.Client, f *channel.File) (string, error) {
-	resp, err := cli.Im.File.Create(ctx, larkim.NewCreateFileReqBuilder().
-		Body(larkim.NewCreateFileReqBodyBuilder().FileType("stream").FileName(f.Name).File(bytes.NewReader(f.Data)).Build()).
+// media 把要发的文件按类传上去，返回消息类型和消息内容。
+//
+// 图片发 image；语音发 audio，飞书只收 opus，先转好并带上时长；视频发 media，只收 mp4，
+// 带一张从视频里取的封面。其余的按文件发。
+func (b *Bot) media(ctx context.Context, cli *lark.Client, f *channel.File) (string, map[string]string, error) {
+	switch f.Kind {
+	case media.KindImage:
+		key, err := b.uploadImage(ctx, cli, f.Data)
+		if err != nil {
+			return "", nil, err
+		}
+		return "image", map[string]string{"image_key": key}, nil
+	case media.KindAudio:
+		opus, ms, err := media.Default.Opus(ctx, f.Data)
+		if err != nil {
+			return "", nil, err
+		}
+		name := strings.TrimSuffix(f.Name, path.Ext(f.Name)) + ".opus"
+		key, err := b.upload(ctx, cli, "opus", name, opus, ms)
+		if err != nil {
+			return "", nil, err
+		}
+		return "audio", map[string]string{"file_key": key}, nil
+	case media.KindVideo:
+		if media.Sniff(f.Data) != media.MIMEMP4 {
+			return "", nil, channel.ErrUnsupportedKind
+		}
+		cover, err := media.Default.Cover(ctx, f.Data)
+		if err != nil {
+			return "", nil, err
+		}
+		imageKey, err := b.uploadImage(ctx, cli, cover)
+		if err != nil {
+			return "", nil, err
+		}
+		// 时长量不出来（比如没有音轨）就不带，飞书照样能发，只是不显示时长。
+		secs, _ := media.Default.VideoSeconds(ctx, f.Data)
+		key, err := b.upload(ctx, cli, "mp4", f.Name, f.Data, secs*1000)
+		if err != nil {
+			return "", nil, err
+		}
+		return "media", map[string]string{"file_key": key, "image_key": imageKey}, nil
+	}
+	key, err := b.upload(ctx, cli, "stream", f.Name, f.Data, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	return "file", map[string]string{"file_key": key}, nil
+}
+
+// uploadImage 把一张图片传到飞书，返回它的 image_key。
+func (b *Bot) uploadImage(ctx context.Context, cli *lark.Client, data []byte) (string, error) {
+	resp, err := cli.Im.Image.Create(ctx, larkim.NewCreateImageReqBuilder().
+		Body(larkim.NewCreateImageReqBodyBuilder().ImageType(larkim.CreateImageImageTypeMessage).Image(bytes.NewReader(data)).Build()).
 		Build())
+	if err != nil {
+		return "", fmt.Errorf("feishu: 上传图片失败: %w", err)
+	}
+	if !resp.Success() || resp.Data == nil || str(resp.Data.ImageKey) == "" {
+		return "", fmt.Errorf("feishu: 上传图片失败: %d %s", resp.Code, resp.Msg)
+	}
+	return *resp.Data.ImageKey, nil
+}
+
+// upload 把一个文件传到飞书，返回它的 file_key。fileType 是飞书的文件类型（opus、mp4、stream 等），
+// ms 是音视频的时长，0 表示不带。
+func (b *Bot) upload(ctx context.Context, cli *lark.Client, fileType, name string, data []byte, ms int) (string, error) {
+	body := larkim.NewCreateFileReqBodyBuilder().FileType(fileType).FileName(name).File(bytes.NewReader(data))
+	if ms > 0 {
+		body = body.Duration(ms)
+	}
+	resp, err := cli.Im.File.Create(ctx, larkim.NewCreateFileReqBuilder().Body(body.Build()).Build())
 	if err != nil {
 		return "", fmt.Errorf("feishu: 上传文件失败: %w", err)
 	}

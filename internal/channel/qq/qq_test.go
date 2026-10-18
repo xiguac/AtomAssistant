@@ -14,7 +14,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"encoding/base64"
 	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/media"
 )
 
 // fakeQQ 模拟 QQ 开放平台：凭证接口、网关地址接口、WebSocket 网关、发消息接口。
@@ -360,12 +362,57 @@ func TestDispatch_消息里的图片附件带给上层(t *testing.T) {
 	if len(got) != 1 || got[0].Text != "看看这个" {
 		t.Fatalf("消息没有交给上层: %+v", got)
 	}
-	// 只认图片，而且要有地址；语音先不处理。
+	// 图片要有地址才收。
 	if imgs := got[0].Images; len(imgs) != 1 || imgs[0].URL != "https://multimedia.nt.qq.com.cn/a.jpg" || imgs[0].ContentType != "image/jpeg" {
 		t.Fatalf("图片附件不对: %+v", got[0].Images)
 	}
 	// 图片以外的附件（语音、视频除外）当作文件，带着文件名。
 	if fs := got[0].Files; len(fs) != 1 || fs[0].Name != "合同.pdf" || fs[0].URL != "https://multimedia.nt.qq.com.cn/c.pdf" {
 		t.Fatalf("文件附件不对: %+v", got[0].Files)
+	}
+	// 语音单独带给上层，格式由上层取回之后按内容认。
+	if vs := got[0].Voices; len(vs) != 1 || vs[0].URL != "https://multimedia.nt.qq.com.cn/b.silk" {
+		t.Fatalf("语音附件不对: %+v", got[0].Voices)
+	}
+	got = nil
+	video := `{"id":"m2","content":"","timestamp":"2026-10-13T10:00:00+08:00","author":{"user_openid":"OPENID1"},` +
+		`"attachments":[{"content_type":"video/mp4","url":"https://multimedia.nt.qq.com.cn/d.mp4"}]}`
+	b.dispatch(payload{Op: opDispatch, Type: eventC2C, Data: json.RawMessage(video)}, &session{}, newRecent(8),
+		func(m channel.Message) { got = append(got, m) })
+	if len(got) != 1 || len(got[0].Videos) != 1 || got[0].Videos[0].URL != "https://multimedia.nt.qq.com.cn/d.mp4" {
+		t.Fatalf("视频附件不对: %+v", got)
+	}
+}
+
+func TestSend_图片语音视频按各自的类型上传(t *testing.T) {
+	f := newFake(t)
+	b := f.bot()
+	ctx := context.Background()
+	wav := media.WAV(make([]byte, 24000*2), 24000) // 1 秒静音
+	for _, c := range []struct {
+		file     channel.File
+		fileType float64
+		name     string
+	}{
+		{channel.File{Name: "图.png", Data: []byte("PNG-bytes"), Kind: media.KindImage}, 1, "图.png"},
+		{channel.File{Name: "片段.mp4", Data: []byte("mp4-bytes"), Kind: media.KindVideo}, 2, "片段.mp4"},
+		// QQ 的语音只收 silk：先转好，名字也换成 .silk。
+		{channel.File{Name: "录音.wav", Data: wav, Kind: media.KindAudio}, 3, "录音.silk"},
+	} {
+		before := len(f.posts)
+		file := c.file
+		if err := b.Send(ctx, channel.Outgoing{Chat: "c2c:OPENID_A", File: &file}); err != nil {
+			t.Fatalf("%s 发送失败: %v", c.name, err)
+		}
+		up := f.posts[before]
+		if up["file_type"] != c.fileType || up["file_name"] != c.name {
+			t.Fatalf("%s 上传请求不对: %v %v", c.name, up["file_type"], up["file_name"])
+		}
+		if c.fileType == 3 {
+			raw, _ := base64.StdEncoding.DecodeString(up["file_data"].(string))
+			if media.Sniff(raw) != media.MIMESilk {
+				t.Fatalf("语音应转成 silk 再传: %s", media.Sniff(raw))
+			}
+		}
 	}
 }

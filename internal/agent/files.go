@@ -96,6 +96,7 @@ const ToolFileSend = "file.send"
 var fileSendTool = builtin(ToolFileSend,
 	`把工作区里的一个文件发到用户和你对话的聊天窗口里。用户说"把文件发给我""发我一份"时用它；`+
 		`你生成了用户要的文件（文档、表格、演示文稿）之后，也用它把文件直接发过去，不要只说"已保存到工作区"。`+
+		`图片、语音（mp3、wav 等）、视频（mp4）会按聊天软件原生的图片、语音、视频消息发出，其余的按文件发。`+
 		`只能发给正在和你对话的用户本人，不能指定别的收件人。`,
 	`{"type":"object","properties":{"path":{"type":"string","description":"`+pathHint+`"}},"required":["path"]}`,
 	core.SideEffectReadOnly)

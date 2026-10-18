@@ -134,7 +134,7 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 	}
 	body := chatRequest{
 		Model:       req.Model,
-		Messages:    openAIMessages(req.Messages),
+		Messages:    openAIMessages(p.dialect, req.Messages),
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 	}

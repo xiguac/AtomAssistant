@@ -239,6 +239,13 @@ type messageItem struct {
 		Media    *cdnMedia `json:"media"`
 		FileName string    `json:"file_name"`
 	} `json:"file_item,omitempty"`
+	// VoiceItem 与 VideoItem 是语音（silk）和视频（mp4），取的办法和文件一样（官方客户端的 media-download.js）。
+	VoiceItem *struct {
+		Media *cdnMedia `json:"media"`
+	} `json:"voice_item,omitempty"`
+	VideoItem *struct {
+		Media *cdnMedia `json:"media"`
+	} `json:"video_item,omitempty"`
 }
 
 // message 是服务端推来的一条消息。
@@ -392,6 +399,14 @@ func (b *Bot) convert(ctx context.Context, m *message) (channel.Message, bool) {
 		case item.Type == itemFile && item.FileItem != nil && item.FileItem.Media != nil:
 			media := *item.FileItem.Media
 			out.Files = append(out.Files, channel.Attachment{Name: item.FileItem.FileName,
+				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, media) }})
+		case item.Type == itemVoice && item.VoiceItem != nil && item.VoiceItem.Media != nil:
+			media := *item.VoiceItem.Media
+			out.Voices = append(out.Voices, channel.Attachment{
+				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, media) }})
+		case item.Type == itemVideo && item.VideoItem != nil && item.VideoItem.Media != nil:
+			media := *item.VideoItem.Media
+			out.Videos = append(out.Videos, channel.Attachment{
 				Fetch: func(ctx context.Context) (channel.Picture, error) { return b.fetchFile(ctx, media) }})
 		case item.Type == itemImage && item.ImageItem != nil && item.ImageItem.Media != nil:
 			media, key := *item.ImageItem.Media, item.ImageItem.AESKey
@@ -550,19 +565,34 @@ func (b *Bot) fetchFile(ctx context.Context, media cdnMedia) (channel.Picture, e
 	return channel.Picture{MIME: http.DetectContentType(raw), Data: raw}, nil
 }
 
-// Send 往一个单聊会话里发一条文字消息。
+// Send 往一个单聊会话里发一条消息：文字，或者一张图片、一段视频、一个文件。
 func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 	user, ok := strings.CutPrefix(m.Chat, chatPrefix)
 	if !ok || user == "" {
 		return fmt.Errorf("%w: 会话标识 %q 不是微信单聊", ErrInvalid, m.Chat)
 	}
-	if m.File != nil {
-		return fmt.Errorf("weixin: 微信渠道暂不支持发送文件")
-	}
 	token, err := b.token(ctx)
 	if err != nil {
 		return err
 	}
+	// 一条消息只放一项，和官方客户端一样：文件、图片、视频先发，附带的话另发一条。
+	if m.File != nil {
+		item, err := b.mediaItem(ctx, token, user, m.File)
+		if err != nil {
+			return err
+		}
+		if err := b.sendItem(ctx, token, user, item); err != nil {
+			return err
+		}
+		if strings.TrimSpace(m.Text) == "" {
+			return nil
+		}
+	}
+	return b.sendItem(ctx, token, user, map[string]any{"type": itemText, "text_item": map[string]string{"text": m.Text}})
+}
+
+// sendItem 发出只有一项的一条消息。
+func (b *Bot) sendItem(ctx context.Context, token, user string, item map[string]any) error {
 	var id [8]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return fmt.Errorf("weixin: 生成消息编号失败: %w", err)
@@ -571,7 +601,7 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 		"from_user_id": "", "to_user_id": user,
 		"client_id":    "atomhelper-" + hex.EncodeToString(id[:]),
 		"message_type": messageFromBot, "message_state": stateFinished,
-		"item_list": []map[string]any{{"type": itemText, "text_item": map[string]string{"text": m.Text}}},
+		"item_list": []map[string]any{item},
 	}
 	// 上下文令牌是对方最近一条消息带来的，回话时带上。没有也照发，由服务端决定收不收。
 	if ctxToken := b.load(ctx, b.stateKey("ctx", user)); ctxToken != "" {

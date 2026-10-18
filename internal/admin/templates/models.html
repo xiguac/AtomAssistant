@@ -20,7 +20,7 @@
       <div class="help">越高越慢、花费越多。DeepSeek、阿里云百炼按各自的参数下发；其他服务按 reasoning_effort 下发，不支持「关闭」</div></div>
     <div><label>支持的输入</label>
       <div class="checks" style="min-height:36px;align-items:center">{{range inputKinds}}<label class="check"><input type="checkbox" name="inputs" value="{{.}}"{{if has (inputsOf $.Data.MainInputs) .}} checked{{end}}{{if eq (print .) "text"}} checked disabled{{end}}>{{inputName .}}</label>{{end}}</div>
-      <div class="help">文字为必选。图片只交给勾选了图片的模型；所有模型都不支持的类型，用户发来时直接回复看不懂</div></div>
+      <div class="help">文字为必选。图片、语音、视频只交给勾选了对应类型的模型（语音、视频要模型本身支持，如阿里云百炼的 Omni 系列）；所有模型都不支持的类型，用户发来时直接回复看不懂</div></div>
       <div class="full actions"><button class="btn">保存</button>
         <button class="btn sec" formaction="/models/test" data-async>连接测试</button>
         <span class="note muted">连接测试使用已保存的接口地址与密钥，向模型发送一条测试消息。</span></div>
@@ -157,7 +157,7 @@
       <div class="help">越高越慢、花费越多。DeepSeek、阿里云百炼按各自的参数下发；其他服务按 reasoning_effort 下发，不支持「关闭」</div></div>
     <div><label>支持的输入</label>
       <div class="checks" style="min-height:36px;align-items:center">{{range inputKinds}}<label class="check"><input type="checkbox" name="inputs" value="{{.}}"{{if eq (print .) "text"}} checked disabled{{end}}>{{inputName .}}</label>{{end}}</div>
-      <div class="help">文字为必选。图片只交给勾选了图片的模型；所有模型都不支持的类型，用户发来时直接回复看不懂</div></div>
+      <div class="help">文字为必选。图片、语音、视频只交给勾选了对应类型的模型（语音、视频要模型本身支持，如阿里云百炼的 Omni 系列）；所有模型都不支持的类型，用户发来时直接回复看不懂</div></div>
     <div class="full"><label>任务类别限制（不选表示不限，按评分分派）</label>
       <div class="checks">{{range .Categories}}<label class="check" title="{{.Hint}}"><input type="checkbox" name="good_at" value="{{.ID}}">{{.Name}}</label>{{end}}</div></div>
   </div>

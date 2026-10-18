@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -127,5 +128,33 @@ func TestInputs_文字必须有不写按文字和图片(t *testing.T) {
 	}
 	if _, err := ParseThinking("extreme"); err == nil {
 		t.Fatal("不认得的思考强度应被拒绝")
+	}
+}
+
+func TestMedia_语音视频按各家的写法交给模型(t *testing.T) {
+	msgs := []Message{{Role: RoleUser, Content: "听听这段", Audio: []Image{{MIME: "audio/wav", Data: []byte("RIFF")}},
+		Video: []Image{{MIME: "video/mp4", Data: []byte("mp4")}}}}
+	parts := func(d Dialect) []any {
+		t.Helper()
+		raw, _ := json.Marshal(openAIMessages(d, msgs))
+		var out []map[string]any
+		_ = json.Unmarshal(raw, &out)
+		return out[0]["content"].([]any)
+	}
+	// 阿里云百炼：语音数据写成 data:;base64,…；视频按 video_url。
+	p := parts(DialectBailian)
+	audio := p[1].(map[string]any)["input_audio"].(map[string]any)
+	video := p[2].(map[string]any)["video_url"].(map[string]any)
+	if p[1].(map[string]any)["type"] != "input_audio" || audio["data"] != "data:;base64,UklGRg==" || audio["format"] != "wav" ||
+		p[2].(map[string]any)["type"] != "video_url" || video["url"] != "data:video/mp4;base64,bXA0" {
+		t.Fatalf("百炼的写法不对: %v", p)
+	}
+	// OpenAI：语音数据直接是 Base64。
+	if a := parts(DialectGeneric)[1].(map[string]any)["input_audio"].(map[string]any); a["data"] != "UklGRg==" {
+		t.Fatalf("OpenAI 的写法不对: %v", a)
+	}
+	// Anthropic 的接口不收语音：说清楚，不发出去。
+	if _, err := anthropicMessage(RoleUser, msgs[0]); err == nil || !strings.Contains(err.Error(), "语音") {
+		t.Fatalf("Anthropic 不收语音应报错: %v", err)
 	}
 }

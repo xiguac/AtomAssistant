@@ -39,6 +39,8 @@ type fakeTasks struct {
 	tasks   []*core.Task
 	pending map[string]*Pending
 	log     []string
+	// attached 是每次交给任务的媒体。
+	attached [][]Picture
 }
 
 func (f *fakeTasks) Create(_ context.Context, title, goal string, tags []string) (string, error) {
@@ -54,6 +56,7 @@ func (f *fakeTasks) Reply(_ context.Context, id, text, source string) error {
 }
 func (f *fakeTasks) Attach(_ context.Context, id string, pictures []Picture, source string) error {
 	f.log = append(f.log, fmt.Sprintf("attach:%s|%d 张|%s", f.title(id), len(pictures), source))
+	f.attached = append(f.attached, pictures)
 	return nil
 }
 func (f *fakeTasks) Approve(_ context.Context, id string) error {
@@ -523,17 +526,17 @@ func TestHandle_图片原样交给任务与用户的话分开送(t *testing.T) {
 	sent := len(qq.sent)
 	h.fetch = func(context.Context, Attachment) (Picture, error) { return Picture{}, errors.New("超时") }
 	h.Handle(ctx, "qq", withPictures(from("OWNER", "看看", "m5"), 1))
-	if len(tasks.log) != 0 || len(qq.sent) != sent+1 || !strings.Contains(qq.sent[sent].Text, "取回图片失败") {
+	if len(tasks.log) != 0 || len(qq.sent) != sent+1 || !strings.Contains(qq.sent[sent].Text, "图片没收成") {
 		t.Fatalf("取不回图片时应告知用户: %v", tasks.log)
 	}
 }
 
 func TestFetchPicture_只认https和真正的图片(t *testing.T) {
 	ctx := context.Background()
-	if _, err := fetchPicture(ctx, Attachment{URL: "http://img.example.com/a.jpg"}); err == nil {
+	if _, err := fetchMedia(ctx, Attachment{URL: "http://img.example.com/a.jpg"}); err == nil {
 		t.Fatal("明文地址应被拒绝")
 	}
-	if _, err := fetchPicture(ctx, Attachment{URL: "file:///etc/passwd"}); err == nil {
+	if _, err := fetchMedia(ctx, Attachment{URL: "file:///etc/passwd"}); err == nil {
 		t.Fatal("不是 https 的地址应被拒绝")
 	}
 }
@@ -773,7 +776,7 @@ func TestRoute_文件收进工作区换成一句话照常处理(t *testing.T) {
 
 func TestRoute_没有模型看得了图片时直接告诉用户(t *testing.T) {
 	h, qq, tasks := hub(t)
-	h = h.WithoutImages()
+	h = h.WithMedia(false, false, false)
 	ctx := context.Background()
 	img := Attachment{URL: "https://img.example.com/1.jpg", ContentType: "image/jpeg"}
 

@@ -30,6 +30,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomhelper/internal/media"
+	"path"
 )
 
 const (
@@ -264,9 +266,10 @@ func (b *Bot) Send(ctx context.Context, m channel.Outgoing) error {
 const (
 	// msgTypeMedia 是富媒体消息。
 	msgTypeMedia = 7
-	// fileTypeFile 是上传接口里"文件"这一类（1 图片、2 视频、3 语音、4 文件）。
-	fileTypeFile = 4
 )
+
+// fileTypes 是上传接口里各类的编号（取自官方 Go SDK：1 图片、2 视频、3 语音，4 文件）。
+var fileTypes = map[media.Kind]int{media.KindImage: 1, media.KindVideo: 2, media.KindAudio: 3, media.KindFile: 4}
 
 // upload 把一个文件传到 QQ，返回发消息时用来引用它的 file_info。
 //
@@ -275,13 +278,26 @@ func (b *Bot) upload(ctx context.Context, openid string, f *channel.File) (strin
 	if len(f.Data) == 0 {
 		return "", fmt.Errorf("%w: 文件是空的", ErrInvalid)
 	}
+	kind := f.Kind
+	if kind == "" {
+		kind = media.KindFile
+	}
+	data, name := f.Data, f.Name
+	if kind == media.KindAudio {
+		// QQ 的语音只收 silk（官方 Go SDK 的说明）。
+		silk, _, err := media.Default.Silk(ctx, data)
+		if err != nil {
+			return "", err
+		}
+		data, name = silk, strings.TrimSuffix(name, path.Ext(name))+".silk"
+	}
 	var out struct {
 		FileInfo string `json:"file_info"`
 	}
 	err := b.call(ctx, http.MethodPost, "/v2/users/"+url.PathEscape(openid)+"/files", map[string]any{
-		"file_type":    fileTypeFile,
-		"file_data":    base64.StdEncoding.EncodeToString(f.Data),
-		"file_name":    f.Name,
+		"file_type":    fileTypes[kind],
+		"file_data":    base64.StdEncoding.EncodeToString(data),
+		"file_name":    name,
 		"srv_send_msg": false,
 	}, &out)
 	if err != nil {
@@ -514,8 +530,11 @@ func (b *Bot) dispatch(p payload, sess *session, seen *recent, handle func(chann
 			case a.URL == "":
 			case strings.HasPrefix(a.ContentType, "image/"):
 				msg.Images = append(msg.Images, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
-			case strings.HasPrefix(a.ContentType, "voice") || strings.HasPrefix(a.ContentType, "audio/") || strings.HasPrefix(a.ContentType, "video"):
-				// 语音、视频先不处理。
+			case strings.HasPrefix(a.ContentType, "voice") || strings.HasPrefix(a.ContentType, "audio/"):
+				// 语音的格式（QQ 是 silk）由中枢取回之后按内容认，再转成模型认的格式。
+				msg.Voices = append(msg.Voices, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
+			case strings.HasPrefix(a.ContentType, "video"):
+				msg.Videos = append(msg.Videos, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
 			default:
 				msg.Files = append(msg.Files, channel.Attachment{URL: a.URL, ContentType: a.ContentType, Name: a.Filename})
 			}

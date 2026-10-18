@@ -113,9 +113,6 @@ func TestBot_发消息与取图片(t *testing.T) {
 	if err := bot.Send(ctx, channel.Outgoing{Chat: "c2c:x", Text: "hi"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("别的渠道的会话应被拒绝: %v", err)
 	}
-	if err := bot.Send(ctx, channel.Outgoing{Chat: "dm:staff-7", File: &channel.File{Name: "a.txt"}}); err == nil {
-		t.Fatal("发文件暂不支持，应报错")
-	}
 
 	// 取图片：下载码换下载地址，再取回来。
 	pic, err := bot.fetchImage(ctx, "code-abc")

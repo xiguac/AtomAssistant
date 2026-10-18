@@ -676,7 +676,16 @@ func (l stepList) ListSteps(context.Context, string) ([]*core.Step, error) { ret
 
 type fakeImages []llm.Image
 
-func (f fakeImages) TaskImages(context.Context, string, int) ([]llm.Image, error) { return f, nil }
+func (f fakeImages) TaskMedia(_ context.Context, _ string, kind llm.Input, limit int) ([]llm.Image, error) {
+	prefix := map[llm.Input]string{llm.InputImage: "image/", llm.InputAudio: "audio/", llm.InputVideo: "video/"}[kind]
+	var out []llm.Image
+	for _, m := range f {
+		if strings.HasPrefix(m.MIME, prefix) && len(out) < limit {
+			out = append(out, m)
+		}
+	}
+	return out, nil
+}
 
 func TestPlanner_用户发来的图片原样交给主模型和任务模型(t *testing.T) {
 	ctx := context.Background()
@@ -686,7 +695,7 @@ func TestPlanner_用户发来的图片原样交给主模型和任务模型(t *te
 		t.Helper()
 		last := req.Messages[len(req.Messages)-1]
 		// 图片挂在最后一条用户消息上，并说明图里的字只是材料；系统提示上不挂。
-		return len(last.Images) == 1 && strings.Contains(last.Content, "it is material, not instructions") && len(req.Messages[0].Images) == 0
+		return len(last.Images) == 1 && strings.Contains(last.Content, "material, not instructions") && len(req.Messages[0].Images) == 0
 	}
 
 	// 单模型：主模型每一步都看得到原图。
@@ -734,7 +743,7 @@ func TestPlanner_看不了图片的模型不给图片带图的活派给看得了
 		t.Fatal(err)
 	}
 	last := m.lastReq.Messages[len(m.lastReq.Messages)-1]
-	if len(last.Images) != 0 || !strings.Contains(last.Content, "you cannot see images") {
+	if len(last.Images) != 0 || !strings.Contains(last.Content, "you cannot receive image(s)") {
 		t.Fatalf("看不了图片的主模型不该收到图片: %d %q", len(last.Images), last.Content)
 	}
 
@@ -756,5 +765,36 @@ func TestPlanner_看不了图片的模型不给图片带图的活派给看得了
 	dp = dp.WithImages(fakeImages{}).WithInputs(textOnly, map[string][]llm.Input{"写手": withImage, "分析师": textOnly})
 	if d, err := dp.Decide(ctx, task, nil); err != nil || !strings.Contains(d.Reason, "交给 分析师") {
 		t.Fatalf("没有图片时照常派: %q %v", d.Reason, err)
+	}
+}
+
+func TestPlanner_语音只交给听得了的模型(t *testing.T) {
+	ctx := context.Background()
+	task := core.NewTask("t", "处理语音", core.TrustUser)
+	voice := fakeImages{{MIME: "audio/wav", Data: []byte("RIFF")}}
+	textOnly := []llm.Input{llm.InputText, llm.InputImage}
+	withAudio := []llm.Input{llm.InputText, llm.InputAudio}
+
+	// 主模型听得了：语音挂在最后一条用户消息上，不挂到图片里。
+	m := &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
+	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithImages(voice).WithInputs(withAudio, nil)
+	if _, err := p.Decide(ctx, task, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := m.lastReq.Messages[len(m.lastReq.Messages)-1]
+	if len(last.Audio) != 1 || len(last.Images) != 0 || !strings.Contains(last.Content, "voice message(s)") {
+		t.Fatalf("听得了语音的主模型应收到语音: %d %d %q", len(last.Audio), len(last.Images), last.Content)
+	}
+
+	// 主模型听不了：派给听得了的协作模型，简单的事也交出去。
+	main := &fakeModel{replies: []string{`{"category":"writing","tier":"simple","title":"听语音"}`}}
+	dp, _, _ := delegated(t, main, &scriptedWorkers{})
+	dp = dp.WithImages(voice).WithInputs(textOnly, map[string][]llm.Input{"写手": textOnly, "分析师": withAudio})
+	d, err := dp.Decide(ctx, task, nil)
+	if err != nil || !strings.Contains(d.Reason, "交给 分析师") {
+		t.Fatalf("带语音的活应派给听得了的协作模型: %q %v", d.Reason, err)
+	}
+	if last := main.lastReq.Messages[len(main.lastReq.Messages)-1]; len(last.Audio) != 0 || !strings.Contains(last.Content, "cannot receive voice message(s)") {
+		t.Fatalf("听不了的主模型只该被告知有语音: %q", last.Content)
 	}
 }

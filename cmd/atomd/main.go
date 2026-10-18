@@ -30,6 +30,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomhelper/internal/media"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/schedule"
@@ -160,9 +161,9 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.workspace != nil {
 			hub = hub.WithFiles(parts.workspace)
 		}
-		// 没有一个模型看得了图片：收到图片直接告诉用户。
-		if parts.noImages {
-			hub = hub.WithoutImages()
+		// 配置的模型都收不了的那几类媒体，收到时直接告诉用户。
+		if parts.inputs != nil {
+			hub = hub.WithMedia(parts.inputs.Any(llm.InputImage), parts.inputs.Any(llm.InputAudio), parts.inputs.Any(llm.InputVideo))
 		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
@@ -283,9 +284,9 @@ type parts struct {
 	triage channel.Triager
 	// workspace 非空表示启用了文件处理。
 	workspace *files.Workspace
-	// noImages 为真表示配置的模型都看不了图片。
-	noImages bool
-	close    func()
+	// inputs 是各个模型支持的输入，demo 模式下为空。
+	inputs *config.ModelInputs
+	close  func()
 }
 
 // build 按配置装出各个部件。
@@ -487,6 +488,10 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	// 各个模型支持的输入：图片只交给看得了的模型。
 	inputs := file.Inputs()
 	planner = planner.WithInputs(inputs.Main, inputs.Workers)
+	// 语音、视频的格式转换靠 ffmpeg（微信、QQ 的 silk 语音除外）。
+	if len(file.Channels) > 0 && !media.Default.HasFFmpeg() {
+		log.Warn("服务器上没有安装 ffmpeg：飞书发来的语音转不了格式；发语音、视频时会改成按文件发。安装：deploy/deploy.sh media")
+	}
 
 	// 协作模型：主模型做预处理和审核，事情交给任务模型去办，交给谁看用户以往的评价。
 	if workers := file.Workers(); len(workers) > 0 {
@@ -577,7 +582,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	return &parts{
 		team:      len(file.Workers()) > 0,
-		noImages:  !inputs.Any(llm.InputImage),
+		inputs:    &inputs,
 		triage:    agent.NewTriager(router),
 		workspace: workspace,
 		channels:  channels,

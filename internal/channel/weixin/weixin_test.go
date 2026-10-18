@@ -43,8 +43,8 @@ func (k *memKV) PutSetting(_ context.Context, key, value string) error {
 // png 是一张最小的 PNG 的开头，足够让类型探测认出它是图片。
 var png = append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 40)...)
 
-// encryptECB 按微信 CDN 的办法加密：AES-128-ECB，PKCS7 填充。
-func encryptECB(t *testing.T, data, key []byte) []byte {
+// sealECB 按微信 CDN 的办法加密：AES-128-ECB，PKCS7 填充。
+func sealECB(t *testing.T, data, key []byte) []byte {
 	t.Helper()
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -95,14 +95,14 @@ func TestBot_长轮询收消息并用上下文令牌回话(t *testing.T) {
 			_, _ = io.WriteString(w, `{"ret":0,"message_id":77}`)
 		case "/download":
 			if r.URL.Query().Get("encrypted_query_param") == "enc file/1" {
-				_, _ = w.Write(encryptECB(t, []byte("file-body"), key))
+				_, _ = w.Write(sealECB(t, []byte("file-body"), key))
 				return
 			}
 			if r.URL.Query().Get("encrypted_query_param") != "enc param/1" {
 				http.Error(w, "bad param", http.StatusBadRequest)
 				return
 			}
-			_, _ = w.Write(encryptECB(t, append([]byte{}, png...), key))
+			_, _ = w.Write(sealECB(t, append([]byte{}, png...), key))
 		default:
 			_, _ = io.WriteString(w, `{"ret":0}`)
 		}
@@ -201,12 +201,9 @@ func TestBot_长轮询收消息并用上下文令牌回话(t *testing.T) {
 		t.Fatal("Listen 没有随 ctx 结束")
 	}
 
-	// 发不了的：不是微信单聊的会话、文件。
+	// 发不了的：不是微信单聊的会话。
 	if err := bot.Send(context.Background(), channel.Outgoing{Chat: "c2c:x", Text: "hi"}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("别的渠道的会话应被拒绝: %v", err)
-	}
-	if err := bot.Send(context.Background(), channel.Outgoing{Chat: "u:x", File: &channel.File{Name: "a.txt"}}); err == nil {
-		t.Fatal("发文件暂不支持，应报错")
 	}
 }
 
@@ -241,7 +238,7 @@ func TestAESKey_两处来源三种写法(t *testing.T) {
 		t.Fatal("格式不对的密钥应报错")
 	}
 	// 密文被改过、密钥不对：解出来的填充对不上，报错而不是给出一堆乱码。
-	if _, err := decryptECB(encryptECB(t, []byte("hello"), raw), []byte("fedcba9876543210")); err == nil {
+	if _, err := decryptECB(sealECB(t, []byte("hello"), raw), []byte("fedcba9876543210")); err == nil {
 		t.Fatal("密钥不对应解密失败")
 	}
 }

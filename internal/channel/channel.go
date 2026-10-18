@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/media"
 	"github.com/xiguac/atomhelper/internal/policy"
 )
 
@@ -46,8 +46,11 @@ type Message struct {
 	Text   string
 	// Images 是随消息发来的图片。
 	Images []Attachment
-	// Files 是随消息发来的文件（图片以外的附件）。
+	// Files 是随消息发来的文件（图片、语音、视频以外的附件）。
 	Files []Attachment
+	// Voices 与 Videos 是随消息发来的语音和视频。
+	Voices []Attachment
+	Videos []Attachment
 	// ID 是渠道给这条消息的编号，有的渠道回复时要带上它。
 	ID string
 	At time.Time
@@ -87,7 +90,13 @@ type Outgoing struct {
 type File struct {
 	Name string
 	Data []byte
+	// Kind 是按哪一类发：图片、语音、视频按各平台原生的消息发（聊天里直接显示、能直接播放），
+	// 其余的按文件发。为空按文件发。
+	Kind media.Kind
 }
+
+// ErrUnsupportedKind 表示这个消息源不能按这一类发（比如微信发不了语音）。中枢收到它会改成按文件发。
+var ErrUnsupportedKind = errors.New("channel: 这个消息源不能按这一类发")
 
 // MaxFileBytes 是发到会话里的单个文件的大小上限。
 const MaxFileBytes = 20 << 20
@@ -118,8 +127,19 @@ func (h *Hub) SendFile(ctx context.Context, tags []string, name string, data []b
 		st = &ChatState{Channel: channel, Chat: chat}
 	}
 	st.Seq++
-	out := Outgoing{Chat: chat, ReplyTo: st.LastMsgID, Seq: st.Seq, File: &File{Name: name, Data: data}}
-	if err := b.Adapter.Send(ctx, out); err != nil {
+	kind := media.KindOf(name, data)
+	out := Outgoing{Chat: chat, ReplyTo: st.LastMsgID, Seq: st.Seq, File: &File{Name: name, Data: data, Kind: kind}}
+	err = b.Adapter.Send(ctx, out)
+	// 这一类发不了（平台不支持，或者转不了它要的格式）：退回按文件发，总比发不出去强。
+	if err != nil && kind != media.KindFile {
+		if !errors.Is(err, ErrUnsupportedKind) {
+			h.log.Warn("按原生消息发送失败，改为按文件发送", "渠道", channel, "文件", name, "类别", kind, "err", err)
+		}
+		st.Seq++
+		out.Seq, out.File.Kind = st.Seq, media.KindFile
+		err = b.Adapter.Send(ctx, out)
+	}
+	if err != nil {
 		return err
 	}
 	// 序号用过了就不能再用。
@@ -257,8 +277,10 @@ type Hub struct {
 	triage Triager
 	// files 非空时用户可以在聊天里发文件，见 files.go。
 	files FileSink
-	// noImages 为真表示配置的模型没有一个看得了图片：收到图片直接告诉用户，不交给任务。
-	noImages bool
+	// accept 是配置的模型收得了哪几类媒体：都收不了的那一类，收到时直接告诉用户，不交给任务。
+	accept accepted
+	// codec 把用户发来的语音转成模型认的格式。
+	codec *media.Codec
 	// saidAt 是用户最近说到各件事的时间，判断新的话归给谁时用，见 triage.go。
 	saidAt map[string]time.Time
 
@@ -271,7 +293,8 @@ type Hub struct {
 // NewHub 构造渠道中枢。
 func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hub, error) {
 	h := &Hub{
-		bindings: make(map[string]Binding), tasks: tasks, state: state, log: log, fetch: fetchPicture,
+		bindings: make(map[string]Binding), tasks: tasks, state: state, log: log, fetch: fetchMedia,
+		accept: accepted{image: true}, codec: media.Default,
 		now:    func() time.Time { return time.Now().UTC() },
 		hinted: make(map[string]time.Time),
 	}
@@ -288,9 +311,14 @@ func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hu
 	return h, nil
 }
 
-// WithoutImages 表示配置的模型都看不了图片。
-func (h *Hub) WithoutImages() *Hub {
-	h.noImages = true
+// accepted 记录配置的模型里有没有收得了图片、语音、视频的。
+type accepted struct {
+	image, audio, video bool
+}
+
+// WithMedia 说明配置的模型里有没有收得了图片、语音、视频的。不设置时只收图片。
+func (h *Hub) WithMedia(image, audio, video bool) *Hub {
+	h.accept = accepted{image: image, audio: audio, video: video}
 	return h
 }
 
@@ -455,16 +483,26 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		m.Files = nil
 		m.Text = text
 	}
-	if len(m.Images) > 0 && h.noImages {
-		// 有文字的话文字照常处理，图片不收。
-		h.say(ctx, channel, m.Chat, unreadable+"（图片）。")
-		m.Images = nil
-		if text == "" {
+	// 没有一个模型收得了的那一类：告诉用户，不收。有文字的话文字照常处理。
+	var refused []string
+	for _, k := range []struct {
+		list *[]Attachment
+		ok   bool
+		name string
+	}{{&m.Images, h.accept.image, "图片"}, {&m.Voices, h.accept.audio, "语音"}, {&m.Videos, h.accept.video, "视频"}} {
+		if len(*k.list) > 0 && !k.ok {
+			refused = append(refused, k.name)
+			*k.list = nil
+		}
+	}
+	if len(refused) > 0 {
+		h.say(ctx, channel, m.Chat, unreadable+"（"+strings.Join(refused, "、")+"）。")
+		if text == "" && len(m.Images)+len(m.Voices)+len(m.Videos) == 0 {
 			return nil
 		}
 	}
-	if len(m.Images) > 0 {
-		return h.routeImages(ctx, channel, m, text, tag)
+	if len(m.Images)+len(m.Voices)+len(m.Videos) > 0 {
+		return h.routeMedia(ctx, channel, m, text, tag)
 	}
 	if text == "" {
 		// 消息源收不了的语音、视频等，到这里都只剩一条空消息。
@@ -821,55 +859,119 @@ func chunk(text string, max int) []string {
 	return out
 }
 
-// 图片的几个上限：一条消息最多看几张、单张多大、取回一张最多等多久。
+// 媒体的几个上限：一条消息最多收几张图片、几段语音、几个视频，单个多大，取回一个最多等多久。
+// 语音、视频以 Base64 交给模型服务，阿里云百炼对单个 Base64 的限制是 10 MB，所以原件不超过 7 MB。
 const (
 	maxPictures     = 4
+	maxVoices       = 3
+	maxVideos       = 1
 	maxPictureBytes = 10 << 20
+	maxMediaBytes   = 7 << 20
 	pictureTimeout  = 30 * time.Second
+	mediaTimeout    = 2 * time.Minute
 )
 
-// imageOnlyGoal 是用户只发了图片、没有说话时任务的目标。
-const imageOnlyGoal = "用户发来了图片，没有附文字说明。图片随上下文一起给出：看明白它是什么，" +
-	"能判断出用户想让你做什么就去办，判断不出就问用户。"
+// mediaOnlyGoal 是用户只发了图片、语音或视频，没有打字时任务的目标。what 是"图片""语音"这样的叫法。
+func mediaOnlyGoal(what string) string {
+	return "用户发来了" + what + "，没有附文字说明。" + what + "随上下文一起给出：看明白、听明白它是什么，" +
+		"能判断出用户想让你做什么就去办，判断不出就问用户。"
+}
 
-// routeImages 处理一条带图片的消息：把图片取回来，原样交给任务，再把用户说的话送过去。
+// routeMedia 处理一条带图片、语音或视频的消息：取回来，原样交给任务，再把用户说的话送过去。
 //
-// 图片不在这里转成文字：转写会丢掉版式、图表、照片里的细节，所以任务里的模型看的是原图。
-// 图片和用户的话分开送：用户的话是他亲口说的，图片里的字是别人写的，两者的信任等级不一样。
-func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, tag string) error {
-	images := m.Images
-	if len(images) > maxPictures {
-		images = images[:maxPictures]
-	}
-	pictures := make([]Picture, 0, len(images))
-	for _, a := range images {
-		fetchCtx, cancel := context.WithTimeout(ctx, pictureTimeout)
-		var p Picture
-		var err error
-		if a.Fetch != nil {
-			p, err = a.Fetch(fetchCtx)
-		} else {
-			p, err = h.fetch(fetchCtx, a)
+// 不在这里转成文字：转写会丢掉版式、图表、语气、画面里的细节，所以任务里的模型拿到的是原件
+// （语音只换成模型认的格式）。原件和用户打的字分开送：打的字是他亲口说的，
+// 图片、语音、视频里的内容可能是别人的，两者的信任等级不一样。
+func (h *Hub) routeMedia(ctx context.Context, channel string, m Message, text, tag string) error {
+	var pictures []Picture
+	var kinds, problems []string
+	take := func(list []Attachment, max int, name, unit string, timeout time.Duration, prepare func(Picture) (Picture, error)) {
+		if len(list) == 0 {
+			return
 		}
-		cancel()
+		if len(list) > max {
+			h.say(ctx, channel, m.Chat, fmt.Sprintf("一次最多收 %d %s%s，这次只收下了前 %d %s。", max, unit, name, max, unit))
+			list = list[:max]
+		}
+		got := 0
+		for _, a := range list {
+			fetchCtx, cancel := context.WithTimeout(ctx, timeout)
+			var p Picture
+			var err error
+			if a.Fetch != nil {
+				p, err = a.Fetch(fetchCtx)
+			} else {
+				p, err = h.fetch(fetchCtx, a)
+			}
+			if err == nil {
+				p, err = prepare(p)
+			}
+			cancel()
+			if err != nil {
+				h.log.Error("收"+name+"失败", "渠道", channel, "err", err)
+				problems = append(problems, fmt.Sprintf("有一%s%s没收成：%v", unit, name, err))
+				continue
+			}
+			pictures = append(pictures, p)
+			got++
+		}
+		if got > 0 {
+			kinds = append(kinds, name)
+		}
+	}
+	take(m.Images, maxPictures, "图片", "张", pictureTimeout, func(p Picture) (Picture, error) {
+		// 各消息源自己取的图片已经按内容核对过类型；按地址取回的，类型以内容为准：
+		// 平台报的类型不一定对，而模型服务对类型很挑剔。
+		if !strings.HasPrefix(p.MIME, "image/") {
+			if mime := http.DetectContentType(p.Data); strings.HasPrefix(mime, "image/") {
+				p.MIME = mime
+			} else {
+				return Picture{}, fmt.Errorf("取回来的不是图片（%s）", mime)
+			}
+		}
+		if len(p.Data) > maxPictureBytes {
+			return Picture{}, fmt.Errorf("图片超过 %d MB", maxPictureBytes>>20)
+		}
+		return p, nil
+	})
+	take(m.Voices, maxVoices, "语音", "段", mediaTimeout, func(p Picture) (Picture, error) {
+		data, mime, err := h.codec.ForModel(ctx, p.Data)
 		if err != nil {
-			return fmt.Errorf("取回图片失败: %w", err)
+			return Picture{}, err
 		}
-		pictures = append(pictures, p)
+		if len(data) > maxMediaBytes {
+			return Picture{}, fmt.Errorf("语音太长（转换后超过 %d MB）", maxMediaBytes>>20)
+		}
+		return Picture{MIME: mime, Data: data}, nil
+	})
+	take(m.Videos, maxVideos, "视频", "个", mediaTimeout, func(p Picture) (Picture, error) {
+		mime := media.Sniff(p.Data)
+		if !strings.HasPrefix(mime, "video/") {
+			return Picture{}, fmt.Errorf("取回来的不是视频（%s）", mime)
+		}
+		if len(p.Data) > maxMediaBytes {
+			return Picture{}, fmt.Errorf("视频超过 %d MB，请剪短或压缩后再发", maxMediaBytes>>20)
+		}
+		return Picture{MIME: mime, Data: p.Data}, nil
+	})
+	if len(problems) > 0 {
+		h.say(ctx, channel, m.Chat, strings.Join(problems, "\n"))
 	}
-	if len(m.Images) > maxPictures {
-		h.say(ctx, channel, m.Chat, fmt.Sprintf("一次最多看 %d 张图片，这次只收下了前 %d 张。", maxPictures, maxPictures))
+	if len(pictures) == 0 {
+		// 一个都没收成：用户的话多半是在说这些附件，离开它们办不了，等用户重发。
+		return nil
 	}
 
 	active, err := h.tasks.ByTag(ctx, ConversationTag, true, 50)
 	if err != nil {
 		return err
 	}
-	// 有任务在等用户回话：这张图是给它的。先送图片，再送用户的话。
+	// 有任务在等用户回话：这些是给它的。先送媒体，再送用户的话。
 	for _, t := range active {
 		if !asking(t) {
 			continue
 		}
+		h.noteSaid(t.ID)
 		h.follow(ctx, t, channel, m.Chat)
 		if err := h.tasks.Attach(ctx, t.ID, pictures, channel); err != nil {
 			return err
@@ -879,52 +981,26 @@ func (h *Hub) routeImages(ctx context.Context, channel string, m Message, text, 
 		}
 		return h.tasks.Reply(ctx, t.ID, text, channel)
 	}
+	what := strings.Join(kinds, "、")
 	goal, title := text, text
 	if goal == "" {
-		goal, title = imageOnlyGoal, "处理图片"
+		goal, title = mediaOnlyGoal(what), "处理"+what
 	}
 	id, err := h.createTask(ctx, title, goal, tag)
 	if err != nil {
 		return err
 	}
+	h.noteSaid(id)
 	return h.tasks.Attach(ctx, id, pictures, channel)
 }
 
-// fetchPicture 按渠道给的地址取回一张图片。
+// fetchMedia 按渠道给的地址取回一个附件（图片、语音、视频）。类型和大小由调用方再核对。
 //
 // 地址是渠道平台给的，不是用户或模型写的；即便如此也只认 https，并且限制大小。
-func fetchPicture(ctx context.Context, a Attachment) (Picture, error) {
-	url := a.URL
-	if !strings.Contains(url, "://") {
-		// 有的平台给的地址不带协议。
-		url = "https://" + url
-	}
-	if !strings.HasPrefix(url, "https://") {
-		return Picture{}, fmt.Errorf("channel: 图片地址不是 https")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return Picture{}, fmt.Errorf("channel: 图片地址不合法: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
+func fetchMedia(ctx context.Context, a Attachment) (Picture, error) {
+	data, err := fetchFile(ctx, a.URL)
 	if err != nil {
 		return Picture{}, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return Picture{}, fmt.Errorf("channel: 图片服务器返回 %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxPictureBytes+1))
-	if err != nil {
-		return Picture{}, err
-	}
-	if len(data) > maxPictureBytes {
-		return Picture{}, fmt.Errorf("channel: 图片超过 %d MB", maxPictureBytes>>20)
-	}
-	// 类型以内容为准：平台报的类型不一定对，而模型服务对类型很挑剔。
-	mime := http.DetectContentType(data)
-	if !strings.HasPrefix(mime, "image/") {
-		return Picture{}, fmt.Errorf("channel: 取回来的不是图片（%s）", mime)
-	}
-	return Picture{MIME: mime, Data: data}, nil
+	return Picture{MIME: media.Sniff(data), Data: data}, nil
 }

@@ -96,7 +96,7 @@ type Planner struct {
 	// prompts 非空时，基础约束与规划说明以用户在后台改写的为准。
 	prompts PromptSource
 	// images 非空时，用户发给任务的图片随上下文一起交给模型看。
-	images ImageSource
+	images MediaSource
 	// mainInputs 与 workerInputs 是主模型、各个任务模型支持的输入。没设置的按 llm.DefaultInputs。
 	mainInputs   []llm.Input
 	workerInputs map[string][]llm.Input

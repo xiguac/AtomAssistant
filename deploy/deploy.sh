@@ -5,6 +5,7 @@
 #   deploy/deploy.sh setup     第一次：装数据库、建目录和服务，然后部署
 #   deploy/deploy.sh           之后每次更新：编译、上传、切换、检查，起不来就自动退回上一版
 #   deploy/deploy.sh sandbox   安装代码沙箱：独立的 Python 环境与常用库，用 bubblewrap 隔离
+#   deploy/deploy.sh media     安装 ffmpeg：语音、视频在各聊天软件与模型之间转换格式要用它
 #   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
@@ -122,6 +123,11 @@ case "${1:-release}" in
     "${SCP[@]}" deploy/sandbox.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-sandbox/"
     remote "sudo bash /tmp/atomhelper-sandbox/sandbox.sh && rm -rf /tmp/atomhelper-sandbox && sudo systemctl restart atomhelper"
     ;;
+  media)
+    echo "==> 安装 ffmpeg"
+    remote "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg >/dev/null && ffmpeg -hide_banner -version | head -1"
+    remote "sudo systemctl restart atomhelper"
+    ;;
   release) release ;;
   rollback) rollback ;;
   passwd)
@@ -157,7 +163,7 @@ case "${1:-release}" in
     remote "systemctl status atomhelper --no-pager -n 0; echo; readlink /opt/atomhelper/current; echo; sudo journalctl -u atomhelper -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
+    echo "未知的子命令 $1（可用：setup / media / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
     exit 2
     ;;
 esac

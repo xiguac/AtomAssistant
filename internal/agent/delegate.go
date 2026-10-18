@@ -392,13 +392,13 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	if strings.TrimSpace(out.Title) == "" {
 		out.Title = t.Title
 	}
-	// 主模型看不了用户发来的图片、而有任务模型看得了：再简单也交出去，主模型自己办只能对着图瞎猜。
-	if team.Tier(out.Tier) == team.TierSimple && !p.sees(true) {
-		has, err := p.hasImages(ctx, t)
+	// 主模型收不了用户发来的图片、语音或视频，而有任务模型收得了：再简单也交出去。
+	if team.Tier(out.Tier) == team.TierSimple {
+		need, err := p.needsWorker(ctx, t)
 		if err != nil {
 			return spent, err
 		}
-		if has && p.anyWorkerSees() {
+		if need {
 			out.Tier = string(team.TierComplex)
 		}
 	}
