@@ -23,6 +23,7 @@ type OpenAICompatible struct {
 	name    string
 	baseURL string
 	apiKey  string
+	dialect Dialect
 	idle    time.Duration
 	client  *http.Client
 }
@@ -40,6 +41,8 @@ type OpenAIConfig struct {
 	// Timeout 是首字超时：发出请求后多久没收到任何数据就放弃，之后两段数据之间也按它算。
 	// 不写按 10 分钟。整次请求没有总时限。
 	Timeout time.Duration
+	// Dialect 是这家服务特有的参数写法，决定思考强度怎么传。
+	Dialect Dialect
 }
 
 // NewOpenAICompatible 构造 provider。
@@ -60,6 +63,7 @@ func NewOpenAICompatible(cfg OpenAIConfig) (*OpenAICompatible, error) {
 		name:    cfg.Name,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
+		dialect: cfg.Dialect,
 		idle:    cfg.Timeout,
 		// 不给 client 设 Timeout：它管的是整次请求，长回答流到一半会被它掐断。时限交给看门狗。
 		client: &http.Client{},
@@ -79,6 +83,11 @@ type chatRequest struct {
 	SearchOptions *searchOptions `json:"search_options,omitempty"`
 	Stream        bool           `json:"stream,omitempty"`
 	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+	// 以下是思考强度，各家写法不同，见 openAIThinking。
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Thinking        *thinkingSwitch `json:"thinking,omitempty"`
+	EnableThinking  *bool           `json:"enable_thinking,omitempty"`
+	ThinkingBudget  int             `json:"thinking_budget,omitempty"`
 }
 
 type streamOptions struct {
@@ -132,6 +141,7 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 	if req.JSONMode {
 		body.ResponseFormat = &respFmt{Type: "json_object"}
 	}
+	openAIThinking(p.dialect, req.Thinking, &body)
 	// 流式取回：强模型想得久，一次性返回要等它全部写完才有响应头，容易超时。
 	body.Stream = true
 	body.StreamOptions = &streamOptions{IncludeUsage: true}

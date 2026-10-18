@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1>连接器</h1>
+<div class="pagehead"><h1>连接器</h1>{{template "restartbtn" .}}</div>
 <div class="sub">配置日历（CalDAV）与邮件（IMAP / SMTP）的账号、节假日订阅，以及天气数据（和风天气）。密码与密钥保存至环境变量，保存后不可查看。修改后需重启服务方可生效。</div>
 
 {{with .Data}}
@@ -89,14 +89,22 @@
   </div>
 </form>
 
-<div class="card">
-  <div class="band"><b>重启服务</b></div>
-  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
-    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <button class="btn sec">重启服务</button></form>
+<h2>联网搜索 {{if .Search}}{{if .SearchKey}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">密钥未配置</span>{{end}}{{else}}<span class="pill plain">未单独配置</span>{{end}}</h2>
+<form method="post" action="/connectors/search" autocomplete="off" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad">
+    <label for="ds-key">DeepSeek API Key</label><input id="ds-key" type="password" name="key" autocomplete="new-password">
+    <div class="help">用于 DeepSeek 的搜索与读网页接口，在 platform.deepseek.com 的「API keys」页创建。未单独配置时，使用「模型」页里 DeepSeek 模型服务的密钥；两者都没有时，联网搜索交给模型服务自带的搜索能力</div>
   </div>
-</div>
+  <div class="band foot">
+    <span class="note muted">搜索与读网页各按每千次 5 元计费，连接测试会发起一次搜索。</span>
+    <div class="actions">
+      <button class="btn" style="order:9">保存</button>
+      {{if .Search}}<button class="btn danger" formaction="/connectors/disable" name="which" value="search">停用</button>{{end}}
+      <button class="btn sec" formaction="/connectors/test" name="which" value="search" data-async>连接测试</button>
+    </div>
+  </div>
+</form>
 </div>
 </div>
 {{end}}

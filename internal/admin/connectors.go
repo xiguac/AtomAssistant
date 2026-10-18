@@ -11,12 +11,14 @@ import (
 
 	"github.com/xiguac/atomhelper/internal/config"
 	"github.com/xiguac/atomhelper/internal/connector/calendar"
+	"github.com/xiguac/atomhelper/internal/connector/deepseek"
 	"github.com/xiguac/atomhelper/internal/connector/mail"
 	"github.com/xiguac/atomhelper/internal/connector/weather"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
 
-// 「连接器」页：日历（CalDAV）、邮件（IMAP/SMTP）的账号与密码，节假日订阅，以及天气（和风天气）。
+// 「连接器」页：日历（CalDAV）、邮件（IMAP/SMTP）的账号与密码，节假日订阅，天气（和风天气），
+// 以及联网搜索（DeepSeek 搜索接口）的密钥。
 //
 // 这一页改的是配置文件里 connectors 一节。密码照旧只进保险库，配置里留的是句柄；
 // 各存一条、各自授权，停用其中一个不影响另一个。
@@ -26,8 +28,9 @@ type connectorsData struct {
 	Mail     *config.MailConfig
 	Holidays *config.HolidaysConfig
 	Weather  *config.WeatherConfig
-	// CalendarKey、MailKey 与 WeatherKey 表示保险库里有没有对应的密码或密钥。
-	CalendarKey, MailKey, WeatherKey bool
+	Search   *config.SearchConfig
+	// CalendarKey、MailKey、WeatherKey 与 SearchKey 表示保险库里有没有对应的密码或密钥。
+	CalendarKey, MailKey, WeatherKey, SearchKey bool
 }
 
 func (s *Server) readConnectors() ([]byte, config.ConnectorsConfig, error) {
@@ -63,7 +66,7 @@ func (s *Server) connectorsPage(w http.ResponseWriter, r *http.Request, v *view)
 	if err != nil {
 		v.Error = err.Error()
 	}
-	d := connectorsData{Calendar: c.Calendar, Mail: c.Mail, Holidays: c.Holidays, Weather: c.Weather}
+	d := connectorsData{Calendar: c.Calendar, Mail: c.Mail, Holidays: c.Holidays, Weather: c.Weather, Search: c.Search}
 	if metas, err := s.opts.Vault.List(r.Context()); err != nil {
 		v.Error = err.Error()
 	} else {
@@ -76,6 +79,9 @@ func (s *Server) connectorsPage(w http.ResponseWriter, r *http.Request, v *view)
 			}
 			if c.Weather != nil && vault.HandlePrefix+meta.Label == c.Weather.Key {
 				d.WeatherKey = true
+			}
+			if c.Search != nil && vault.HandlePrefix+meta.Label == c.Search.Key {
+				d.SearchKey = true
 			}
 		}
 	}
@@ -236,6 +242,38 @@ func (s *Server) weatherSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/connectors", "天气配置已保存，重启服务后生效。", err)
 }
 
+// searchSave 保存联网搜索用的 DeepSeek API Key。
+func (s *Server) searchSave(w http.ResponseWriter, r *http.Request, _ *view) {
+	key := strings.TrimSpace(r.PostFormValue("key"))
+	err := func() error {
+		_, cur, err := s.readConnectors()
+		if err != nil {
+			return err
+		}
+		c := config.SearchConfig{}
+		if cur.Search != nil {
+			c = *cur.Search
+		}
+		if key == "" {
+			if c.Key == "" {
+				return errors.New("请填写 API Key")
+			}
+			return errors.New("API Key 未修改")
+		}
+		if c.Key, err = s.sealConnectorPassword(r.Context(), c.Key, config.VaultUserSearch, key, "DeepSeek 搜索接口的 API Key"); err != nil {
+			return err
+		}
+		return s.editConnectors(func(all *config.ConnectorsConfig) error {
+			all.Search = &c
+			return nil
+		})
+	}()
+	if err == nil {
+		s.opts.Log.Info("联网搜索密钥已在后台修改", "来自", r.RemoteAddr)
+	}
+	back(w, r, "/connectors", "联网搜索密钥已保存，重启服务后生效。", err)
+}
+
 // dropCredential 删掉一个配置对象独占的凭据：对象没了，它的密钥不该留在保险库里没人管。
 //
 // 只删"只授权给了这一个对象"的条目。用户另外把它授权给了别的对象或工具的，说明它还有别的用处，不动。
@@ -264,7 +302,7 @@ func (s *Server) dropCredential(ctx context.Context, handle, user string) {
 // connectorDisable 停用一个连接器，它的密码一并从保险库里删除。
 func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
-	names := map[string]string{"calendar": "日历", "mail": "邮件", "holidays": "节假日订阅", "weather": "天气"}
+	names := map[string]string{"calendar": "日历", "mail": "邮件", "holidays": "节假日订阅", "weather": "天气", "search": "联网搜索密钥"}
 	var handle, user string
 	err := s.editConnectors(func(all *config.ConnectorsConfig) error {
 		switch which {
@@ -285,6 +323,11 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 				handle, user = all.Weather.Key, config.VaultUserWeather
 			}
 			all.Weather = nil
+		case "search":
+			if all.Search != nil {
+				handle, user = all.Search.Key, config.VaultUserSearch
+			}
+			all.Search = nil
 		default:
 			return errors.New("连接器类型无效")
 		}
@@ -304,7 +347,7 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
 	typed := strings.TrimRight(r.PostFormValue("password"), "\r\n")
-	if which == "weather" {
+	if which == "weather" || which == "search" {
 		typed = strings.TrimSpace(r.PostFormValue("key"))
 	}
 	result, err := func() (string, error) {
@@ -318,7 +361,7 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 				return func(context.Context) (string, error) { return typed, nil }, nil
 			}
 			if handle == "" {
-				if which == "weather" {
+				if which == "weather" || which == "search" {
 					return nil, errors.New("请填写 API KEY")
 				}
 				return nil, errors.New("请填写密码")
@@ -394,6 +437,20 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 				return "", err
 			}
 			return fmt.Sprintf("天气连接成功：%s当前%s，%s。", rep.Place.Name, rep.Now.Text, rep.Now.Temp), nil
+		case "search":
+			handle := ""
+			if saved.Search != nil {
+				handle = saved.Search.Key
+			}
+			take, err := secret(handle, config.VaultUserSearch)
+			if err != nil {
+				return "", err
+			}
+			results, err := (&deepseek.Client{BaseURL: s.searchBase, Secret: take}).Search(ctx, "DeepSeek", 1)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("联网搜索连接成功，返回 %d 条结果。", len(results)), nil
 		}
 		return "", errors.New("连接器类型无效")
 	}()

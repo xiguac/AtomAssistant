@@ -43,8 +43,10 @@ type standingRow struct {
 
 type modelsData struct {
 	Providers []providerView
-	// MainProvider 与 MainModel 是主 AI 现在用的。
+	// MainProvider 与 MainModel 是主 AI 现在用的，MainThinking 与 MainInputs 是它的思考强度和支持的输入。
 	MainProvider, MainModel string
+	MainThinking            string
+	MainInputs              []string
 	// Others 是规划之外单独指定了模型的用途。
 	Others     []config.RouteConfig
 	Agents     []config.AgentConfig
@@ -162,6 +164,7 @@ func (s *Server) modelsPage(w http.ResponseWriter, r *http.Request, v *view) {
 		d.Providers = append(d.Providers, pv)
 	}
 	d.MainProvider, d.MainModel = m.Main()
+	d.MainThinking, d.MainInputs = m.MainOptions()
 	for _, rc := range m.Routes {
 		if rc.Purpose != string(llm.PurposePlan) {
 			d.Others = append(d.Others, rc)
@@ -319,11 +322,16 @@ func (s *Server) providerDelete(w http.ResponseWriter, r *http.Request, _ *view)
 func (s *Server) mainSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	provider := r.PostFormValue("provider")
 	model := strings.TrimSpace(r.PostFormValue("model"))
+	thinking, inputs, optErr := modelOptions(r)
 	err := s.editModels(func(m *config.Models) error {
 		if provider == "" || model == "" {
 			return errors.New("请选择模型服务并填写模型标识")
 		}
+		if optErr != nil {
+			return optErr
+		}
 		m.SetMain(provider, model)
+		m.SetMainOptions(thinking, inputs)
 		return nil
 	})
 	if err == nil {
@@ -332,7 +340,30 @@ func (s *Server) mainSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	back(w, r, "/models", "主 AI 已设置为 "+provider+" / "+model+"，重启服务后生效。", err)
 }
 
+// modelOptions 读出表单里的思考强度和支持的输入。文字总是支持的，勾不勾都算上。
+// 勾的正好是默认的文字与图片时不写进配置，保持文件简洁。
+func modelOptions(r *http.Request) (string, []string, error) {
+	thinking := r.PostFormValue("thinking")
+	if _, err := llm.ParseThinking(thinking); err != nil {
+		return "", nil, errors.New("思考强度取值无效")
+	}
+	inputs := []string{string(llm.InputText)}
+	for _, in := range r.PostForm["inputs"] {
+		if in != string(llm.InputText) {
+			inputs = append(inputs, in)
+		}
+	}
+	if _, err := llm.ParseInputs(inputs); err != nil {
+		return "", nil, errors.New("输入类型取值无效")
+	}
+	if len(inputs) == 2 && inputs[1] == string(llm.InputImage) {
+		inputs = nil
+	}
+	return thinking, inputs, nil
+}
+
 func (s *Server) agentSave(w http.ResponseWriter, r *http.Request, _ *view) {
+	thinking, inputs, optErr := modelOptions(r)
 	a := config.AgentConfig{
 		Name:     strings.TrimSpace(r.PostFormValue("name")),
 		Provider: r.PostFormValue("provider"),
@@ -340,10 +371,15 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		Note:     strings.TrimSpace(r.PostFormValue("note")),
 		GoodAt:   r.PostForm["good_at"],
 		Tier:     r.PostFormValue("tier"),
+		Thinking: thinking,
+		Inputs:   inputs,
 	}
 	err := s.editModels(func(m *config.Models) error {
 		if a.Name == "" || a.Provider == "" || a.Model == "" {
 			return errors.New("请填写协作模型的名称、模型服务与模型标识")
+		}
+		if optErr != nil {
+			return optErr
 		}
 		for i := range m.Agents {
 			if m.Agents[i].Name == a.Name {

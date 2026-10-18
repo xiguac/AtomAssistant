@@ -30,14 +30,22 @@ svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; st
 
 /* 框架：左侧固定侧栏 + 右侧内容区。内容区在宽屏上再分左右两栏，一屏能看到的东西更多。 */
 .side { position:fixed; inset:0 auto 0 0; width:240px; background:var(--card); border-right:1px solid var(--line); display:flex; flex-direction:column; }
-.brand { display:flex; align-items:center; gap:10px; padding:22px 20px 26px; }
+.brand { display:flex; align-items:center; gap:10px; padding:20px 20px 18px; }
 .brand svg { width:28px; height:28px; color:var(--primary); }
 .brand b { display:block; font-size:16px; line-height:20px; font-weight:600; letter-spacing:-.005em; }
 .brand span { display:block; font-size:11px; line-height:14px; color:var(--muted); }
-.nav { padding:0 12px; display:flex; flex-direction:column; gap:2px; }
-.nav a { display:flex; align-items:center; gap:10px; height:36px; padding:0 12px; border-radius:8px; color:var(--text-2); font-size:13px; font-weight:500; }
+.nav { padding:0 12px; display:flex; flex-direction:column; gap:1px; }
+.nav a { display:flex; align-items:center; gap:10px; height:34px; padding:0 12px; border-radius:8px; color:var(--text-2); font-size:13px; font-weight:500; }
 .nav a:hover { background:var(--canvas); color:var(--text); }
 .nav a.on { background:var(--wash); color:var(--primary); }
+.nav a > span:first-of-type { flex:1; min-width:0; }
+/* 导航按用途分组：日常用的、助手能做什么、系统本身。 */
+.nav-group { padding:12px 12px 4px; font-size:11px; line-height:14px; font-weight:500; letter-spacing:.05em; color:var(--muted); }
+.nav-group:first-child { padding-top:0; }
+/* 待处理的数量：琥珀色只用于"等你处理"。 */
+.badge { flex:none; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--warn-bar); color:#fff; font:600 11px/18px var(--sans); text-align:center; }
+.side { overflow-y:auto; }
+.tabbar { display:none; }
 .side-foot { margin-top:auto; border-top:1px solid var(--line); padding:14px 20px; display:flex; align-items:center; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; font-size:12px; color:var(--text-2); }
 .side-foot > span { flex-basis:100%; }
 .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--ok); margin-right:8px; vertical-align:middle; }
@@ -105,7 +113,7 @@ h2 { font-size:16px; line-height:24px; font-weight:600; letter-spacing:-.005em; 
 .pill.warn { background:var(--warn-bg); color:var(--warn); border-color:var(--warn-line); }
 .pill.bad { background:var(--bad-bg); color:var(--bad); border-color:var(--bad-line); }
 .pill.info { background:var(--wash); color:var(--primary); border-color:#BFDBFE; }
-.chip { display:inline-block; padding:1px 7px; border-radius:4px; background:var(--recess); border:1px solid var(--line); color:var(--text-2); font:12px/18px var(--mono); margin:1px 4px 1px 0; }
+.chip { white-space:nowrap; display:inline-block; padding:1px 7px; border-radius:4px; background:var(--recess); border:1px solid var(--line); color:var(--text-2); font:12px/18px var(--mono); margin:1px 4px 1px 0; }
 
 /* 表单 */
 label { display:block; font-size:13px; line-height:16px; font-weight:500; color:var(--text-2); margin-bottom:6px; }
@@ -279,21 +287,168 @@ label.method .note { display:block; margin-top:2px; }
 .secret { letter-spacing:.08em; word-break:break-all; font-size:13px; }
 .band .async-result { flex-basis:100%; margin:0; }
 
+/* 页头：标题在左，页面级的操作（创建任务、重启服务）在右。 */
+.pagehead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.pagehead form { margin:0; }
+h2 .btn { margin-left:auto; }
+.cols.one { grid-template-columns:minmax(0,1fr); }
+.cards2 { display:grid; grid-template-columns:repeat(auto-fill,minmax(440px,1fr)); gap:16px; align-items:start; }
+.cards2 > .card { margin-top:0; }
+
+/* 弹窗：添加、修改的表单放在这里，入口在各区块标题旁，不必翻到页面最下面。 */
+dialog.modal { padding:0; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--text); width:min(640px, calc(100vw - 32px)); max-height:calc(100vh - 48px); box-shadow:0 12px 32px rgba(15,23,42,.18); overflow:hidden; }
+dialog.modal[open] { display:flex; flex-direction:column; }
+dialog.modal::backdrop { background:rgba(15,23,42,.4); }
+dialog.modal > form { display:flex; flex-direction:column; min-height:0; margin:0; }
+dialog.modal > form > .pad { overflow-y:auto; min-height:0; }
+dialog.modal .band:first-child { flex:none; }
+dialog.modal .band.foot { flex:none; flex-wrap:nowrap; }
+dialog.modal .band.foot > .note { flex:1 1 0; min-width:0; }
+dialog.modal .band.foot > .actions, dialog.modal .band.foot > .btn { flex:none; }
+dialog.modal .x { flex:none; width:32px; height:32px; margin:-6px -8px -6px 0; display:inline-flex; align-items:center; justify-content:center; border:0; border-radius:8px; background:none; color:var(--text-2); cursor:pointer; }
+dialog.modal .x:hover { background:var(--canvas); color:var(--text); }
+dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
+
+/* 菜单按钮只在手机上出现；勾选框不用脚本就能展开收起导航。 */
+.navtoggle { position:absolute; opacity:0; pointer-events:none; }
+.burger { display:none; }
+
+/* 概览页 */
+.todo { display:flex; align-items:center; gap:14px; padding:14px 20px; border-bottom:1px solid var(--row); color:inherit; }
+.todo:last-child { border-bottom:0; }
+.todo:hover { background:var(--canvas); color:inherit; }
+.todo .ico-wrap { flex:none; width:32px; height:32px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:var(--warn-bg); color:var(--warn); }
+.todo .body { flex:1; min-width:0; }
+.todo .body b { display:block; font-weight:500; }
+.todo .body span { display:block; color:var(--text-2); font-size:13px; line-height:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.todo .w { flex:none; color:var(--text-2); font:12px/18px var(--mono); }
+.setup { margin-bottom:20px; }
+.setup .todo .ico-wrap { background:var(--wash); color:var(--primary); font:600 13px/32px var(--sans); }
+.setup .todo.done .ico-wrap { background:var(--ok-bg); color:var(--ok); }
+.setup .todo.done .body b { color:var(--text-2); }
+.quick textarea { min-height:72px; }
+.stat { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:20px; }
+.stat a { display:block; padding:14px 16px; background:var(--card); border:1px solid var(--line); border-radius:8px; color:inherit; }
+.stat a:hover { border-color:var(--line-strong); color:inherit; }
+.stat b { display:block; font-size:22px; line-height:28px; font-weight:600; }
+.stat b.warn { color:var(--warn); }
+.stat span { font-size:12px; color:var(--text-2); }
+
+
+/* 后台提交后的提示：浮在页面下方，几秒后自行消失，不挪动页面内容。 */
+#toasts { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:100; display:flex; flex-direction:column; align-items:center; gap:8px; width:min(560px, calc(100vw - 24px)); pointer-events:none; }
+.toast { padding:10px 16px; border-radius:8px; border:1px solid var(--line); background:var(--card); font-size:13px; line-height:20px; white-space:pre-wrap; word-break:break-word; box-shadow:0 4px 16px rgba(15,23,42,.14); transition:opacity .4s; }
+.toast.ok { background:var(--ok-bg); border-color:var(--ok-line); color:var(--ok); }
+.toast.bad { background:var(--bad-bg); border-color:var(--bad-line); color:var(--bad); }
+.toast.gone { opacity:0; }
+
 @media (max-width:860px) {
-  .side { position:static; width:auto; flex-direction:row; align-items:center; flex-wrap:wrap; border-right:0; border-bottom:1px solid var(--line); }
-  .brand { padding:12px 16px; } .brand span { display:none; }
-  .nav { flex-direction:row; padding:0 8px 8px; flex-wrap:wrap; }
-  .side-foot { margin:0 0 0 auto; border:0; gap:14px; }
-  .main { margin-left:0; padding:20px 16px 48px; }
-  .grid2 { grid-template-columns:1fr; }
-  .rows .t { width:140px; }
+  /* 手机：顶栏固定在上面，导航收进菜单；表格改成一条一张的卡片；按钮与输入框放大到手指好点的尺寸。 */
+  .side { position:sticky; top:0; z-index:30; inset:auto; width:auto; flex-direction:column; align-items:stretch; border-right:0; border-bottom:1px solid var(--line); max-height:100vh; overflow-y:auto; }
+  .brand { padding:10px 16px; gap:10px; } .brand svg { width:24px; height:24px; } .brand span { display:none; }
+  .brand b { font-size:15px; }
+  .burger { display:none !important; align-items:center; justify-content:center; gap:6px; margin-left:auto; height:36px; padding:0 12px; border:1px solid var(--line); border-radius:8px; color:var(--text-2); font-size:13px; font-weight:500; cursor:pointer; margin-bottom:0; }
+  .burger svg.ico { width:16px; height:16px; }
+  .navtoggle:focus-visible ~ .side .burger { outline:2px solid rgba(37,99,235,.3); outline-offset:2px; }
+  .nav { display:none; padding:4px 12px 8px; gap:4px; }
+  .navtoggle:checked ~ .side .nav { display:grid; grid-template-columns:1fr 1fr; padding-bottom:12px; }
+  .nav-group { grid-column:1 / -1; padding:12px 4px 2px; }
+  .nav-group:first-child { padding-top:4px; }
+  /* 底部标签栏：常用的四页加「更多」，「更多」展开全部导航。 */
+  .tabbar { display:grid; grid-template-columns:repeat(5,1fr); position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--card); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+  .tabbar a, .tabbar label { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; height:56px; margin:0; color:var(--text-2); font-size:11px; line-height:14px; font-weight:500; cursor:pointer; }
+  .tabbar .on { color:var(--primary); }
+  .tabbar svg.ico { width:22px; height:22px; }
+  .tabbar .badge { position:absolute; top:5px; left:calc(50% + 6px); }
+  .navtoggle:checked ~ .tabbar label { color:var(--primary); }
+  #toasts { bottom:calc(72px + env(safe-area-inset-bottom)); }
+  .stat { grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+  .stat a { padding:12px 14px; }
+  .todo { padding:12px 16px; }
+  .todo .w, .todo > .btn { display:none; }
+  /* 桌面上标签不折行，免得窄列里一行一个字；手机上卡片够宽，长标签允许折行，不撑出横向滚动。 */
+  .chip { white-space:normal; max-width:100%; }
+  .todo .body span { white-space:normal; }
+  /* 「更多」展开的导航铺满顶栏以下、标签栏以上的区域。 */
+  .navtoggle:checked ~ .side { position:fixed; inset:0 0 calc(56px + env(safe-area-inset-bottom)) 0; max-height:none; }
+  .nav a { height:44px; }
+  .side-foot { display:none; margin:0; padding:12px 16px; }
+  .navtoggle:checked ~ .side .side-foot { display:flex; }
+  .main { margin-left:0; padding:16px 12px calc(88px + env(safe-area-inset-bottom)); }
+  h1 { font-size:20px; line-height:28px; }
+  .sub { margin:6px 0 16px; }
+  h2 { margin:22px 0 10px; }
+  .grid2, .cols:not(.even) > :last-child .grid2 { grid-template-columns:1fr !important; }
+  .cards2 { grid-template-columns:minmax(0,1fr); }
+  .pad { padding:14px 16px; }
+  .band { padding:12px 16px; flex-wrap:wrap; }
+  .band.foot { flex-direction:column; align-items:stretch; }
+  .band.foot > .btn, .band.foot > form .btn, .band.foot > .actions { width:100%; margin-left:0; }
+  .band.foot .actions .btn { flex:1; }
+  .band.foot .actions.grow { min-width:0; }
+
+  /* 触控尺寸；输入框字号不小于 16px，否则 iOS 点进去会自动放大页面。 */
+  .btn { height:44px; } .btn.sm { height:40px; }
+  input[type=text], input[type=password], select { height:44px; font-size:16px; }
+  textarea { font-size:16px !important; }
+  textarea.code { font-size:13px; min-height:360px; padding:12px 16px; }
+  input[type=checkbox] { width:20px; height:20px; }
+  label.check { min-height:36px; }
+  details.dropdown summary { height:44px; font-size:16px; }
+  .checks { gap:4px 18px; }
+
+  /* 行列表：标题与状态一行，说明另起一行。 */
+  .rows > a, .rows a.pick { flex-wrap:wrap; gap:4px 10px; padding:12px 16px; }
+  .rows a.pick { padding:12px 0; }
+  .rows > div { padding:0 16px; }
+  .rows .t { width:auto; flex:1 1 50%; white-space:normal; }
+  .rows .d { flex:1 1 100%; order:3; white-space:normal; }
+  .attn { flex-wrap:wrap; padding:12px 16px; gap:8px 12px; }
+  .attn .body span { white-space:normal; }
+  .attn .btn { display:none; }
+  .attn .actions { width:100%; }
+  .attn .actions > form { flex:1; } .attn .actions > form .btn { width:100%; }
+
+
+  .kv, .kv.wide { grid-template-columns:1fr; gap:2px; }
+  .kv dt { margin-top:8px; } .kv dt:first-child { margin-top:0; }
+  .keyrow > * { flex:1 1 100%; width:100% !important; }
+  .keyrow .keyname { width:100%; }
+  .prompt-head { flex-wrap:wrap; padding:14px 16px 4px; }
+  .prompt details.fold > summary { padding:8px 16px 12px; }
+  .score .who { width:auto; }
+  .pagehead .btn { height:40px; }
   .login-panel { padding:28px 20px 22px; }
   .totp { grid-template-columns:1fr; }
+
+  /* 弹窗在手机上从底部升起，占满宽度。 */
+  dialog.modal { width:100vw; max-width:100vw; max-height:92vh; margin:auto 0 0; border-radius:16px 16px 0 0; border-width:1px 0 0; }
+}
+/* 表格放不下时每行改成一张卡片，列名由脚本写进每个单元格的 data-label。
+   看的是表格所在卡片的宽度而不是屏幕宽度：桌面上窄的那一栏里同样适用，
+   表格既不会撑出横向滚动，也不会被挤成一行一个字。 */
+.card { container-type:inline-size; }
+@container (max-width:860px) {
+  table, tbody, tr { display:block; }
+  thead { display:none; }
+  tr { padding:10px 16px; border-bottom:1px solid var(--row); }
+  tr:last-child { border-bottom:0; }
+  td, td:first-child, td:last-child { display:flex; align-items:flex-start; gap:12px; padding:4px 0; border:0; text-align:left; }
+  td::before { content:attr(data-label); flex:none; width:72px; padding-top:1px; color:var(--muted); font-size:12px; line-height:20px; }
+  td[data-label=""]::before, td:not([data-label])::before { display:none; }
+  td > * { min-width:0; }
+  td > input, td > select { flex:1; }
+  td.act { padding-top:10px; }
+  td.act .actions { width:100%; justify-content:flex-start !important; flex-wrap:wrap !important; }
+  td.act .actions > form, td.act > form { flex:1; } td.act .actions > form .btn, td.act > form .btn { width:100%; }
+  tbody tr:hover td { background:none; }
+  td .async-result { margin:8px 0 0; }
 }
 /* 内容区不够宽时，左右两栏叠成一栏。 */
 @media (max-width:1240px) {
   .cols, .cols.even { grid-template-columns:1fr; }
   .cols:not(.even) > :last-child .grid2 { grid-template-columns:1fr 1fr; }
+  .cols > .lead { order:-1; }
   .sticky { position:static; }
 }
 </style>
@@ -302,24 +457,30 @@ label.method .note { display:block; margin-top:2px; }
 </head>
 <body>
 {{if .CSRF}}
+<input type="checkbox" id="navtoggle" class="navtoggle" aria-label="展开或收起菜单">
 <aside class="side">
   <div class="brand">
     <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(28 14 14)"/><ellipse cx="14" cy="14" rx="11" ry="4.6" transform="rotate(-28 14 14)"/><circle cx="14" cy="14" r="2.2" fill="currentColor" stroke="none"/></svg>
     <div><b>原子助手</b><span>管理后台</span></div>
+    <label for="navtoggle" class="burger"><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>菜单</label>
   </div>
   <nav class="nav">
-    <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>任务</a>
-    <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg>环境变量</a>
-    <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg>记忆</a>
-    <a href="/models" class="{{if eq .Page "models"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/></svg>模型</a>
-    <a href="/channels" class="{{if eq .Page "channels"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/></svg>消息源</a>
-    <a href="/connectors" class="{{if eq .Page "connectors"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.5 5a4.6 4.6 0 0 1 6.5 6.5L17.5 13"/><path d="M13 17.5 11.5 19A4.6 4.6 0 0 1 5 12.5L6.5 11"/></svg>连接器</a>
-    <a href="/mcp" class="{{if eq .Page "mcp"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9 3.5v4M15 3.5v4"/><path d="M6.5 7.5h11v4a5.5 5.5 0 0 1-11 0Z"/><path d="M12 17v3.5"/></svg>MCP</a>
-    <a href="/skills" class="{{if eq .Page "skills"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M6 4.5h9l3 3v12H6Z"/><path d="M9 10h6M9 13.5h6M9 17h3.5"/></svg>Skill</a>
-    <a href="/prompts" class="{{if eq .Page "prompts"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4.5 5.5h15v10h-8l-4 3.5v-3.5h-3Z"/><path d="M8.5 9.5h7M8.5 12.5h4"/></svg>系统提示词</a>
-    <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>文件</a>
-    <a href="/security" class="{{if eq .Page "security"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.5c0 4.2 2.9 7.4 7 9 4.1-1.6 7-4.8 7-9V6Z"/><path d="m9.3 12 2 2 3.5-4"/></svg>登录与安全</a>
-    <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg>配置</a>
+    <div class="nav-group">日常</div>
+    <a href="/" class="{{if (eq .Page "home")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/></svg><span>概览</span></a>
+    <a href="/tasks" class="{{if or (eq .Page "tasks") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>任务</span>{{with .Badges.Tasks}}<span class="badge">{{.}}</span>{{end}}</a>
+    <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg><span>记忆</span>{{with .Badges.Memory}}<span class="badge">{{.}}</span>{{end}}</a>
+    <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg><span>文件</span></a>
+    <div class="nav-group">助手能力</div>
+    <a href="/models" class="{{if eq .Page "models"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/></svg><span>模型</span></a>
+    <a href="/channels" class="{{if or (eq .Page "channels") (eq .Page "weixin")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/></svg><span>消息源</span></a>
+    <a href="/connectors" class="{{if eq .Page "connectors"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.5 5a4.6 4.6 0 0 1 6.5 6.5L17.5 13"/><path d="M13 17.5 11.5 19A4.6 4.6 0 0 1 5 12.5L6.5 11"/></svg><span>连接器</span></a>
+    <a href="/mcp" class="{{if eq .Page "mcp"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9 3.5v4M15 3.5v4"/><path d="M6.5 7.5h11v4a5.5 5.5 0 0 1-11 0Z"/><path d="M12 17v3.5"/></svg><span>MCP</span></a>
+    <a href="/skills" class="{{if eq .Page "skills"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M6 4.5h9l3 3v12H6Z"/><path d="M9 10h6M9 13.5h6M9 17h3.5"/></svg><span>Skill</span></a>
+    <a href="/prompts" class="{{if eq .Page "prompts"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4.5 5.5h15v10h-8l-4 3.5v-3.5h-3Z"/><path d="M8.5 9.5h7M8.5 12.5h4"/></svg><span>系统提示词</span></a>
+    <div class="nav-group">系统</div>
+    <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg><span>环境变量</span>{{with .Badges.Vault}}<span class="badge">{{.}}</span>{{end}}</a>
+    <a href="/security" class="{{if or (eq .Page "security") (eq .Page "password")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.5c0 4.2 2.9 7.4 7 9 4.1-1.6 7-4.8 7-9V6Z"/><path d="m9.3 12 2 2 3.5-4"/></svg><span>登录与安全</span></a>
+    <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg><span>配置文件</span></a>
   </nav>
   <div class="side-foot">
     <span>{{if .Status}}<i class="dot warn"></i>服务未运行{{else}}<i class="dot"></i>服务运行中{{end}}</span>
@@ -327,6 +488,13 @@ label.method .note { display:block; margin-top:2px; }
       <button class="linkbtn"><svg class="ico" viewBox="0 0 24 24"><path d="M10 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H10"/><path d="M15 8l4 4-4 4M19 12H9.5"/></svg>退出</button></form>
   </div>
 </aside>
+<nav class="tabbar" aria-label="常用页面">
+  <a href="/" class="{{if eq .Page "home"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/></svg><span>概览</span>{{with .Badges.Total}}<span class="badge">{{.}}</span>{{end}}</a>
+  <a href="/tasks" class="{{if or (eq .Page "tasks") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>任务</span></a>
+  <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg><span>记忆</span></a>
+  <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg><span>文件</span></a>
+  <label for="navtoggle" class="{{if not (or (eq .Page "home") (eq .Page "tasks") (eq .Page "task") (eq .Page "memory") (eq .Page "files"))}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg><span>更多</span></label>
+</nav>
 <main class="main"><div class="wrap">
   {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：
 {{.Status}}
@@ -341,3 +509,5 @@ label.method .note { display:block; margin-top:2px; }
 {{end}}
 </body>
 </html>
+
+{{define "restartbtn"}}<form method="post" action="/restart"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn sec sm"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V9h-4.5"/></svg>重启服务</button></form>{{end}}

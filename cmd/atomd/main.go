@@ -27,6 +27,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/memory"
@@ -159,6 +160,10 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.workspace != nil {
 			hub = hub.WithFiles(parts.workspace)
 		}
+		// 没有一个模型看得了图片：收到图片直接告诉用户。
+		if parts.noImages {
+			hub = hub.WithoutImages()
+		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
 		}
@@ -278,7 +283,9 @@ type parts struct {
 	triage channel.Triager
 	// workspace 非空表示启用了文件处理。
 	workspace *files.Workspace
-	close     func()
+	// noImages 为真表示配置的模型都看不了图片。
+	noImages bool
+	close    func()
 }
 
 // build 按配置装出各个部件。
@@ -477,6 +484,10 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		epilogue = epilogue.WithVoice(voice)
 	}
 
+	// 各个模型支持的输入：图片只交给看得了的模型。
+	inputs := file.Inputs()
+	planner = planner.WithInputs(inputs.Main, inputs.Workers)
+
 	// 协作模型：主模型做预处理和审核，事情交给任务模型去办，交给谁看用户以往的评价。
 	if workers := file.Workers(); len(workers) > 0 {
 		board := team.NewBoard(st.Team(), workers)
@@ -566,6 +577,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	return &parts{
 		team:      len(file.Workers()) > 0,
+		noImages:  !inputs.Any(llm.InputImage),
 		triage:    agent.NewTriager(router),
 		workspace: workspace,
 		channels:  channels,

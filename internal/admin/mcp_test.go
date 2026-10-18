@@ -609,7 +609,7 @@ func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T)
 		t.Fatal(err)
 	}
 
-	_, body := e.get("/")
+	_, body := e.get("/tasks")
 	if !strings.Contains(body, `name="id" value="`+done1.ID+`"`) || strings.Contains(body, `name="id" value="`+queued.ID+`"`) {
 		t.Fatal("只有已结束的任务可以勾选删除")
 	}

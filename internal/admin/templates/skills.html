@@ -3,10 +3,8 @@
 <div class="sub">查看、安装与移除 Skill。Skill 是声明式流程，不含可执行代码；安装不授予任何新权限，按其执行的任务仅可调用其声明且已授权的工具。</div>
 
 {{with .Data}}
-<div class="cols">
-<div>
 <div class="card">
-  <div class="band"><b>已安装的 Skill</b><span class="count">{{len .Skills}}</span></div>
+  <div class="band"><span class="actions"><b>已安装的 Skill</b><span class="count">{{len .Skills}}</span></span><button type="button" class="btn sm" data-dialog="dlg-skill">安装 Skill</button></div>
   {{if .Skills}}<table>
     <thead><tr><th>名称</th><th>类型</th><th>声明的工具</th><th>安装时间</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Skills}}<tr>
@@ -21,15 +19,14 @@
       <td class="r"><form method="post" action="/skills/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
         <button class="btn danger sm">移除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无 Skill。可在右侧安装，助手在任务中缺少能力时也可自行查找并安装通过扫描的 Skill。</div>{{end}}
+  </table>{{else}}<div class="empty">暂无 Skill。可点击右上角「安装 Skill」，助手在任务中缺少能力时也可自行查找并安装通过扫描的 Skill。</div>{{end}}
   <div class="band foot"><span class="note muted">流程清单须由任务指定后生效（atomctl run）；参考文档由助手按需读取，其内容按外部内容处理。</span></div>
 </div>
-</div>
 
-<div>
-<form method="post" action="/skills" class="card">
+<dialog class="modal" id="dlg-skill">
+<form method="post" action="/skills">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>安装 Skill</b></div>
+  <div class="band"><b class="modal-title">安装 Skill</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad">
     <label for="sk-manifest">清单内容（skill.yaml）</label>
     <textarea id="sk-manifest" name="manifest" style="min-height:320px;font:12px/18px var(--mono)" spellcheck="false" placeholder="id: reception.standard
@@ -45,7 +42,6 @@ steps:
   </div>
   <div class="band foot"><span class="note muted">安装前须通过 SkillSpector 扫描，耗时可能达数分钟。扫描未通过或未能执行时不予安装。</span><button class="btn">扫描并安装</button></div>
 </form>
-</div>
-</div>
+</dialog>
 {{end}}
 {{end}}

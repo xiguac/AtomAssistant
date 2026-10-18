@@ -353,8 +353,11 @@ func TestAdmin_任务与外部内容的转义(t *testing.T) {
 	if !strings.Contains(body, "待确认操作：") || !strings.Contains(body, ">mail.send</span>") || !strings.Contains(body, "不可撤销") || !strings.Contains(body, "收到，周五见") || !strings.Contains(body, "liwei@example.com") {
 		t.Fatalf("应完整展示等确认的动作:\n%s", body)
 	}
-	if _, home := e.get("/"); !strings.Contains(home, `待处理 <span class="count warn">1</span>`) || !strings.Contains(home, "待确认：") {
-		t.Fatal("首页应把它列在等你处理里")
+	if _, home := e.get("/"); !strings.Contains(home, `需要你处理 <span class="count warn">1</span>`) || !strings.Contains(home, "待确认：") {
+		t.Fatal("概览页应把它列在需要你处理里")
+	}
+	if _, list := e.get("/tasks"); !strings.Contains(list, `待处理 <span class="count warn">1</span>`) || !strings.Contains(list, `<span class="badge">1</span>`) {
+		t.Fatal("任务页应把它列在待处理里，导航上标出数量")
 	}
 	if code, loc := e.post("/tasks/"+id+"/approve", url.Values{"csrf": {e.csrf}}); code != http.StatusSeeOther || !strings.Contains(loc, "已批准") {
 		t.Fatalf("批准失败: %d %s", code, loc)
@@ -518,6 +521,33 @@ func TestAdmin_模型页填接口和密钥配协作模型并评价(t *testing.T)
 	}
 	if loc := post("/models/agent", url.Values{"name": {"坏的"}, "provider": {"不存在"}, "model": {"m"}}); !strings.Contains(loc, "不存在") {
 		t.Fatalf("引用不存在的服务应被拒绝: %s", loc)
+	}
+	// 思考强度与支持的输入：文字总是算上；正好是默认的文字与图片时不写进配置。
+	if loc := post("/models/agent", url.Values{"name": {"看图"}, "provider": {"本地"}, "model": {"vl"}, "thinking": {"high"}, "inputs": {"image", "audio"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存协作模型的思考强度与输入失败: %s", loc)
+	}
+	if loc := post("/models/agent", url.Values{"name": {"乱填2"}, "provider": {"本地"}, "model": {"m"}, "thinking": {"extreme"}}); !strings.Contains(loc, "思考强度") {
+		t.Fatalf("不认得的思考强度应被拒绝: %s", loc)
+	}
+	if loc := post("/models/main", url.Values{"provider": {"本地"}, "model": {"m1"}, "thinking": {"off"}, "inputs": {"image"}}); !strings.Contains(loc, "主 AI 已设置为") {
+		t.Fatalf("保存主 AI 的思考强度失败: %s", loc)
+	}
+	if f, err := config.LoadFile(e.cfg); err != nil {
+		t.Fatal(err)
+	} else if in := f.Inputs(); !llm.Accepts(in.Workers["看图"], llm.InputAudio) || !llm.Accepts(in.Main, llm.InputImage) {
+		t.Fatalf("输入类型没有存下: %+v", in)
+	}
+	if raw, _ := os.ReadFile(e.cfg); !strings.Contains(string(raw), "thinking: high") || !strings.Contains(string(raw), "thinking: \"off\"") && !strings.Contains(string(raw), "thinking: off") {
+		t.Fatalf("思考强度没有存下:\n%s", raw)
+	}
+	if _, body := e.get("/models"); !strings.Contains(body, "最高") || !strings.Contains(body, "语音") {
+		t.Fatal("模型页应能选思考强度与输入类型")
+	}
+	if loc := post("/models/agent/delete", url.Values{"name": {"看图"}}); !strings.Contains(loc, "已删除") {
+		t.Fatalf("删除失败: %s", loc)
+	}
+	if loc := post("/models/main", url.Values{"provider": {"本地"}, "model": {"m1"}}); !strings.Contains(loc, "主 AI 已设置为") {
+		t.Fatalf("恢复主 AI 失败: %s", loc)
 	}
 
 	raw, _ := os.ReadFile(e.cfg)
@@ -1050,8 +1080,8 @@ func TestAdmin_连接测试在后台提交不刷新页面(t *testing.T) {
 	if code, js := e.get("/static/app.js"); code != http.StatusOK || !strings.Contains(js, "data-async") {
 		t.Fatalf("脚本应能取到: %d", code)
 	}
-	if _, body := e.get("/connectors"); strings.Count(body, "data-async") != 3 {
-		t.Fatal("日历、邮件和天气的连接测试都应在后台提交，且未配置时也能测")
+	if _, body := e.get("/connectors"); strings.Count(body, "data-async") != 4 {
+		t.Fatal("日历、邮件、天气和联网搜索的连接测试都应在后台提交，且未配置时也能测")
 	}
 }
 
@@ -1287,5 +1317,63 @@ func TestAdmin_预算用尽的任务设置新上限后继续(t *testing.T) {
 	// 不在挂起状态的任务：没有什么可继续的。
 	if loc := post(task.ID, url.Values{"max_tokens": {"2000000"}}); !strings.Contains(loc, "不在挂起状态") {
 		t.Fatalf("不在挂起状态时应说明: %s", loc)
+	}
+}
+
+func TestAdmin_连接器页配置联网搜索密钥(t *testing.T) {
+	e := setup(t)
+	e.login()
+	post := func(path string, form url.Values) string {
+		t.Helper()
+		form.Set("csrf", e.csrf)
+		_, loc := e.post(path, form)
+		return loc
+	}
+	var auth string
+	ds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"results":[{"title":"t","url":"https://example.com"}]}`))
+	}))
+	defer ds.Close()
+	e.server.searchBase = ds.URL
+	before, _ := os.ReadFile(e.cfg)
+
+	if loc := post("/connectors/search", url.Values{}); !strings.Contains(loc, "请填写") {
+		t.Fatalf("没有密钥应被拒绝: %s", loc)
+	}
+	// 测试用表单里填的密钥，不保存。
+	if loc := post("/connectors/test", url.Values{"which": {"search"}, "key": {"sk-typed"}}); !strings.Contains(loc, "连接成功") || auth != "Bearer sk-typed" {
+		t.Fatalf("连接测试应用填写的密钥: %s %s", loc, auth)
+	}
+	if loc := post("/connectors/search", url.Values{"key": {"sk-search-7"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存失败: %s", loc)
+	}
+	raw, _ := os.ReadFile(e.cfg)
+	if strings.Contains(string(raw), "sk-search-7") || !strings.Contains(string(raw), "key: vault://connector.search") {
+		t.Fatalf("配置里只能留句柄:\n%s", raw)
+	}
+	file, err := config.LoadFile(e.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := file.WebTools(context.Background(), e.vault)
+	if err != nil || c == nil {
+		t.Fatalf("应接通搜索接口: %v", err)
+	}
+	if got, err := c.Secret(context.Background()); err != nil || got != "sk-search-7" {
+		t.Fatalf("应能从环境变量取出密钥: %v", err)
+	}
+	// 留空测试：用已保存的密钥。
+	if loc := post("/connectors/test", url.Values{"which": {"search"}}); !strings.Contains(loc, "连接成功") || auth != "Bearer sk-search-7" {
+		t.Fatalf("留空应用已保存的密钥: %s %s", loc, auth)
+	}
+	if _, body := e.get("/connectors"); strings.Contains(body, "sk-search-7") || !strings.Contains(body, "联网搜索") {
+		t.Fatal("连接器页应显示搜索一项，不显示密钥")
+	}
+	if loc := post("/connectors/disable", url.Values{"which": {"search"}}); !strings.Contains(loc, "已停用") {
+		t.Fatalf("停用失败: %s", loc)
+	}
+	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
+		t.Fatalf("停用后配置应回到原样:\n%s", now)
 	}
 }

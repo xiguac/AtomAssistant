@@ -495,6 +495,11 @@ type RouteConfig struct {
 	Provider  string `yaml:"provider"`
 	Model     string `yaml:"model"`
 	MaxTokens int    `yaml:"max_tokens,omitempty"`
+	// Thinking 是思考强度：off / low / medium / high / max，不写按模型服务的默认。
+	Thinking string `yaml:"thinking,omitempty"`
+	// Inputs 是模型支持的输入：text / image / audio / video，不写按 text 与 image。
+	// 只对主 AI（purpose: plan，或者兜底）有意义。
+	Inputs []string `yaml:"inputs,omitempty"`
 	// 每百万 token 的单价（元）。不填则这条路由不计费。
 	InputYuanPerMTok  float64 `yaml:"input_yuan_per_mtok,omitempty"`
 	OutputYuanPerMTok float64 `yaml:"output_yuan_per_mtok,omitempty"`
@@ -770,6 +775,7 @@ func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Rout
 			Provider:          rc.Provider,
 			Model:             rc.Model,
 			MaxTokens:         rc.MaxTokens,
+			Thinking:          llm.Thinking(rc.Thinking),
 			InputYuanPerMTok:  rc.InputYuanPerMTok,
 			OutputYuanPerMTok: rc.OutputYuanPerMTok,
 		}); err != nil {
@@ -781,6 +787,7 @@ func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Rout
 			Provider:          f.Fallback.Provider,
 			Model:             f.Fallback.Model,
 			MaxTokens:         f.Fallback.MaxTokens,
+			Thinking:          llm.Thinking(f.Fallback.Thinking),
 			InputYuanPerMTok:  f.Fallback.InputYuanPerMTok,
 			OutputYuanPerMTok: f.Fallback.OutputYuanPerMTok,
 		}); err != nil {
@@ -792,6 +799,7 @@ func (f *File) BuildRouter(ctx context.Context, secrets SecretLender) (*llm.Rout
 			Provider:          a.Provider,
 			Model:             a.Model,
 			MaxTokens:         a.MaxTokens,
+			Thinking:          llm.Thinking(a.Thinking),
 			InputYuanPerMTok:  a.InputYuanPerMTok,
 			OutputYuanPerMTok: a.OutputYuanPerMTok,
 		}); err != nil {

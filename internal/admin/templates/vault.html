@@ -4,7 +4,7 @@
 
 <div class="banner info"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg><div>环境变量不提供查看功能，已保存的值对任何人均不可见，但可随时更换：在对应条目的「更换值」一栏填写新值。如需修改，请以相同名称重新保存。</div></div>
 
-<div class="cols">
+<div class="cols one">
 <div>
 {{if .Data.Requests}}<div class="card">
   <div class="band"><b>待填写</b><span class="count warn">{{len .Data.Requests}}</span></div>
@@ -28,7 +28,7 @@
 </div>
 {{end}}
 <div class="card">
-  <div class="band"><b>个人信息</b><span class="count">{{len .Data.Items}}</span></div>
+  <div class="band"><span class="actions"><b>个人信息</b><span class="count">{{len .Data.Items}}</span></span><button type="button" class="btn sm" data-dialog="dlg-vault">新增条目</button></div>
   {{if .Data.Items}}<table>
     <thead><tr><th>名称</th><th>用途</th><th>授权工具</th><th>创建时间</th><th style="width:24%">更换值</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Data.Items}}<tr>
@@ -45,7 +45,7 @@
           <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="label" value="{{.Label}}">
           <button class="btn danger sm">删除</button></form></div></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无个人信息。证件号、卡号等需由工具使用的敏感信息可在右侧添加。</div>{{end}}
+  </table>{{else}}<div class="empty">暂无个人信息。证件号、卡号等需由工具使用的敏感信息可点击右上角「新增条目」添加。</div>{{end}}
   <div class="band foot"><span class="note muted">助手仅可见条目的名称与用途，通过句柄引用，无法获取其内容。</span></div>
 </div>
 
@@ -72,10 +72,12 @@
 </div>
 
 </div>
-<div>
-<form method="post" action="/vault" autocomplete="off" class="card">
+</div>
+
+<dialog class="modal" id="dlg-vault">
+<form method="post" action="/vault" autocomplete="off">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <div class="band"><b>新增条目</b></div>
+  <div class="band"><b class="modal-title">新增条目</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad grid2">
     <div><label for="v-label">名称</label><input id="v-label" type="text" name="label" placeholder="icloud">
       <div class="help">配置中以 vault://名称 引用。支持字母、数字、中文及 _ - .</div></div>
@@ -95,6 +97,5 @@
   </div>
   <div class="band foot"><span class="note muted">同名条目将被整体替换。</span><button class="btn">保存</button></div>
 </form>
-</div>
-</div>
+</dialog>
 {{end}}

@@ -1,17 +1,22 @@
 {{define "content"}}
-<h1>MCP</h1>
+<div class="pagehead"><h1>MCP</h1>{{template "restartbtn" .}}</div>
 <div class="sub">接入 MCP server 并设定各工具的授权范围。接入后其工具进入工具目录，助手在任务规划时可直接调用。密钥保存至环境变量，保存后不可查看。修改后需重启服务方可生效。</div>
 
 {{with .Data}}
-<div class="cols">
+{{$more := false}}{{range .Presets}}{{if not .On}}{{$more = true}}{{end}}{{end}}
+<div class="cols{{if not $more}} one{{end}}">
 <div>
-<h2 style="margin-top:0">已接入的 MCP server <span class="count">{{len .Servers}}</span></h2>
+<h2 style="margin-top:0">已接入的 MCP server <span class="count">{{len .Servers}}</span>
+  <button type="button" class="btn sm" data-dialog="dlg-mcp" data-title="添加 MCP server">添加</button></h2>
 {{range .Servers}}
 <div class="card">
   <div class="band">
     <div><b>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</b> {{if .Title}}{{if ne .Title .Name}}<span class="chip">{{.Name}}</span> {{end}}{{end}}<span class="mono muted" style="word-break:break-all">{{if eq .Transport "http"}}{{.URL}}{{else}}{{.Command}} {{join .Args " "}}{{end}}</span></div>
     <div class="actions" style="flex-wrap:nowrap">
       {{if .Secret}}{{if .KeyOK}}<span class="pill ok plain">密钥已配置</span>{{else}}<span class="pill bad plain">密钥未配置</span>{{end}}{{else}}<span class="pill plain">无需密钥</span>{{end}}
+      <button type="button" class="btn sec sm" data-dialog="dlg-mcp" data-title="修改 MCP server" data-lock="name"
+        data-v-name="{{.Name}}" data-v-transport="{{.Transport}}" data-v-url="{{.URL}}" data-v-command="{{.Command}}" data-v-args="{{join .Args " "}}"
+        data-v-secret_name="{{.SecretName}}" data-v-secret_in="{{if eq .SecretIn "header"}}header{{else}}query{{end}}">编辑</button>
       <form method="post" action="/mcp/sync"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
         <button class="btn sec sm">读取工具</button></form>
       <form method="post" action="/mcp/server/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
@@ -46,7 +51,7 @@
     <div class="band foot"><span class="note muted">只读工具可直接调用，其余工具按审批规则处理，默认需经确认。参数中含有超出隐私上限的字段时调用将被拦截。</span><button class="btn">保存授权</button></div>
   </form></details>{{else}}<div class="empty">尚未登记工具，未登记的工具无法调用。请点击「读取工具」。</div>{{end}}
 </div>
-{{else}}<div class="card"><div class="empty">暂无 MCP server。可在右侧接入预置的服务，或添加其他 MCP server。</div></div>{{end}}
+{{else}}<div class="card"><div class="empty">暂无 MCP server。可接入预置的服务，或添加其他 MCP server。</div></div>{{end}}
 
 <h2>对话中安装的 MCP server <span class="count">{{len .Installed}}</span></h2>
 <div class="card">
@@ -66,7 +71,7 @@
 </div>
 </div>
 
-<div>
+{{if $more}}<div>
 {{/* 已接入的预置服务只在左侧列出一次，这里只列还没接入的。 */}}{{range .Presets}}{{if not .On}}
 <h2>{{.Title}} <span class="pill plain">未接入</span></h2>
 <form method="post" action="/mcp/{{.ID}}" autocomplete="off" class="card">
@@ -79,13 +84,16 @@
   <div class="band foot"><span class="note muted">{{.Foot}}</span><button class="btn">接入</button></div>
 </form>
 {{end}}{{end}}
+</div>{{end}}
+</div>
 
-<form method="post" action="/mcp/server" autocomplete="off" class="card">
+<dialog class="modal" id="dlg-mcp">
+<form method="post" action="/mcp/server" autocomplete="off">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>添加或修改 MCP server</b></div>
+  <div class="band"><b class="modal-title">添加 MCP server</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad grid2">
     <div><label for="mcp-name">名称</label><input id="mcp-name" type="text" name="name" placeholder="flight">
-      <div class="help">同时作为工具名前缀。填写已有名称即为修改该 server</div></div>
+      <div class="help">同时作为工具名前缀；添加后不可更名</div></div>
     <div><label for="mcp-transport">连接方式</label>
       <select id="mcp-transport" name="transport"><option value="http">远程（Streamable HTTP）</option><option value="command">本地进程（stdio）</option></select></div>
     <div class="full"><label for="mcp-url">服务器地址</label><input id="mcp-url" type="text" name="url" placeholder="https://mcp.example.com/mcp">
@@ -110,16 +118,6 @@
     </div>
   </div>
 </form>
-
-<div class="card">
-  <div class="band"><b>重启服务</b></div>
-  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
-    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <button class="btn sec">重启服务</button></form>
-  </div>
-</div>
-</div>
-</div>
+</dialog>
 {{end}}
 {{end}}

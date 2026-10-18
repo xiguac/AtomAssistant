@@ -1,13 +1,14 @@
 {{define "content"}}
-<h1>消息源</h1>
+<div class="pagehead"><h1>消息源</h1>{{template "restartbtn" .}}</div>
 <div class="sub">接入聊天软件中的机器人，使用户可通过聊天与助手交互。仅消息源主人发送的消息会被处理，并视为用户本人的指令。修改后需重启服务方可生效。</div>
 
 <div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>消息源主人拥有与用户本人相同的权限，请仅添加你自己的账号。主人名单只能在此页面或配置文件中由你本人修改，助手无法更改。</div></div>
 
 {{with .Data}}
-<div class="cols">
-<div>
-<h2 style="margin-top:0">已接入的消息源 <span class="count">{{len .Channels}}</span></h2>
+<h2 style="margin-top:0">已接入的消息源 <span class="count">{{len .Channels}}</span>
+  <button type="button" class="btn sec sm" data-dialog="dlg-weixin">微信扫码连接</button>
+  <button type="button" class="btn sm" style="margin-left:0" data-dialog="dlg-channel" data-title="添加消息源">添加</button></h2>
+<div class="cards2">
 {{range .Channels}}{{$ch := .}}
 <div class="card">
   <div class="band">
@@ -16,8 +17,12 @@
       {{if .Sandbox}}<span class="pill warn plain">沙箱环境</span>{{end}}
       {{if .SecretOK}}<span class="pill ok plain">凭据已配置</span>{{else}}<span class="pill bad plain">凭据未配置</span>{{end}}
     </div>
-    <form method="post" action="/channels/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
+    <div class="actions" style="flex-wrap:nowrap">
+      {{if ne .Type "weixin"}}<button type="button" class="btn sec sm" data-dialog="dlg-channel" data-title="修改消息源" data-lock="name"
+        data-v-name="{{.Name}}" data-v-type="{{.Type}}" data-v-app_id="{{.AppID}}" data-v-sandbox="{{if .Sandbox}}1{{end}}">编辑</button>{{end}}
+      <form method="post" action="/channels/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
+    </div>
   </div>
   <div class="pad">
     <dl class="kv">
@@ -41,15 +46,15 @@
 {{else}}
 <div class="card empty">暂无消息源。</div>
 {{end}}
-
 </div>
-<div>
-<form method="post" action="/channels" autocomplete="off" class="card">
+
+<dialog class="modal" id="dlg-channel">
+<form method="post" action="/channels" autocomplete="off">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>添加或修改消息源</b></div>
+  <div class="band"><b class="modal-title">添加消息源</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad grid2">
     <div><label for="c-name">名称</label><input id="c-name" type="text" name="name" placeholder="qq">
-      <div class="help">自定义标识。填写已有名称即为修改该消息源，主人名单保持不变</div></div>
+      <div class="help">自定义标识；添加后不可更名。修改时主人名单保持不变</div></div>
     <div><label for="c-type">类型</label>
       <select id="c-type" name="type">{{range .Types}}{{if ne . "weixin"}}<option value="{{.}}">{{if eq . "qq"}}QQ 机器人{{else if eq . "feishu"}}飞书机器人{{else if eq . "dingtalk"}}钉钉机器人{{else}}{{.}}{{end}}</option>{{end}}{{end}}</select>
       <div class="help">均为单聊。飞书须在应用中启用机器人并以「长连接」方式订阅「接收消息」事件；钉钉须为企业内部应用并启用 Stream 模式的机器人</div></div>
@@ -61,26 +66,18 @@
   </div>
   <div class="band foot"><span class="note muted">保存消息源不会指定主人。主人需在消息源接入后单独添加。</span><button class="btn">保存</button></div>
 </form>
+</dialog>
 
-<form method="post" action="/channels/weixin/start" class="card">
+<dialog class="modal" id="dlg-weixin">
+<form method="post" action="/channels/weixin/start">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>微信扫码连接</b></div>
+  <div class="band"><b class="modal-title">微信扫码连接</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad">
     <label for="wx-name">名称</label><input id="wx-name" type="text" name="name" value="weixin">
     <div class="help">自定义标识。填写已有的微信消息源名称即为重新连接（登录失效后使用）</div>
   </div>
   <div class="band foot"><span class="note muted">微信无需填写 AppID 与 AppSecret。扫码的微信号将设为主人；与助手的对话在微信中以单聊进行。</span><button class="btn">获取二维码</button></div>
 </form>
-
-<div class="card">
-  <div class="band"><b>重启服务</b></div>
-  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
-    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <button class="btn sec">重启服务</button></form>
-  </div>
-</div>
-</div>
-</div>
+</dialog>
 {{end}}
 {{end}}

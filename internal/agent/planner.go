@@ -97,6 +97,9 @@ type Planner struct {
 	prompts PromptSource
 	// images 非空时，用户发给任务的图片随上下文一起交给模型看。
 	images ImageSource
+	// mainInputs 与 workerInputs 是主模型、各个任务模型支持的输入。没设置的按 llm.DefaultInputs。
+	mainInputs   []llm.Input
+	workerInputs map[string][]llm.Input
 	// pay 为真表示接入了付款能力，付款工具对模型可见。
 	pay bool
 	// paidResources 为真表示允许请求付费资源。
@@ -504,7 +507,7 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	if err != nil {
 		return kernel.Decision{}, err
 	}
-	if msgs, err = p.withImages(ctx, t, msgs); err != nil {
+	if msgs, err = p.withImages(ctx, t, msgs, p.worker == ""); err != nil {
 		return kernel.Decision{}, err
 	}
 

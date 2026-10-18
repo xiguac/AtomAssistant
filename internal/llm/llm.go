@@ -42,6 +42,8 @@ type Request struct {
 	// WebSearch 要求模型用它自带的联网搜索来回答。只有 Router.Search 会设置它：
 	// 不是每家模型都有这个能力，发给没有的那些只会得到一段凭记忆写的回答。
 	WebSearch bool
+	// Thinking 是这次调用的思考强度。路由配了而调用方没指定时，用路由的。
+	Thinking Thinking
 }
 
 // Source 是模型联网搜索时引用的一个网页。
@@ -124,6 +126,8 @@ type Route struct {
 	Provider  string
 	Model     string
 	MaxTokens int
+	// Thinking 是这个模型的思考强度，空值按模型服务的默认。
+	Thinking Thinking
 	// InputYuanPerMTok / OutputYuanPerMTok 是每百万 token 的单价（元）。
 	// 不配就不计费——金额预算也就对这条路由不起作用。
 	InputYuanPerMTok  float64
@@ -236,6 +240,9 @@ func (r *Router) run(ctx context.Context, what string, route Route, req Request)
 	req.Model = route.Model
 	if req.MaxTokens == 0 {
 		req.MaxTokens = route.MaxTokens
+	}
+	if req.Thinking == ThinkingDefault {
+		req.Thinking = route.Thinking
 	}
 	start := time.Now()
 	resp, err := p.Complete(ctx, req)

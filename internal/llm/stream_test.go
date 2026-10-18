@@ -57,6 +57,8 @@ func TestOpenAICompatible_流式返回拼成完整答案(t *testing.T) {
 
 func TestOpenAICompatible_记下先想了多久再开口(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// 本机回环太快，不等一下的话首字节的耗时可能小到读成 0。
+		time.Sleep(20 * time.Millisecond)
 		sse(w, `data: {"choices":[{"delta":{"reasoning_content":"先想一想这件事"}}]}`)
 		time.Sleep(80 * time.Millisecond)
 		sse(w,

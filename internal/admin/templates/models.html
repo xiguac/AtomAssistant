@@ -1,11 +1,54 @@
 {{define "content"}}
-<h1>模型</h1>
+<div class="pagehead"><h1>模型</h1>{{template "restartbtn" .}}</div>
 <div class="sub">配置主 AI 使用的接口地址、密钥与模型，并管理协作模型。配置协作模型后，任务由协作模型拟定方案并执行，主 AI 负责评估方案、审核结果并答复用户；分派对象依据用户评分确定。修改后需重启服务方可生效。</div>
 
 {{with .Data}}
-<div class="cols">
+<div class="cols even">
 <div>
-<h2 style="margin-top:0">模型服务 <span class="count">{{len .Providers}}</span></h2>
+<h2 style="margin-top:0">主 AI</h2>
+<div class="card">
+  <div class="pad">
+    <div class="note" style="margin-bottom:14px">负责接收任务、规划决策、调用工具并与用户交互的模型。建议选用能力最强的模型。</div>
+    <form method="post" action="/models/main" class="grid2">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <div><label for="m-provider">模型服务</label>
+        <select id="m-provider" name="provider">{{range .Providers}}<option value="{{.Name}}"{{if eq .Name $.Data.MainProvider}} selected{{end}}>{{.Name}}</option>{{else}}<option value="">请先添加模型服务</option>{{end}}</select></div>
+      <div><label for="m-model">模型</label><input id="m-model" type="text" name="model" value="{{.MainModel}}" placeholder="deepseek-chat">
+        <div class="help">服务商文档中的模型标识</div></div>
+    <div><label for="m-thinking">思考强度</label>
+      <select id="m-thinking" name="thinking">{{range thinkings}}<option value="{{.}}"{{if eq . $.Data.MainThinking}} selected{{end}}>{{thinkingName .}}</option>{{end}}</select>
+      <div class="help">越高越慢、花费越多。DeepSeek、阿里云百炼按各自的参数下发；其他服务按 reasoning_effort 下发，不支持「关闭」</div></div>
+    <div><label>支持的输入</label>
+      <div class="checks" style="min-height:36px;align-items:center">{{range inputKinds}}<label class="check"><input type="checkbox" name="inputs" value="{{.}}"{{if has (inputsOf $.Data.MainInputs) .}} checked{{end}}{{if eq (print .) "text"}} checked disabled{{end}}>{{inputName .}}</label>{{end}}</div>
+      <div class="help">文字为必选。图片只交给勾选了图片的模型；所有模型都不支持的类型，用户发来时直接回复看不懂</div></div>
+      <div class="full actions"><button class="btn">保存</button>
+        <button class="btn sec" formaction="/models/test" data-async>连接测试</button>
+        <span class="note muted">连接测试使用已保存的接口地址与密钥，向模型发送一条测试消息。</span></div>
+    </form>
+  </div>
+  {{if .Others}}<div class="band foot" style="display:block">
+    <div class="note muted" style="margin-bottom:6px">以下用途已单独指定模型，未指定的用途沿用主 AI。如需修改，请前往「配置」页。</div>
+    {{range .Others}}<span class="chip">{{.Purpose}} → {{.Provider}} / {{.Model}}</span>{{end}}
+  </div>{{end}}
+</div>
+</div>
+<div>
+<h2 style="margin-top:0">任务预算</h2>
+<form method="post" action="/models/budget" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="pad grid2">
+    <div><label for="b-tokens">token 上限</label><input id="b-tokens" type="text" name="max_tokens" inputmode="numeric" value="{{.BudgetTokens}}">
+      <div class="help">单个任务可使用的 token 总量（输入与输出合计）</div></div>
+    <div><label for="b-hours">执行时长上限（小时）</label><input id="b-hours" type="text" name="max_hours" inputmode="decimal" value="{{.BudgetHours}}">
+      <div class="help">仅累计实际执行时间，等待时间不计</div></div>
+  </div>
+  <div class="band foot"><span class="note muted">任一项达到上限时任务即暂停，不再继续消耗。留空或填 0 表示使用默认值。对保存并重启之后新建的任务生效。</span><button class="btn">保存</button></div>
+</form>
+</div>
+</div>
+
+<h2>模型服务 <span class="count">{{len .Providers}}</span>
+  <button type="button" class="btn sm" data-dialog="dlg-provider" data-title="添加模型服务">添加</button></h2>
 <div class="card">
   {{if .Providers}}<table>
     <thead><tr><th>名称</th><th>接口地址</th><th>协议</th><th>密钥</th><th>用途</th><th class="r">操作</th></tr></thead>
@@ -15,33 +58,43 @@
       <td>{{if eq .Protocol "anthropic"}}Anthropic{{else}}OpenAI{{end}}</td>
       <td>{{if .KeyOK}}<span class="pill ok plain">已配置</span>{{else}}<span class="pill bad plain">未配置</span>{{end}}<div class="note muted" style="margin-top:4px">{{.KeyState}}</div></td>
       <td>{{range .UsedBy}}<span class="chip">{{.}}</span>{{else}}<span class="muted">未使用</span>{{end}}</td>
-      <td class="r"><form method="post" action="/models/provider/delete">
-        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
-        <button class="btn danger sm">删除</button></form></td>
+      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
+        <button type="button" class="btn sec sm" data-dialog="dlg-provider" data-title="修改模型服务" data-lock="name"
+          data-v-name="{{.Name}}" data-v-base_url="{{.BaseURL}}" data-v-protocol="{{if eq .Protocol "anthropic"}}anthropic{{else}}openai{{end}}">编辑</button>
+        <form method="post" action="/models/provider/delete">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
+          <button class="btn danger sm">删除</button></form></div></td>
     </tr>{{end}}</tbody>
   </table>{{else}}<div class="empty">暂无模型服务。请先添加模型服务，否则助手无法运行。</div>{{end}}
 </div>
 
-<h2>协作模型 <span class="count">{{len .Agents}}</span></h2>
-<div class="card">
-  {{if .Agents}}<table>
-    <thead><tr><th>名称</th><th>模型</th><th>任务类别</th><th>任务难度</th><th>备注</th><th class="r">操作</th></tr></thead>
-    <tbody>{{range .Agents}}<tr>
-      <td><b style="font-weight:500">{{.Name}}</b></td>
-      <td><span class="mono">{{.Provider}} / {{.Model}}</span></td>
-      <td>{{range .GoodAt}}<span class="chip">{{catName .}}</span>{{else}}<span class="muted">不限</span>{{end}}</td>
-      <td>{{if .Tier}}<span class="chip">{{tierName .Tier}}</span>{{else}}<span class="muted">不限</span>{{end}}</td>
-      <td>{{.Note}}</td>
-      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
-        <form method="post" action="/models/test"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-          <input type="hidden" name="provider" value="{{.Provider}}"><input type="hidden" name="model" value="{{.Model}}">
-          <button class="btn sec sm" data-async>连接测试</button></form>
-        <form method="post" action="/models/agent/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-          <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
-      </div></td>
-    </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无协作模型，当前为单模型模式。添加协作模型后，任务将由协作模型执行，主 AI 负责评估方案与审核结果。</div>{{end}}
-</div>
+<h2>协作模型 <span class="count">{{len .Agents}}</span>
+  <button type="button" class="btn sm" data-dialog="dlg-agent" data-title="添加协作模型">添加</button></h2>
+{{if .Agents}}<div class="cards2">
+{{range .Agents}}<div class="card">
+  <div class="band">
+    <div style="min-width:0"><b>{{.Name}}</b> <span class="mono muted" style="word-break:break-all">{{.Provider}} / {{.Model}}</span></div>
+    <div class="actions" style="flex-wrap:nowrap">
+      <button type="button" class="btn sec sm" data-dialog="dlg-agent" data-title="修改协作模型" data-lock="name"
+        data-v-name="{{.Name}}" data-v-note="{{.Note}}" data-v-provider="{{.Provider}}" data-v-model="{{.Model}}" data-v-tier="{{.Tier}}" data-v-good_at="{{join .GoodAt ","}}"
+        data-v-thinking="{{.Thinking}}" data-v-inputs="{{join (inputsOf .Inputs) ","}}">编辑</button>
+      <form method="post" action="/models/agent/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
+    </div>
+  </div>
+  <form method="post" action="/models/test" class="pad">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="provider" value="{{.Provider}}"><input type="hidden" name="model" value="{{.Model}}">
+    <dl class="kv">
+      <dt>任务类别</dt><dd>{{range .GoodAt}}<span class="chip">{{catName .}}</span>{{else}}<span class="muted">不限</span>{{end}}</dd>
+      <dt>任务难度</dt><dd>{{if .Tier}}{{tierName .Tier}}{{else}}<span class="muted">不限</span>{{end}}</dd>
+      <dt>思考强度</dt><dd>{{thinkingName .Thinking}}</dd>
+      <dt>支持的输入</dt><dd>{{range inputsOf .Inputs}}<span class="chip">{{inputName .}}</span>{{end}}</dd>
+      {{if .Note}}<dt>备注</dt><dd>{{.Note}}</dd>{{end}}
+    </dl>
+    <div class="actions" style="margin-top:12px"><button class="btn sec sm" data-async>连接测试</button></div>
+  </form>
+</div>{{end}}
+</div>{{else}}<div class="card empty">暂无协作模型，当前为单模型模式。添加协作模型后，任务将由协作模型执行，主 AI 负责评估方案与审核结果。</div>{{end}}
 
 {{if .Standings}}
 <h2>评分</h2>
@@ -62,48 +115,13 @@
   <div class="band foot"><span class="note muted">评分仅依据用户评价计算：用户明确给出的评价权重为 1，由用户发言推断的评价权重为 0.5，未评价的任务项不计分。同一类别中尚无记录的模型优先试用一次，此后按评分分派。设置了任务难度时，主 AI 判断每项任务为简单或复杂，在同类别中分派给对应难度的模型；该难度无可用模型时，由同类别评分最高者承接。</span></div>
 </div>
 {{end}}
-
-</div>
-<div>
-<h2>主 AI</h2>
-<div class="card">
-  <div class="pad">
-    <div class="note" style="margin-bottom:14px">负责接收任务、规划决策、调用工具并与用户交互的模型。建议选用能力最强的模型。</div>
-    <form method="post" action="/models/main" class="grid2">
-      <input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <div><label for="m-provider">模型服务</label>
-        <select id="m-provider" name="provider">{{range .Providers}}<option value="{{.Name}}"{{if eq .Name $.Data.MainProvider}} selected{{end}}>{{.Name}}</option>{{else}}<option value="">请先添加模型服务</option>{{end}}</select></div>
-      <div><label for="m-model">模型</label><input id="m-model" type="text" name="model" value="{{.MainModel}}" placeholder="deepseek-chat">
-        <div class="help">服务商文档中的模型标识</div></div>
-      <div class="full actions"><button class="btn">保存</button>
-        <button class="btn sec" formaction="/models/test" data-async>连接测试</button>
-        <span class="note muted">连接测试使用已保存的接口地址与密钥，向模型发送一条测试消息。</span></div>
-    </form>
-  </div>
-  {{if .Others}}<div class="band foot" style="display:block">
-    <div class="note muted" style="margin-bottom:6px">以下用途已单独指定模型，未指定的用途沿用主 AI。如需修改，请前往「配置」页。</div>
-    {{range .Others}}<span class="chip">{{.Purpose}} → {{.Provider}} / {{.Model}}</span>{{end}}
-  </div>{{end}}
-</div>
-
-<form method="post" action="/models/budget" class="card">
+<dialog class="modal" id="dlg-provider">
+<form method="post" action="/models/provider" autocomplete="off">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>任务预算</b></div>
-  <div class="pad grid2">
-    <div><label for="b-tokens">token 上限</label><input id="b-tokens" type="text" name="max_tokens" inputmode="numeric" value="{{.BudgetTokens}}">
-      <div class="help">单个任务可使用的 token 总量（输入与输出合计）</div></div>
-    <div><label for="b-hours">执行时长上限（小时）</label><input id="b-hours" type="text" name="max_hours" inputmode="decimal" value="{{.BudgetHours}}">
-      <div class="help">仅累计实际执行时间，等待时间不计</div></div>
-  </div>
-  <div class="band foot"><span class="note muted">任一项达到上限时任务即暂停，不再继续消耗。留空或填 0 表示使用默认值。对保存并重启之后新建的任务生效。</span><button class="btn">保存</button></div>
-</form>
-
-<form method="post" action="/models/provider" autocomplete="off" class="card">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>添加或修改模型服务</b></div>
+  <div class="band"><b class="modal-title">添加模型服务</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad grid2">
     <div><label for="p-name">名称</label><input id="p-name" type="text" name="name" placeholder="deepseek">
-      <div class="help">自定义标识，供下方引用。填写已有名称即为修改该服务</div></div>
+      <div class="help">自定义标识，供协作模型等引用；添加后不可更名</div></div>
     <div><label for="p-url">接口地址</label><input id="p-url" type="text" name="base_url" placeholder="https://api.deepseek.com/v1">
       <div class="help">OpenAI 协议填写至 /v1 一级；Anthropic 协议填写至 /v1 的上一级。均不含 /chat/completions 或 /messages</div></div>
     <div><label for="p-proto">接口协议</label>
@@ -118,13 +136,15 @@
     <button class="btn">保存并测试</button>
   </div>
 </form>
+</dialog>
 
-<form method="post" action="/models/agent" class="card">
+<dialog class="modal" id="dlg-agent">
+<form method="post" action="/models/agent">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>添加或修改协作模型</b></div>
+  <div class="band"><b class="modal-title">添加协作模型</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad grid2">
     <div><label for="a-name">名称</label><input id="a-name" type="text" name="name" placeholder="写作模型">
-      <div class="help">评分按名称记录。填写已有名称即为修改该协作模型</div></div>
+      <div class="help">评分按名称记录；添加后不可更名</div></div>
     <div><label for="a-note">备注</label><input id="a-note" type="text" name="note" placeholder="长文写作，成本较低"></div>
     <div><label for="a-provider">模型服务</label>
       <select id="a-provider" name="provider">{{range .Providers}}<option value="{{.Name}}">{{.Name}}</option>{{else}}<option value="">请先添加模型服务</option>{{end}}</select></div>
@@ -132,6 +152,12 @@
     <div><label for="a-tier">任务难度</label>
       <select id="a-tier" name="tier"><option value="">不限</option><option value="simple">简单</option><option value="complex">复杂</option></select>
       <div class="help">由主 AI 判断任务难度。可为同一类别分别配置承接简单任务的轻量模型与承接复杂任务的高性能模型</div></div>
+    <div><label for="a-thinking">思考强度</label>
+      <select id="a-thinking" name="thinking">{{range thinkings}}<option value="{{.}}">{{thinkingName .}}</option>{{end}}</select>
+      <div class="help">越高越慢、花费越多。DeepSeek、阿里云百炼按各自的参数下发；其他服务按 reasoning_effort 下发，不支持「关闭」</div></div>
+    <div><label>支持的输入</label>
+      <div class="checks" style="min-height:36px;align-items:center">{{range inputKinds}}<label class="check"><input type="checkbox" name="inputs" value="{{.}}"{{if eq (print .) "text"}} checked disabled{{end}}>{{inputName .}}</label>{{end}}</div>
+      <div class="help">文字为必选。图片只交给勾选了图片的模型；所有模型都不支持的类型，用户发来时直接回复看不懂</div></div>
     <div class="full"><label>任务类别限制（不选表示不限，按评分分派）</label>
       <div class="checks">{{range .Categories}}<label class="check" title="{{.Hint}}"><input type="checkbox" name="good_at" value="{{.ID}}">{{.Name}}</label>{{end}}</div></div>
   </div>
@@ -139,16 +165,6 @@
     <div class="actions"><button class="btn" style="order:9">保存</button>
       <button class="btn sec" formaction="/models/test" data-async>连接测试</button></div></div>
 </form>
-
-<div class="card">
-  <div class="band"><b>重启服务</b></div>
-  <div class="pad" style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-    <div class="note grow">本页的修改需重启后生效。执行中的任务将回到队列，重启后继续执行。</div>
-    <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-      <button class="btn sec">重启服务</button></form>
-  </div>
-</div>
-</div>
-</div>
+</dialog>
 {{end}}
 {{end}}

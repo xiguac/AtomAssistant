@@ -719,3 +719,42 @@ func TestPlanner_用户发来的图片原样交给主模型和任务模型(t *te
 		t.Fatalf("任务模型执行时应看到原图: %v", err)
 	}
 }
+
+func TestPlanner_看不了图片的模型不给图片带图的活派给看得了的(t *testing.T) {
+	ctx := context.Background()
+	task := core.NewTask("t", "看看这张图", core.TrustUser)
+	pic := fakeImages{{MIME: "image/png", Data: []byte("PNG")}}
+	textOnly := []llm.Input{llm.InputText}
+	withImage := []llm.Input{llm.InputText, llm.InputImage}
+
+	// 主模型看不了：不挂图片，只告诉它有图、它看不到。
+	m := &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
+	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithImages(pic).WithInputs(textOnly, nil)
+	if _, err := p.Decide(ctx, task, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := m.lastReq.Messages[len(m.lastReq.Messages)-1]
+	if len(last.Images) != 0 || !strings.Contains(last.Content, "you cannot see images") {
+		t.Fatalf("看不了图片的主模型不该收到图片: %d %q", len(last.Images), last.Content)
+	}
+
+	// 分工：分析类本该给「分析师」，但它看不了图片，改派给看得了的「写手」；
+	// 主模型判断为简单的事也不自己办，因为它看不到图。
+	for _, reply := range []string{assignReply, `{"category":"analysis","tier":"simple","title":"看图"}`} {
+		main := &fakeModel{replies: []string{reply}}
+		dp, _, _ := delegated(t, main, &scriptedWorkers{})
+		dp = dp.WithImages(pic).WithInputs(textOnly, map[string][]llm.Input{"写手": withImage, "分析师": textOnly})
+		d, err := dp.Decide(ctx, task, nil)
+		if err != nil || !strings.Contains(d.Reason, "交给 写手") {
+			t.Fatalf("带图的活应派给看得了图片的任务模型: %q %v", d.Reason, err)
+		}
+	}
+
+	// 没有图片的任务照常按类别派。
+	main := &fakeModel{replies: []string{assignReply}}
+	dp, _, _ := delegated(t, main, &scriptedWorkers{})
+	dp = dp.WithImages(fakeImages{}).WithInputs(textOnly, map[string][]llm.Input{"写手": withImage, "分析师": textOnly})
+	if d, err := dp.Decide(ctx, task, nil); err != nil || !strings.Contains(d.Reason, "交给 分析师") {
+		t.Fatalf("没有图片时照常派: %q %v", d.Reason, err)
+	}
+}

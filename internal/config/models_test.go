@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/xiguac/atomhelper/internal/llm"
 )
 
 const commented = `# 开头的说明
@@ -125,5 +127,66 @@ func TestValidate_模型几节互相对得上(t *testing.T) {
 	}
 	if _, err := f.Provider(context.Background(), "没有", nil); err == nil {
 		t.Fatal("取不存在的模型服务应报错")
+	}
+}
+
+func TestModels_思考强度与输入类型按模型配置(t *testing.T) {
+	body := `
+providers:
+  - name: ds
+    base_url: https://api.deepseek.com/v1
+    api_key: vault://ds
+  - name: qwen
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: vault://qwen
+routes:
+  - purpose: plan
+    provider: ds
+    model: deepseek-flash
+    thinking: low
+    inputs: [text]
+agents:
+  - name: 看图
+    provider: qwen
+    model: qwen-vl
+    inputs: [text, image]
+  - name: 写作
+    provider: ds
+    model: deepseek-flash
+    thinking: off
+    inputs: [text]
+`
+	f, err := LoadFile(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := f.Inputs()
+	if llm.Accepts(in.Main, llm.InputImage) || !llm.Accepts(in.Workers["看图"], llm.InputImage) || llm.Accepts(in.Workers["写作"], llm.InputImage) {
+		t.Fatalf("各模型的输入类型不对: %+v", in)
+	}
+	if !in.Any(llm.InputImage) || in.Any(llm.InputAudio) {
+		t.Fatalf("汇总不对: %+v", in)
+	}
+	if _, err := f.BuildRouter(context.Background(), &fakeLender{}); err != nil {
+		t.Fatalf("构造路由失败: %v", err)
+	}
+
+	for _, bad := range []string{
+		strings.Replace(body, "thinking: low", "thinking: extreme", 1),
+		strings.Replace(body, "    inputs: [text]\nagents", "    inputs: [image]\nagents", 1),
+		strings.Replace(body, "inputs: [text, image]", "inputs: [text, smell]", 1),
+	} {
+		if _, err := LoadFile(writeConfig(t, bad)); err == nil {
+			t.Fatalf("不合法的配置应被拒绝:\n%s", bad)
+		}
+	}
+
+	// 没写输入类型的旧配置：照旧按支持图片算。
+	old, err := LoadFile(writeConfig(t, strings.Replace(body, "    inputs: [text]\nagents", "agents", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !llm.Accepts(old.Inputs().Main, llm.InputImage) {
+		t.Fatal("没写时应按支持图片算")
 	}
 }

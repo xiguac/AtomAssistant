@@ -312,7 +312,7 @@ func (p *Planner) askJSON(ctx context.Context, t *core.Task, main bool, system s
 	if err != nil {
 		return err
 	}
-	if msgs, err = p.withImages(ctx, t, msgs); err != nil {
+	if msgs, err = p.withImages(ctx, t, msgs, main || p.worker == ""); err != nil {
 		return err
 	}
 	req := llm.Request{Messages: msgs, JSONMode: true}
@@ -392,13 +392,27 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	if strings.TrimSpace(out.Title) == "" {
 		out.Title = t.Title
 	}
+	// 主模型看不了用户发来的图片、而有任务模型看得了：再简单也交出去，主模型自己办只能对着图瞎猜。
+	if team.Tier(out.Tier) == team.TierSimple && !p.sees(true) {
+		has, err := p.hasImages(ctx, t)
+		if err != nil {
+			return spent, err
+		}
+		if has && p.anyWorkerSees() {
+			out.Tier = string(team.TierComplex)
+		}
+	}
 	if team.Tier(out.Tier) == team.TierSimple {
 		// 一两步就能办完的事不派出去，主模型自己办。指派仍然记一条，之后每一步据此知道该谁做。
 		return internalStep(spent, ToolAssign,
 			assignRecord{Category: out.Category, Tier: out.Tier, Title: out.Title, Round: 1},
 			fmt.Sprintf("按「%s · %s」由主模型直接办理", team.CategoryName(team.Category(out.Category)), team.TierName(team.TierSimple)))
 	}
-	w, err := p.team.PickExcept(ctx, team.Category(out.Category), team.Tier(out.Tier), nil)
+	blind, err := p.blindWorkers(ctx, t)
+	if err != nil {
+		return spent, err
+	}
+	w, err := p.team.PickExcept(ctx, team.Category(out.Category), team.Tier(out.Tier), blind)
 	if err != nil {
 		return spent, fmt.Errorf("agent: 选任务模型失败: %w", err)
 	}
@@ -537,7 +551,11 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 	if out.Verdict == "reassign" && canReassign && feedback != "" {
 		// 改派按复杂的办：退回了几轮还不行，说明这件事比当初判断的难。
 		// 没有别的任务模型可换时，照下面的路收尾。
-		if w, err := p.team.PickExcept(ctx, team.Category(cur.Category), team.TierComplex, state.tried()); err == nil {
+		blind, err := p.blindWorkers(ctx, t)
+		if err != nil {
+			return spent, err
+		}
+		if w, err := p.team.PickExcept(ctx, team.Category(cur.Category), team.TierComplex, append(state.tried(), blind...)); err == nil {
 			return internalStep(spent, ToolAssign,
 				assignRecord{Worker: w.Name, Category: cur.Category, Tier: string(team.TierComplex), Title: cur.Title, Round: cur.Round + 1, Why: feedback},
 				fmt.Sprintf("主模型审核：改派给 %s 办理", w.Name))

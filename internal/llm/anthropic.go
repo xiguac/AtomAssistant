@@ -22,6 +22,7 @@ type AnthropicCompatible struct {
 	name    string
 	baseURL string
 	apiKey  string
+	dialect Dialect
 	idle    time.Duration
 	client  *http.Client
 }
@@ -52,6 +53,7 @@ func NewAnthropicCompatible(cfg OpenAIConfig) (*AnthropicCompatible, error) {
 		name:    cfg.Name,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
+		dialect: cfg.Dialect,
 		idle:    cfg.Timeout,
 		// 同 OpenAICompatible：时限交给看门狗，不给 client 设总时限。
 		client: &http.Client{},
@@ -75,6 +77,8 @@ type anthropicRequest struct {
 	Temperature float64 `json:"temperature,omitempty"`
 	Tools       []any   `json:"tools,omitempty"`
 	Stream      bool    `json:"stream,omitempty"`
+	// Reasoning 是 DeepSeek 的 Anthropic 兼容接口上的思考强度，见 anthropicThinking。
+	Reasoning *reasoningEffort `json:"reasoning,omitempty"`
 }
 
 // webSearchTool 是服务端执行的联网搜索工具：搜索由模型服务自己完成，我们只拿结果。
@@ -191,6 +195,7 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 	if req.WebSearch {
 		body.Tools = []any{webSearchTool}
 	}
+	anthropicThinking(p.dialect, req.Thinking, &body)
 	// 流式取回，理由同 OpenAICompatible。
 	body.Stream = true
 	payload, err := json.Marshal(body)

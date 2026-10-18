@@ -37,6 +37,9 @@ type AgentConfig struct {
 	// Note 是给你自己看的备注。
 	Note      string `yaml:"note,omitempty"`
 	MaxTokens int    `yaml:"max_tokens,omitempty"`
+	// Thinking 与 Inputs 的含义同 RouteConfig。
+	Thinking string   `yaml:"thinking,omitempty"`
+	Inputs   []string `yaml:"inputs,omitempty"`
 	// 每百万 token 的单价（元）。不填则不计费。
 	InputYuanPerMTok  float64 `yaml:"input_yuan_per_mtok,omitempty"`
 	OutputYuanPerMTok float64 `yaml:"output_yuan_per_mtok,omitempty"`
@@ -74,6 +77,9 @@ func (f *File) validateModels() error {
 		if rc.Model == "" {
 			return fmt.Errorf("config: 用途 %s 没有写模型", rc.Purpose)
 		}
+		if err := checkModelOptions(rc.Thinking, rc.Inputs); err != nil {
+			return fmt.Errorf("config: 用途 %s：%w", rc.Purpose, err)
+		}
 	}
 	if f.Fallback != nil {
 		if !known[f.Fallback.Provider] {
@@ -81,6 +87,9 @@ func (f *File) validateModels() error {
 		}
 		if f.Fallback.Model == "" {
 			return fmt.Errorf("config: fallback 没有写模型")
+		}
+		if err := checkModelOptions(f.Fallback.Thinking, f.Fallback.Inputs); err != nil {
+			return fmt.Errorf("config: fallback：%w", err)
 		}
 	}
 	names := map[string]bool{}
@@ -105,6 +114,9 @@ func (f *File) validateModels() error {
 		}
 		if a.InputYuanPerMTok < 0 || a.OutputYuanPerMTok < 0 {
 			return fmt.Errorf("config: 协作模型 %s 的单价不能为负", a.Name)
+		}
+		if err := checkModelOptions(a.Thinking, a.Inputs); err != nil {
+			return fmt.Errorf("config: 协作模型 %s：%w", a.Name, err)
 		}
 	}
 	return nil
@@ -146,13 +158,72 @@ func (f *File) Provider(ctx context.Context, name string, secrets SecretLender) 
 			return nil, err
 		}
 		// 不传 pc.Timeout：见 ProviderConfig.Timeout 的说明。
-		cfg := llm.OpenAIConfig{Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key}
+		cfg := llm.OpenAIConfig{Name: pc.Name, BaseURL: pc.BaseURL, APIKey: key, Dialect: pc.dialect()}
 		if pc.Protocol == ProtocolAnthropic {
 			return llm.NewAnthropicCompatible(cfg)
 		}
 		return llm.NewOpenAICompatible(cfg)
 	}
 	return nil, fmt.Errorf("config: 没有名叫 %s 的模型服务", name)
+}
+
+func checkModelOptions(thinking string, inputs []string) error {
+	if _, err := llm.ParseThinking(thinking); err != nil {
+		return err
+	}
+	_, err := llm.ParseInputs(inputs)
+	return err
+}
+
+// dialect 认出这家服务特有的参数写法。
+func (p ProviderConfig) dialect() llm.Dialect {
+	switch p.searchKind() {
+	case searchDeepSeek:
+		return llm.DialectDeepSeek
+	case searchBailian:
+		return llm.DialectBailian
+	}
+	return llm.DialectGeneric
+}
+
+// ModelInputs 是各个模型支持的输入：主 AI 一份，协作模型按名字各一份。
+type ModelInputs struct {
+	Main    []llm.Input
+	Workers map[string][]llm.Input
+}
+
+// Any 报告有没有任何一个模型支持 in。
+func (m ModelInputs) Any(in llm.Input) bool {
+	if llm.Accepts(m.Main, in) {
+		return true
+	}
+	for _, w := range m.Workers {
+		if llm.Accepts(w, in) {
+			return true
+		}
+	}
+	return false
+}
+
+// Inputs 读出各个模型支持的输入。配置在加载时已校验过，这里不再报错。
+func (f *File) Inputs() ModelInputs {
+	main := []string(nil)
+	found := false
+	for _, r := range f.Routes {
+		if r.Purpose == string(llm.PurposePlan) {
+			main, found = r.Inputs, true
+			break
+		}
+	}
+	if !found && f.Fallback != nil {
+		main = f.Fallback.Inputs
+	}
+	out := ModelInputs{Workers: map[string][]llm.Input{}}
+	out.Main, _ = llm.ParseInputs(main)
+	for _, a := range f.Agents {
+		out.Workers[a.Name], _ = llm.ParseInputs(a.Inputs)
+	}
+	return out
 }
 
 // Models 是配置里和模型有关的那几节。管理后台的「模型」页读写的就是它。
@@ -194,6 +265,29 @@ func (m *Models) SetMain(provider, model string) {
 		}
 	}
 	m.Routes = append([]RouteConfig{{Purpose: string(llm.PurposePlan), Provider: provider, Model: model}}, m.Routes...)
+}
+
+// SetMainOptions 设置主 AI 的思考强度和支持的输入。先 SetMain，保证有规划那条路由。
+func (m *Models) SetMainOptions(thinking string, inputs []string) {
+	for i := range m.Routes {
+		if m.Routes[i].Purpose == string(llm.PurposePlan) {
+			m.Routes[i].Thinking, m.Routes[i].Inputs = thinking, inputs
+			return
+		}
+	}
+}
+
+// MainOptions 返回主 AI 的思考强度和支持的输入（没写的是空）。
+func (m *Models) MainOptions() (thinking string, inputs []string) {
+	for _, r := range m.Routes {
+		if r.Purpose == string(llm.PurposePlan) {
+			return r.Thinking, r.Inputs
+		}
+	}
+	if m.Fallback != nil {
+		return m.Fallback.Thinking, m.Fallback.Inputs
+	}
+	return "", nil
 }
 
 // UsedBy 说出一家模型服务被哪些地方用着，没有则返回空。删除之前要看。

@@ -4,12 +4,13 @@
 
 {{with .Data}}
 {{if .Enabled}}
-<div class="cols">
-<div>
 <div class="card">
   <div class="band">
     <span class="mono" style="color:var(--text-2)">工作区{{if .Dir}} / {{.Dir}}{{end}}</span>
-    {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">返回上级目录</a>{{end}}
+    <div class="actions">
+      {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">返回上级目录</a>{{end}}
+      <button type="button" class="btn sm" data-dialog="dlg-upload">上传</button>
+    </div>
   </div>
   {{if .Entries}}<table>
     <thead><tr><th>名称</th><th class="r" style="width:120px">大小</th><th class="r" style="width:130px">修改时间</th><th class="r" style="width:90px">操作</th></tr></thead>
@@ -25,22 +26,17 @@
   </table>
   <div class="band foot"><span class="note muted">删除后不可恢复。目录须先清空方可删除；被替换文件的历史版本不受影响。</span></div>{{else}}<div class="empty">当前目录暂无文件。</div>{{end}}
 </div>
+<div class="card" style="margin-top:16px"><div class="pad note">在「配置」页的 files 一节中设置 <span class="mono">encrypt: true</span> 后，写入工作区的文件将以密文保存，读取与下载时自动解密。默认未启用。</div></div>
 
-</div>
-<div>
-<form method="post" action="/files" enctype="multipart/form-data" class="card">
+<dialog class="modal" id="dlg-upload">
+<form method="post" action="/files" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <input type="hidden" name="dir" value="{{.Dir}}">
-  <div class="band"><b>上传</b></div>
+  <div class="band"><b class="modal-title">上传</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad"><input type="file" name="file"></div>
   <div class="band foot"><span class="note muted">同名文件将被替换，原文件自动保留为历史版本。单个文件上限为 50 MB。</span><button class="btn">上传</button></div>
 </form>
-<div class="card">
-  <div class="band"><b>加密存放</b></div>
-  <div class="pad note">在「配置」页的 files 一节中设置 <span class="mono">encrypt: true</span> 后，写入工作区的文件将以密文保存，读取与下载时自动解密。默认未启用。</div>
-</div>
-</div>
-</div>
+</dialog>
 {{else}}
 <div class="card pad">
   <div class="note">文件处理功能尚未启用。请在「配置」页添加以下配置并重启服务：</div>

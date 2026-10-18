@@ -23,7 +23,7 @@
   </table>{{else}}<div class="empty">暂无记忆。记忆将随任务的执行逐步积累。</div>{{end}}
 </div>
 </div>
-<div>
+<div class="lead">
 <h2 style="margin-top:0">待核实 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
 {{range .Pending}}
 <div class="attn" style="align-items:flex-start">

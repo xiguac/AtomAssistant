@@ -47,6 +47,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/seal"
@@ -122,6 +123,8 @@ type Server struct {
 	wxLogins map[string]*weixin.Login
 	// wxBase 是微信后端的地址，为空用正式的。只有测试会设它。
 	wxBase string
+	// searchBase 是 DeepSeek 搜索接口的地址，为空用正式的。只有测试会设它。
+	searchBase string
 	// hash 是当前生效的密码摘要：后台改过的优先，否则是环境变量里的。
 	hash     string
 	failures int
@@ -208,6 +211,30 @@ func New(opts Options) (*Server, error) {
 		// 配置里的类别是字符串，记录里的是 team.Category，两种都接。
 		"catName":  func(c any) string { return team.CategoryName(team.Category(fmt.Sprint(c))) },
 		"tierName": func(t any) string { return team.TierName(team.Tier(fmt.Sprint(t))) },
+		// 模型的思考强度与输入类型。配置里没写输入类型时按默认的文字与图片显示。
+		"thinkingName": thinkingName,
+		"thinkings":    func() []string { return []string{"", "off", "low", "medium", "high", "max"} },
+		"inputKinds":   func() []llm.Input { return llm.Inputs },
+		"inputName":    func(in any) string { return llm.InputName(llm.Input(fmt.Sprint(in))) },
+		"inputsOf": func(list []string) []string {
+			in, err := llm.ParseInputs(list)
+			if err != nil {
+				return list
+			}
+			out := make([]string, len(in))
+			for i, x := range in {
+				out[i] = string(x)
+			}
+			return out
+		},
+		"has": func(list []string, s any) bool {
+			for _, x := range list {
+				if x == fmt.Sprint(s) {
+					return true
+				}
+			}
+			return false
+		},
 	}
 	pages, err := templateFS.ReadDir("templates")
 	if err != nil {
@@ -224,6 +251,22 @@ func New(opts Options) (*Server, error) {
 		s.tmpl[strings.TrimSuffix(p.Name(), ".html")] = t
 	}
 	return s, nil
+}
+
+func thinkingName(t string) string {
+	switch t {
+	case "off":
+		return "关闭"
+	case "low":
+		return "低"
+	case "medium":
+		return "中"
+	case "high":
+		return "高"
+	case "max":
+		return "最高"
+	}
+	return "服务默认"
 }
 
 func stateName(st core.TaskState) string {
@@ -341,6 +384,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", auth(s.home))
 	mux.HandleFunc("POST /tasks", auth(s.createTask))
 	mux.HandleFunc("POST /tasks/delete", auth(s.deleteTasks))
+	mux.HandleFunc("GET /tasks", auth(s.tasksPage))
 	mux.HandleFunc("GET /tasks/{id}", auth(s.taskPage))
 	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
 	mux.HandleFunc("POST /tasks/{id}/reject", auth(s.reject))
@@ -374,6 +418,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /connectors/mail", auth(s.mailSave))
 	mux.HandleFunc("POST /connectors/holidays", auth(s.holidaysSave))
 	mux.HandleFunc("POST /connectors/weather", auth(s.weatherSave))
+	mux.HandleFunc("POST /connectors/search", auth(s.searchSave))
 	mux.HandleFunc("POST /connectors/disable", auth(s.connectorDisable))
 	mux.HandleFunc("POST /connectors/test", auth(s.connectorTest))
 	mux.HandleFunc("GET /mcp", auth(s.mcpPage))
@@ -440,15 +485,57 @@ type view struct {
 	Error  string
 	Page   string
 	Data   any
+	// Badges 是导航上各页待处理事项的数量，登录后才有。
+	Badges badges
+}
+
+// badges 是需要用户处理的事项数量：等确认或等回话的任务、助手登记的待填环境变量、待核实的记忆。
+type badges struct {
+	Tasks, Vault, Memory int
+}
+
+// Total 是全部待处理事项的数量，手机上的「概览」标签显示它。
+func (b badges) Total() int { return b.Tasks + b.Vault + b.Memory }
+
+// countBadges 数出导航上要显示的待处理数量。查不出来的那一项不显示，不影响页面本身。
+func (s *Server) countBadges(ctx context.Context) badges {
+	var b badges
+	if tasks, err := s.opts.Store.ListTasks(ctx, false, 60); err == nil {
+		for _, t := range tasks {
+			if needsUser(t) {
+				b.Tasks++
+			}
+		}
+	} else {
+		s.opts.Log.Warn("统计待处理任务失败", "err", err)
+	}
+	if reqs, err := s.requests().List(ctx); err == nil {
+		b.Vault = len(reqs)
+	} else {
+		s.opts.Log.Warn("统计待填写的环境变量失败", "err", err)
+	}
+	if pending, err := s.opts.Store.Memories().ListPending(ctx, ""); err == nil {
+		b.Memory = len(pending)
+	} else {
+		s.opts.Log.Warn("统计待核实的记忆失败", "err", err)
+	}
+	return b
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, v *view) {
+	s.renderCtx(context.Background(), w, name, v)
+}
+
+func (s *Server) renderCtx(ctx context.Context, w http.ResponseWriter, name string, v *view) {
 	t, ok := s.tmpl[name]
 	if !ok {
 		http.Error(w, "页面不存在", http.StatusNotFound)
 		return
 	}
 	v.Page = name
+	if v.CSRF != "" && s.opts.Store != nil {
+		v.Badges = s.countBadges(ctx)
+	}
 	if s.opts.Status != nil {
 		v.Status = s.opts.Status()
 	}
@@ -570,17 +657,67 @@ type homeData struct {
 	Recent  []*core.Task
 }
 
-func needsUser(t *core.Task) bool {
-	return t.State == core.StateSuspended ||
-		(t.State == core.StateWaiting && t.Wake != nil && (t.Wake.Kind == core.WakeApproval ||
-			(t.Wake.Kind == core.WakeEvent && strings.Contains(t.Wake.Expr, `"user.message"`))))
+// overviewData 是「概览」页：需要用户处理的事、正在办的事、最近办完的事，以及还没配好的几项。
+type overviewData struct {
+	homeData
+	// VaultRequests 与 MemoryPending 是助手登记的待填环境变量、待核实的记忆的数量。
+	VaultRequests, MemoryPending int
+	// Setup 是开始使用前要配好的几项，全部配好时为空。
+	Setup []setupItem
 }
 
-func (s *Server) home(w http.ResponseWriter, r *http.Request, v *view) {
-	tasks, err := s.opts.Store.ListTasks(r.Context(), false, 60)
-	if err != nil {
-		v.Error = err.Error()
+// setupItem 是开始使用前要配好的一项。
+type setupItem struct {
+	Title, Hint, Href, Action string
+	Done                      bool
+}
+
+// recentOnOverview 是概览页上列出的最近办完的任务的条数，其余的在「任务」页。
+const recentOnOverview = 5
+
+// setupItems 检查开始使用前要配好的几项。读不出配置的那一项按没配好算。
+func (s *Server) setupItems(r *http.Request) []setupItem {
+	_, m, err := s.readModels()
+	keyed := false
+	if err == nil {
+		stored := map[string]bool{}
+		if metas, err := s.opts.Vault.List(r.Context()); err == nil {
+			for _, meta := range metas {
+				stored[meta.Label] = true
+			}
+		}
+		for _, p := range m.Providers {
+			if (p.APIKey != "" && stored[strings.TrimPrefix(p.APIKey, vault.HandlePrefix)]) || (p.APIKeyEnv != "" && os.Getenv(p.APIKeyEnv) != "") {
+				keyed = true
+			}
+		}
 	}
+	mainProvider, _ := m.Main()
+	owned := false
+	if raw, err := os.ReadFile(s.opts.ConfigPath); err == nil {
+		if chans, err := config.ReadChannels(raw); err == nil {
+			for _, c := range chans {
+				if len(c.Owners) > 0 {
+					owned = true
+				}
+			}
+		}
+	}
+	items := []setupItem{
+		{Title: "添加模型服务", Hint: "填写接口地址与 API Key，助手依靠它理解与执行任务", Href: "/models", Action: "前往模型", Done: keyed},
+		{Title: "设置主 AI", Hint: "指定负责规划与对话的模型", Href: "/models", Action: "前往模型", Done: mainProvider != ""},
+		{Title: "接入消息源", Hint: "接入微信、QQ、飞书或钉钉，并添加你自己为主人，即可在聊天中使用", Href: "/channels", Action: "前往消息源", Done: owned},
+	}
+	for _, it := range items {
+		if !it.Done {
+			return items
+		}
+	}
+	return nil
+}
+
+// tasksOf 把任务分成要用户处理的、进行中的、已结束的三组。
+func tasksOf(tasks []*core.Task) homeData {
 	var d homeData
 	for _, t := range tasks {
 		switch {
@@ -592,8 +729,47 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, v *view) {
 			d.Recent = append(d.Recent, t)
 		}
 	}
+	return d
+}
+
+func needsUser(t *core.Task) bool {
+	return t.State == core.StateSuspended ||
+		(t.State == core.StateWaiting && t.Wake != nil && (t.Wake.Kind == core.WakeApproval ||
+			(t.Wake.Kind == core.WakeEvent && strings.Contains(t.Wake.Expr, `"user.message"`))))
+}
+
+// home 是「概览」页：打开后台先看到要你处理的事。
+func (s *Server) home(w http.ResponseWriter, r *http.Request, v *view) {
+	tasks, err := s.opts.Store.ListTasks(r.Context(), false, 60)
+	if err != nil {
+		v.Error = err.Error()
+	}
+	d := overviewData{homeData: tasksOf(tasks), Setup: s.setupItems(r)}
+	if len(d.Recent) > recentOnOverview {
+		d.Recent = d.Recent[:recentOnOverview]
+	}
+	if reqs, err := s.requests().List(r.Context()); err == nil {
+		d.VaultRequests = len(reqs)
+	} else {
+		v.Error = err.Error()
+	}
+	if pending, err := s.opts.Store.Memories().ListPending(r.Context(), ""); err == nil {
+		d.MemoryPending = len(pending)
+	} else {
+		v.Error = err.Error()
+	}
 	v.Data = d
-	s.render(w, "home", v)
+	s.renderCtx(r.Context(), w, "home", v)
+}
+
+// tasksPage 是「任务」页：全部任务，已结束的可以删除。
+func (s *Server) tasksPage(w http.ResponseWriter, r *http.Request, v *view) {
+	tasks, err := s.opts.Store.ListTasks(r.Context(), false, 60)
+	if err != nil {
+		v.Error = err.Error()
+	}
+	v.Data = tasksOf(tasks)
+	s.renderCtx(r.Context(), w, "tasks", v)
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -637,7 +813,7 @@ func (s *Server) deleteTasks(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("已结束的任务已在后台删除", "数量", n, "全部", all, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/", fmt.Sprintf("已删除 %d 个已结束的任务。由这些任务提炼的记忆与评分记录不受影响。", n), err)
+	back(w, r, "/tasks", fmt.Sprintf("已删除 %d 个已结束的任务。由这些任务提炼的记忆与评分记录不受影响。", n), err)
 }
 
 type stepView struct {

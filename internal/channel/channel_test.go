@@ -751,3 +751,31 @@ func TestRoute_文件收进工作区换成一句话照常处理(t *testing.T) {
 		t.Fatalf("没收成的文件应告诉用户: %v %+v", tasks.log[before:], qq.sent[len(qq.sent)-2:])
 	}
 }
+
+func TestRoute_没有模型看得了图片时直接告诉用户(t *testing.T) {
+	h, qq, tasks := hub(t)
+	h = h.WithoutImages()
+	ctx := context.Background()
+	img := Attachment{URL: "https://img.example.com/1.jpg", ContentType: "image/jpeg"}
+
+	m := from("OWNER", "", "m1")
+	m.Images = []Attachment{img}
+	h.Handle(ctx, "qq", m)
+	if len(tasks.log) != 0 || len(qq.sent) != 1 || !strings.Contains(qq.sent[0].Text, "我还看不懂这个类型的数据哦") {
+		t.Fatalf("只发图片时应直接回复看不懂，不建任务: %v %+v", tasks.log, qq.sent)
+	}
+
+	// 带着文字的：图片不收，文字照常办。
+	m = from("OWNER", "帮我记一下明天上午十点开会", "m2")
+	m.Images = []Attachment{img}
+	h.Handle(ctx, "qq", m)
+	if len(tasks.log) != 1 || !strings.HasPrefix(tasks.log[0], "create:") {
+		t.Fatalf("文字应照常建成任务: %v", tasks.log)
+	}
+
+	// 语音、视频这类消息源收不了的，到这里是空消息。
+	h.Handle(ctx, "qq", from("OWNER", "", "m3"))
+	if last := qq.sent[len(qq.sent)-1].Text; !strings.Contains(last, "我还看不懂这个类型的数据哦") {
+		t.Fatalf("空消息应回复看不懂: %q", last)
+	}
+}

@@ -257,6 +257,8 @@ type Hub struct {
 	triage Triager
 	// files 非空时用户可以在聊天里发文件，见 files.go。
 	files FileSink
+	// noImages 为真表示配置的模型没有一个看得了图片：收到图片直接告诉用户，不交给任务。
+	noImages bool
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -283,6 +285,15 @@ func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hu
 	}
 	return h, nil
 }
+
+// WithoutImages 表示配置的模型都看不了图片。
+func (h *Hub) WithoutImages() *Hub {
+	h.noImages = true
+	return h
+}
+
+// unreadable 是收到看不懂的内容时的回复。
+const unreadable = "我还看不懂这个类型的数据哦"
 
 // WithFeedback 让主人能在聊天里用 /赞 和 /踩 评价协作模型交的活。
 func (h *Hub) WithFeedback(f Feedback) *Hub {
@@ -442,11 +453,20 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		m.Files = nil
 		m.Text = text
 	}
+	if len(m.Images) > 0 && h.noImages {
+		// 有文字的话文字照常处理，图片不收。
+		h.say(ctx, channel, m.Chat, unreadable+"（图片）。")
+		m.Images = nil
+		if text == "" {
+			return nil
+		}
+	}
 	if len(m.Images) > 0 {
 		return h.routeImages(ctx, channel, m, text, tag)
 	}
 	if text == "" {
-		h.say(ctx, channel, m.Chat, "这条消息里没有我能处理的内容：目前我看得懂文字、图片和文件（语音、视频还不行）。")
+		// 消息源收不了的语音、视频等，到这里都只剩一条空消息。
+		h.say(ctx, channel, m.Chat, unreadable+"。")
 		return nil
 	}
 
