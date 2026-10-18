@@ -73,6 +73,7 @@ var plainColumns = map[string][]string{
 	"vault_items":         {"id", "allowed_tools"},
 	"settings":            {"key"},
 	"task_images":         {"id", "task_id", "mime"},
+	"op_logs":             {"id", "category"},
 	"seal_state":          {"key_id"},
 	"schema_migrations":   {"version"},
 }

@@ -1,48 +1,53 @@
 {{define "content"}}
-<h1>文件</h1>
-<div class="sub">助手仅可读写工作区内的文件。待处理的文件请上传至此，生成的文件亦保存于此。</div>
+<div class="pagehead"><h1>文件</h1>{{if .Data.Enabled}}<button type="button" class="btn" data-dialog="dlg-upload">上传</button>{{end}}</div>
+<div class="sub">助手只能读写工作区里的文件。你发给助手的文件（聊天里发的、在这里上传的）与助手生成的文件分开列出。</div>
 
 {{with .Data}}
 {{if .Enabled}}
+<h2 style="margin-top:0">收到的文件 <span class="count">{{len .Received}}</span></h2>
+<div class="card">
+  {{if .Received}}{{template "filetable" (dict "Entries" .Received "Dir" .ReceivedDir "CSRF" $.CSRF)}}{{else}}<div class="empty">还没有收到文件。在聊天里发给助手，或点击右上角「上传」。</div>{{end}}
+  <div class="band foot"><span class="note muted">存放在工作区的「{{.ReceivedDir}}」目录。同名文件将被替换，原文件自动保留为历史版本。</span></div>
+</div>
+
+<h2>助手生成的文件 <span class="count">{{len .Entries}}</span></h2>
 <div class="card">
   <div class="band">
-    <span class="mono" style="color:var(--text-2)">工作区{{if .Dir}} / {{.Dir}}{{end}}</span>
-    <div class="actions">
-      {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">返回上级目录</a>{{end}}
-      <button type="button" class="btn sm" data-dialog="dlg-upload">上传</button>
-    </div>
+    <span class="mono" style="color:var(--text-2);min-width:0;word-break:break-all">工作区{{if .Dir}} / {{.Dir}}{{end}}</span>
+    {{if .Dir}}<a class="btn sec sm" href="/files?dir={{.Parent}}">返回上级目录</a>{{end}}
   </div>
-  {{if .Entries}}<table>
-    <thead><tr><th>名称</th><th class="r" style="width:120px">大小</th><th class="r" style="width:130px">修改时间</th><th class="r" style="width:90px">操作</th></tr></thead>
-    <tbody>{{range .Entries}}<tr>
-      <td>{{if .Dir}}<a href="/files?dir={{.Path}}" style="display:inline-flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>{{.Path}}</a>
-        {{else}}<a href="/files/download?path={{.Path}}" style="display:inline-flex;align-items:center;gap:8px"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg>{{.Path}}</a>{{end}}</td>
-      <td class="time r">{{if not .Dir}}{{size .Size}}{{end}}</td>
-      <td class="time r">{{when .Modified}}</td>
-      <td class="r"><form method="post" action="/files/delete">
-        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="dir" value="{{$.Data.Dir}}"><input type="hidden" name="path" value="{{.Path}}">
-        <button class="btn danger sm">删除</button></form></td>
-    </tr>{{end}}</tbody>
-  </table>
-  <div class="band foot"><span class="note muted">删除后不可恢复。目录须先清空方可删除；被替换文件的历史版本不受影响。</span></div>{{else}}<div class="empty">当前目录暂无文件。</div>{{end}}
+  {{if .Entries}}{{template "filetable" (dict "Entries" .Entries "Dir" .Dir "CSRF" $.CSRF)}}{{else}}<div class="empty">{{if .Dir}}这个目录是空的。{{else}}助手还没有生成文件。{{end}}</div>{{end}}
+  <div class="band foot"><span class="note muted">删除后不可恢复。目录须先清空方可删除；被替换文件的历史版本不受影响。</span></div>
 </div>
-<div class="card" style="margin-top:16px"><div class="pad note">在「配置」页的 files 一节中设置 <span class="mono">encrypt: true</span> 后，写入工作区的文件将以密文保存，读取与下载时自动解密。默认未启用。</div></div>
+<div class="card" style="margin-top:16px"><div class="pad note">在「配置文件」页的 files 一节中设置 <span class="mono">encrypt: true</span> 后，写入工作区的文件将以密文保存，读取与下载时自动解密。默认未启用。</div></div>
 
 <dialog class="modal" id="dlg-upload">
 <form method="post" action="/files" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <input type="hidden" name="dir" value="{{.Dir}}">
   <div class="band"><b class="modal-title">上传</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad"><input type="file" name="file"></div>
-  <div class="band foot"><span class="note muted">同名文件将被替换，原文件自动保留为历史版本。单个文件上限为 50 MB。</span><button class="btn">上传</button></div>
+  <div class="band foot"><span class="note muted">放进「收到的文件」，助手可以读取。单个文件上限为 50 MB。</span><button class="btn">上传</button></div>
 </form>
 </dialog>
 {{else}}
 <div class="card pad">
-  <div class="note">文件处理功能尚未启用。请在「配置」页添加以下配置并重启服务：</div>
+  <div class="note">文件处理功能尚未启用。请在「配置文件」页添加以下配置并重启服务：</div>
   <pre>files:
   dir: /var/lib/atomhelper/files</pre>
 </div>
 {{end}}
 {{end}}
 {{end}}
+
+{{define "filetable"}}<table>
+  <thead><tr><th>名称</th><th class="r" style="width:110px">大小</th><th class="r" style="width:130px">修改时间</th><th class="r" style="width:90px">操作</th></tr></thead>
+  <tbody>{{range .Entries}}<tr>
+    <td>{{if .Dir}}<a href="/files?dir={{.Path}}" class="fname"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg><span>{{base .Path}}</span></a>
+      {{else}}<a href="/files/download?path={{.Path}}" class="fname"><svg class="ico" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg><span>{{base .Path}}</span></a>{{end}}</td>
+    <td class="time r">{{if not .Dir}}{{size .Size}}{{end}}</td>
+    <td class="time r">{{when .Modified}}</td>
+    <td class="r"><form method="post" action="/files/delete">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="dir" value="{{$.Dir}}"><input type="hidden" name="path" value="{{.Path}}">
+      <button class="btn danger sm">删除</button></form></td>
+  </tr>{{end}}</tbody>
+</table>{{end}}

@@ -205,8 +205,9 @@ func (w *Workspace) List(dir string) ([]Entry, error) {
 	return out, nil
 }
 
-// receivedDir 是用户在聊天里发来的文件放的目录。
-const receivedDir = "收到的文件"
+// ReceivedDir 是用户发来的文件放的目录：聊天里发来的，和在管理后台上传的。
+// 工作区里其余的都是助手生成的。
+const ReceivedDir = "收到的文件"
 
 // Receive 收下用户在聊天里发来的一个文件，放进「收到的文件」目录，返回它在工作区里的路径。
 // 同名的不覆盖：后来的那个在名字后面加上序号。
@@ -223,7 +224,7 @@ func (w *Workspace) Receive(name string, data []byte) (string, error) {
 	}
 	ext := path.Ext(name)
 	stem := strings.TrimSuffix(name, ext)
-	rel := path.Join(receivedDir, name)
+	rel := path.Join(ReceivedDir, name)
 	for i := 2; ; i++ {
 		abs, _, err := w.resolve(rel, true)
 		if err != nil {
@@ -235,7 +236,7 @@ func (w *Workspace) Receive(name string, data []byte) (string, error) {
 		if i > 999 {
 			return "", fmt.Errorf("%w: 同名文件太多", ErrInvalid)
 		}
-		rel = path.Join(receivedDir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
+		rel = path.Join(ReceivedDir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
 	}
 	saved, err := w.save(rel, func() ([]byte, error) { return data, nil })
 	if err != nil {

@@ -750,8 +750,8 @@ func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {
 	if token, err := take(ctx); err != nil || token != "wx-bot-token-1" {
 		t.Fatalf("微信的机器人凭证应在环境变量里: %v", err)
 	}
-	if _, body = e.get("/channels"); !strings.Contains(body, "微信扫码连接") || !strings.Contains(body, "me@im.wechat") || !strings.Contains(body, "飞书") || !strings.Contains(body, "钉钉") {
-		t.Fatal("消息源页应列出三个消息源，并提供微信扫码连接")
+	if _, body = e.get("/channels"); !strings.Contains(body, "微信（扫码连接）") || strings.Contains(body, `id="dlg-weixin"`) || !strings.Contains(body, "me@im.wechat") || !strings.Contains(body, "飞书") || !strings.Contains(body, "钉钉") {
+		t.Fatal("消息源页应列出三个消息源，微信扫码放在「添加」里")
 	}
 }
 

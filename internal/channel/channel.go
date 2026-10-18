@@ -142,6 +142,7 @@ func (h *Hub) SendFile(ctx context.Context, tags []string, name string, data []b
 	if err != nil {
 		return err
 	}
+	h.log.Info("发出文件", "渠道", channel, "文件", name, "类别", out.File.Kind)
 	// 序号用过了就不能再用。
 	return h.state.PutChat(ctx, st)
 }
@@ -371,9 +372,13 @@ func (h *Hub) Handle(ctx context.Context, channel string, m Message) {
 		return
 	}
 	if !b.owns(m.Sender) {
+		h.log.Info("收到非主人的消息，不处理", "渠道", channel)
 		h.stranger(ctx, b, channel, m)
 		return
 	}
+	// 只记收到了什么，不记内容：日志会被翻看，消息原文留在任务里。
+	h.log.Info("收到消息", "渠道", channel, "字数", utf8.RuneCountInString(m.Text),
+		"图片", len(m.Images), "语音", len(m.Voices), "视频", len(m.Videos), "文件", len(m.Files))
 	if err := h.state.PutChat(ctx, &ChatState{
 		Channel: channel, Chat: m.Chat, LastMsgID: m.ID, LastMsgAt: h.now(),
 	}); err != nil {
@@ -633,7 +638,11 @@ func (h *Hub) createTask(ctx context.Context, title, goal, tag string) (string, 
 		title = string(r[:24]) + "…"
 	}
 	// 第二个标签标明它属于用户与助手的会话：所有消息源共用一个，新任务靠它看到最近的对话。
-	return h.tasks.Create(ctx, title, goal, []string{tag, ConversationTag})
+	id, err := h.tasks.Create(ctx, title, goal, []string{tag, ConversationTag})
+	if err == nil {
+		h.log.Info("消息新建了任务", "任务", id)
+	}
+	return id, err
 }
 
 // askPrefix 是内核在任务提问时写进原因里的前缀。
@@ -832,6 +841,7 @@ func (h *Hub) send(ctx context.Context, channel, chat, text string) error {
 			return err
 		}
 	}
+	h.log.Info("发出消息", "渠道", channel, "字数", utf8.RuneCountInString(text))
 	return nil
 }
 

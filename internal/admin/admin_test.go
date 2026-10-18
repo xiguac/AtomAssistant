@@ -25,7 +25,9 @@ import (
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
 	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomhelper/internal/oplog"
 	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomhelper/internal/store"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/team"
 	"github.com/xiguac/atomhelper/internal/vault"
@@ -418,22 +420,23 @@ func TestAdmin_配置校验与文件(t *testing.T) {
 		loc, _ := url.QueryUnescape(resp.Header.Get("Location"))
 		return resp.StatusCode, loc
 	}
-	if code, loc := upload(`..\..\evil.txt`, "", "x"); code != http.StatusSeeOther || !strings.Contains(loc, "文件已保存至工作区: evil.txt") {
+	if code, loc := upload(`..\..\evil.txt`, "", "x"); code != http.StatusSeeOther || !strings.Contains(loc, "文件已保存至工作区: 收到的文件/evil.txt") {
 		t.Fatalf("文件名里的路径应被去掉: %d %s", code, loc)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(e.work), "evil.txt")); err == nil {
 		t.Fatal("文件不应落到工作区之外")
 	}
-	if code, loc := upload("销售.csv", "../outside", "x"); !strings.Contains(loc, "e=") {
-		t.Fatalf("目录跳出工作区应被拒绝: %d %s", code, loc)
+	// 上传的文件一律放进「收到的文件」：表单里带的目录不认，跳出工作区也就无从谈起。
+	if code, loc := upload("别处.csv", "../outside", "x"); !strings.Contains(loc, "收到的文件/别处.csv") {
+		t.Fatalf("上传的文件应放进收到的文件: %d %s", code, loc)
 	}
-	if code, loc := upload("销售.csv", "报表", "产品,销量\nA,1\n"); code != http.StatusSeeOther || !strings.Contains(loc, "报表/销售.csv") {
+	if code, loc := upload("销售.csv", "报表", "产品,销量\nA,1\n"); code != http.StatusSeeOther || !strings.Contains(loc, "收到的文件/销售.csv") {
 		t.Fatalf("上传失败: %d %s", code, loc)
 	}
-	if _, body := e.get("/files?dir=报表"); !strings.Contains(body, "报表/销售.csv") {
-		t.Fatal("文件页应列出刚上传的文件")
+	if _, body := e.get("/files"); !strings.Contains(body, ">销售.csv<") || !strings.Contains(body, "收到的文件 <span class=\"count\">3</span>") {
+		t.Fatal("文件页应在收到的文件里列出刚上传的文件")
 	}
-	resp, err := e.client.Get(e.srv.URL + "/files/download?path=" + url.QueryEscape("报表/销售.csv"))
+	resp, err := e.client.Get(e.srv.URL + "/files/download?path=" + url.QueryEscape("收到的文件/销售.csv"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,24 +452,29 @@ func TestAdmin_配置校验与文件(t *testing.T) {
 	// 删除：页面上每一行有删除按钮。目录要先清空；工作区之外的、留底目录里的删不了。
 	del := func(p string) string {
 		t.Helper()
-		_, loc := e.post("/files/delete", url.Values{"csrf": {e.csrf}, "dir": {"报表"}, "path": {p}})
+		_, loc := e.post("/files/delete", url.Values{"csrf": {e.csrf}, "dir": {""}, "path": {p}})
 		return loc
 	}
-	if _, body := e.get("/files?dir=报表"); !strings.Contains(body, `action="/files/delete"`) {
+	if _, body := e.get("/files"); !strings.Contains(body, `action="/files/delete"`) {
 		t.Fatal("文件页应有删除按钮")
 	}
-	for _, bad := range []string{"报表", "../config.yaml", ".versions", "", "没有这个文件.txt"} {
+	for _, bad := range []string{"收到的文件", "../config.yaml", ".versions", "", "没有这个文件.txt"} {
 		if loc := del(bad); !strings.Contains(loc, "e=") {
 			t.Fatalf("删除 %q 应被拒绝: %s", bad, loc)
 		}
 	}
-	if loc := del("报表/销售.csv"); !strings.Contains(loc, "已删除") || !strings.HasPrefix(loc, "/files?dir=") {
+	if loc := del("收到的文件/销售.csv"); !strings.Contains(loc, "已删除") || !strings.HasPrefix(loc, "/files?dir=") {
 		t.Fatalf("删除文件失败: %s", loc)
 	}
-	if code, _ := e.get("/files/download?path=" + url.QueryEscape("报表/销售.csv")); code != http.StatusNotFound {
+	if code, _ := e.get("/files/download?path=" + url.QueryEscape("收到的文件/销售.csv")); code != http.StatusNotFound {
 		t.Fatalf("删掉的文件不应还能下载: %d", code)
 	}
-	if loc := del("报表"); !strings.Contains(loc, "已删除") {
+	for _, p := range []string{"收到的文件/evil.txt", "收到的文件/别处.csv"} {
+		if loc := del(p); !strings.Contains(loc, "已删除") {
+			t.Fatalf("删除 %s 失败: %s", p, loc)
+		}
+	}
+	if loc := del("收到的文件"); !strings.Contains(loc, "已删除") {
 		t.Fatalf("空目录应能删除: %s", loc)
 	}
 }
@@ -1375,5 +1383,53 @@ func TestAdmin_连接器页配置联网搜索密钥(t *testing.T) {
 	}
 	if now, _ := os.ReadFile(e.cfg); string(now) != string(before) {
 		t.Fatalf("停用后配置应回到原样:\n%s", now)
+	}
+}
+
+func TestAdmin_每次改动记进日志并能分类查看(t *testing.T) {
+	e := setup(t)
+	// 和 main 里一样：后台的 logger 带上"后台操作"这个类别，日志经 oplog 写进库。
+	logs := oplog.NewHandler(slog.NewTextHandler(io.Discard, nil))
+	e.server.opts.Log = slog.New(logs).With(oplog.Key, oplog.Admin)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logs.Start(ctx, e.store)
+	e.login()
+
+	// 一次成功、一次失败的改动；提交的内容（这里是密钥）不能进日志。
+	if _, loc := e.post("/vault", url.Values{"csrf": {e.csrf}, "label": {"cardno"}, "note": {"卡号"}, "value": {"6222-secret-1"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("保存失败: %s", loc)
+	}
+	if _, loc := e.post("/models/main", url.Values{"csrf": {e.csrf}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("应保存失败: %s", loc)
+	}
+	// 审计也进日志：归"任务"。
+	if err := e.store.Audit(context.Background(), store.AuditEntry{Actor: "user", Action: "approval.granted", TaskID: "t-1"}); err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		_, body = e.get("/logs?cat=admin")
+		if strings.Contains(body, "设置主 AI") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(body, "新增环境变量") || !strings.Contains(body, "结果=成功") || !strings.Contains(body, "设置主 AI") ||
+		!strings.Contains(body, "结果=失败") || strings.Contains(body, "6222-secret-1") {
+		t.Fatalf("后台操作应记进日志，且不带提交的内容:\n%s", body)
+	}
+	if strings.Contains(body, "已批准") {
+		t.Fatal("按类别筛时不该混进任务的日志")
+	}
+	if _, body = e.get("/logs?cat=task"); !strings.Contains(body, "已批准") || strings.Contains(body, "新增环境变量") {
+		t.Fatal("任务类别应只有任务的日志")
+	}
+	if _, body = e.get("/logs?level=warn"); !strings.Contains(body, "设置主 AI") || strings.Contains(body, "新增环境变量") {
+		t.Fatal("只看警告时应只有失败的那一条")
+	}
+	if _, body = e.get("/logs"); !strings.Contains(body, `<span class="pill plain warn">警告</span>`) || !strings.Contains(body, "后台操作") {
+		t.Fatal("日志页应列出全部日志并标出级别")
 	}
 }

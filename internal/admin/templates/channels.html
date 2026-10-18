@@ -6,8 +6,7 @@
 
 {{with .Data}}
 <h2 style="margin-top:0">已接入的消息源 <span class="count">{{len .Channels}}</span>
-  <button type="button" class="btn sec sm" data-dialog="dlg-weixin">微信扫码连接</button>
-  <button type="button" class="btn sm" style="margin-left:0" data-dialog="dlg-channel" data-title="添加消息源">添加</button></h2>
+  <button type="button" class="btn sm" data-dialog="dlg-channel" data-title="添加消息源">添加</button></h2>
 <div class="cards2">
 {{range .Channels}}{{$ch := .}}
 <div class="card">
@@ -18,7 +17,9 @@
       {{if .SecretOK}}<span class="pill ok plain">凭据已配置</span>{{else}}<span class="pill bad plain">凭据未配置</span>{{end}}
     </div>
     <div class="actions" style="flex-wrap:nowrap">
-      {{if ne .Type "weixin"}}<button type="button" class="btn sec sm" data-dialog="dlg-channel" data-title="修改消息源" data-lock="name"
+      {{if eq .Type "weixin"}}<button type="button" class="btn sec sm" data-dialog="dlg-channel" data-title="重新扫码连接微信" data-lock="name"
+        data-v-name="{{.Name}}" data-v-type="weixin">重新扫码</button>
+      {{else}}<button type="button" class="btn sec sm" data-dialog="dlg-channel" data-title="修改消息源" data-lock="name"
         data-v-name="{{.Name}}" data-v-type="{{.Type}}" data-v-app_id="{{.AppID}}" data-v-sandbox="{{if .Sandbox}}1{{end}}">编辑</button>{{end}}
       <form method="post" action="/channels/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
         <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
@@ -53,31 +54,26 @@
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="band"><b class="modal-title">添加消息源</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad grid2">
-    <div><label for="c-name">名称</label><input id="c-name" type="text" name="name" placeholder="qq">
-      <div class="help">自定义标识；添加后不可更名。修改时主人名单保持不变</div></div>
     <div><label for="c-type">类型</label>
-      <select id="c-type" name="type">{{range .Types}}{{if ne . "weixin"}}<option value="{{.}}">{{if eq . "qq"}}QQ 机器人{{else if eq . "feishu"}}飞书机器人{{else if eq . "dingtalk"}}钉钉机器人{{else}}{{.}}{{end}}</option>{{end}}{{end}}</select>
-      <div class="help">均为单聊。飞书须在应用中启用机器人并以「长连接」方式订阅「接收消息」事件；钉钉须为企业内部应用并启用 Stream 模式的机器人</div></div>
-    <div><label for="c-app">AppID</label><input id="c-app" type="text" name="app_id" placeholder="102012345">
+      <select id="c-type" name="type">{{range .Types}}<option value="{{.}}">{{if eq . "qq"}}QQ 机器人{{else if eq . "feishu"}}飞书机器人{{else if eq . "dingtalk"}}钉钉机器人{{else if eq . "weixin"}}微信（扫码连接）{{else}}{{.}}{{end}}</option>{{end}}</select>
+      <div class="help" data-show-if="type=qq,feishu,dingtalk">均为单聊。飞书须在应用中启用机器人并以「长连接」方式订阅「接收消息」事件；钉钉须为企业内部应用并启用 Stream 模式的机器人</div>
+      <div class="help" data-show-if="type=weixin">无需填写 AppID 与 AppSecret：点击「获取二维码」后用微信扫码，扫码的微信号即为主人</div></div>
+    <div><label for="c-name">名称</label><input id="c-name" type="text" name="name" placeholder="如 qq、weixin">
+      <div class="help">自定义标识；添加后不可更名。修改时主人名单保持不变</div></div>
+    <div data-show-if="type=qq,feishu,dingtalk"><label for="c-app">AppID</label><input id="c-app" type="text" name="app_id" placeholder="102012345">
       <div class="help">QQ 为 AppID，飞书为 App ID，钉钉为 Client ID（原 AppKey）</div></div>
-    <div><label for="c-secret">AppSecret</label><input id="c-secret" type="password" name="secret" autocomplete="new-password">
+    <div data-show-if="type=qq,feishu,dingtalk"><label for="c-secret">AppSecret</label><input id="c-secret" type="password" name="secret" autocomplete="new-password">
       <div class="help">飞书为 App Secret，钉钉为 Client Secret。保存至环境变量，保存后不可查看。修改已有消息源时留空表示沿用原凭据</div></div>
-    <div class="full"><label class="check"><input type="checkbox" name="sandbox" value="1">使用沙箱环境（仅 QQ：机器人尚未上线、仅在沙箱中调试时勾选）</label></div>
+    <div class="full" data-show-if="type=qq"><label class="check"><input type="checkbox" name="sandbox" value="1">使用沙箱环境（仅 QQ：机器人尚未上线、仅在沙箱中调试时勾选）</label></div>
   </div>
-  <div class="band foot"><span class="note muted">保存消息源不会指定主人。主人需在消息源接入后单独添加。</span><button class="btn">保存</button></div>
+  <div class="band foot">
+    <span class="note muted" data-show-if="type=qq,feishu,dingtalk">保存消息源不会指定主人。主人需在消息源接入后单独添加。</span>
+    <span class="note muted" data-show-if="type=weixin">与助手的对话在微信中以单聊进行。登录失效后，在该消息源上点「重新扫码」。</span>
+    <button class="btn" data-show-if="type=qq,feishu,dingtalk">保存</button>
+    <button class="btn" formaction="/channels/weixin/start" data-show-if="type=weixin">获取二维码</button>
+  </div>
 </form>
 </dialog>
 
-<dialog class="modal" id="dlg-weixin">
-<form method="post" action="/channels/weixin/start">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b class="modal-title">微信扫码连接</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
-  <div class="pad">
-    <label for="wx-name">名称</label><input id="wx-name" type="text" name="name" value="weixin">
-    <div class="help">自定义标识。填写已有的微信消息源名称即为重新连接（登录失效后使用）</div>
-  </div>
-  <div class="band foot"><span class="note muted">微信无需填写 AppID 与 AppSecret。扫码的微信号将设为主人；与助手的对话在微信中以单聊进行。</span><button class="btn">获取二维码</button></div>
-</form>
-</dialog>
 {{end}}
 {{end}}

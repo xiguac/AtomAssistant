@@ -1,0 +1,32 @@
+{{define "content"}}
+<div class="pagehead"><h1>日志</h1></div>
+<div class="sub">后台里的每一次改动、任务的进展与审批、工具与模型的调用、消息的收发，以及系统事件，都记在这里，新的在前。日志加密存放，保留 90 天。</div>
+
+{{with .Data}}
+<div class="filters">
+  <div class="seg" role="tablist" aria-label="类别">
+    <a href="/logs?level={{.Level}}" class="{{if not .Category}}on{{end}}">全部</a>
+    {{range .Categories}}<a href="/logs?cat={{.}}&level={{$.Data.Level}}" class="{{if eq . $.Data.Category}}on{{end}}">{{.Name}}</a>{{end}}
+  </div>
+  <div class="seg" aria-label="级别">
+    <a href="/logs?cat={{.Category}}" class="{{if not .Level}}on{{end}}">全部级别</a>
+    <a href="/logs?cat={{.Category}}&level=warn" class="{{if eq .Level "warn"}}on{{end}}">警告及以上</a>
+    <a href="/logs?cat={{.Category}}&level=error" class="{{if eq .Level "error"}}on{{end}}">仅错误</a>
+  </div>
+</div>
+
+<div class="card">
+  {{if .Entries}}<table class="logs">
+    <thead><tr><th style="width:150px">时间</th><th style="width:72px">级别</th><th style="width:96px">类别</th><th>内容</th></tr></thead>
+    <tbody>{{range .Entries}}<tr>
+      <td class="time">{{.At.Local.Format "01-02 15:04:05"}}</td>
+      <td><span class="pill plain {{levelClass .Level}}">{{levelName .Level}}</span></td>
+      <td>{{.Category.Name}}</td>
+      <td><div class="log-msg">{{.Message}}</div>{{if .Attrs}}<div class="log-attrs mono">{{.Attrs}}</div>{{end}}</td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">没有符合条件的日志。</div>{{end}}
+  {{if .Next}}<div class="band foot"><span class="note muted">每页 100 条。</span>
+    <a class="btn sec sm" href="/logs?cat={{.Category}}&level={{.Level}}&before={{.Next}}">更早的</a></div>{{end}}
+</div>
+{{end}}
+{{end}}

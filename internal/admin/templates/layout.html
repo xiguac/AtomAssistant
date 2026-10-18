@@ -21,6 +21,8 @@
   --mono:"JetBrains Mono","SF Mono",Consolas,"Liberation Mono",Menlo,monospace;
 }
 * { box-sizing:border-box; }
+/* 带 hidden 的一律不显示：按钮等自己写了 display 的，不加这一条会盖过它。 */
+[hidden] { display:none !important; }
 html, body { margin:0; }
 body { font:14px/20px var(--sans); color:var(--text); background:var(--canvas); font-feature-settings:"tnum" 1; -webkit-font-smoothing:antialiased; }
 a { color:var(--primary); text-decoration:none; }
@@ -154,6 +156,29 @@ textarea { min-height:96px; resize:vertical; display:block; }
 textarea.bare { border:0; box-shadow:none; padding:0; min-height:84px; font-size:14px; }
 textarea.code { font:12px/18px var(--mono); min-height:480px; border:0; border-radius:0; background:var(--canvas); padding:14px 20px; white-space:pre; overflow-wrap:normal; overflow-x:auto; box-shadow:none; tab-size:2; }
 input[type=file] { font:13px var(--sans); color:var(--text-2); }
+
+/* 下拉框：去掉系统自带的样式，箭头用两道渐变画出来（不引用图片，安全策略不允许 data: 图片）。 */
+select { appearance:none; -webkit-appearance:none; padding-right:34px; background-color:#fff; cursor:pointer;
+  background-image:linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
+  background-position:calc(100% - 18px) 52%, calc(100% - 13px) 52%; background-size:5px 5px; background-repeat:no-repeat; }
+select:hover { border-color:var(--line-strong); }
+select:disabled { background-color:var(--recess); color:var(--muted); cursor:not-allowed; }
+
+/* 勾选框：自己画方框和对勾，和整套界面的主色一致。 */
+input[type=checkbox] { appearance:none; -webkit-appearance:none; flex:none; width:16px; height:16px; margin:0; border:1.5px solid var(--line-strong); border-radius:4px; background:#fff; display:inline-grid; place-content:center; cursor:pointer; transition:background .12s, border-color .12s; vertical-align:middle; }
+input[type=checkbox]::before { content:""; width:8px; height:4px; border-left:2px solid #fff; border-bottom:2px solid #fff; transform:translateY(-1px) rotate(-45deg); opacity:0; transition:opacity .12s; }
+input[type=checkbox]:hover { border-color:var(--primary-hover); }
+input[type=checkbox]:checked { background:var(--primary); border-color:var(--primary); }
+input[type=checkbox]:checked::before { opacity:1; }
+input[type=checkbox]:focus-visible { outline:2px solid rgba(37,99,235,.3); outline-offset:2px; }
+input[type=checkbox]:disabled { cursor:not-allowed; opacity:.55; }
+
+/* 一组并列的选项（支持的输入、任务类别等）：每一项是一张可点的小卡片，选中的高亮。 */
+.checks label.check { min-height:34px; padding:0 12px; gap:8px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text-2); transition:border-color .12s, background .12s; }
+.checks label.check:hover { border-color:var(--line-strong); color:var(--text); }
+.checks label.check:has(input:checked) { border-color:#BFDBFE; background:var(--wash); color:var(--primary); }
+.checks label.check:has(input:disabled) { cursor:default; }
+.checks { gap:8px; }
 /* 密钥一行：参数名、值、按钮底边对齐；一个 server 有几项密钥就有几行。 */
 .keyrow { display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
 .keyrow .keyname { width:200px; }
@@ -313,6 +338,18 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 .navtoggle { position:absolute; opacity:0; pointer-events:none; }
 .burger { display:none; }
 
+/* 筛选：一排可点的分段按钮，选中的那个高亮。窄屏上可以横向滑动。 */
+.filters { display:flex; flex-wrap:wrap; gap:10px 16px; margin-bottom:16px; }
+.seg { display:inline-flex; gap:2px; padding:3px; background:var(--recess); border-radius:9px; max-width:100%; overflow-x:auto; scrollbar-width:none; }
+.seg::-webkit-scrollbar { display:none; }
+.seg a { flex:none; height:30px; padding:0 12px; display:inline-flex; align-items:center; border-radius:7px; color:var(--text-2); font-size:13px; font-weight:500; white-space:nowrap; }
+.seg a:hover { color:var(--text); }
+.seg a.on { background:var(--card); color:var(--primary); box-shadow:0 0 0 1px var(--line); }
+.log-msg { font-weight:500; }
+.fname { display:inline-flex; align-items:center; gap:8px; min-width:0; word-break:break-all; }
+.fname svg.ico { width:16px; height:16px; }
+.log-attrs { margin-top:2px; color:var(--text-2); font-size:12px; line-height:18px; word-break:break-all; }
+
 /* 概览页 */
 .todo { display:flex; align-items:center; gap:14px; padding:14px 20px; border-bottom:1px solid var(--row); color:inherit; }
 .todo:last-child { border-bottom:0; }
@@ -395,7 +432,7 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   input[type=checkbox] { width:20px; height:20px; }
   label.check { min-height:36px; }
   details.dropdown summary { height:44px; font-size:16px; }
-  .checks { gap:4px 18px; }
+  .checks { gap:8px; }
 
   /* 行列表：标题与状态一行，说明另起一行。 */
   .rows > a, .rows a.pick { flex-wrap:wrap; gap:4px 10px; padding:12px 16px; }
@@ -433,11 +470,13 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   thead { display:none; }
   tr { padding:10px 16px; border-bottom:1px solid var(--row); }
   tr:last-child { border-bottom:0; }
-  td, td:first-child, td:last-child { display:flex; align-items:flex-start; gap:12px; padding:4px 0; border:0; text-align:left; }
-  td::before { content:attr(data-label); flex:none; width:72px; padding-top:1px; color:var(--muted); font-size:12px; line-height:20px; }
+  /* 单元格按普通的块排：列名靠左固定宽度，内容在右边照常换行。格子里有几块内容都一样，
+     不会像并排摆的那样被挤成一行一两个字。 */
+  td, td:first-child, td:last-child { display:block; position:relative; padding:4px 0 4px 84px; border:0; text-align:left; min-height:28px; }
+  td::before { content:attr(data-label); position:absolute; left:0; top:5px; width:72px; color:var(--muted); font-size:12px; line-height:20px; }
+  td[data-label=""], td:not([data-label]) { padding-left:0; }
   td[data-label=""]::before, td:not([data-label])::before { display:none; }
-  td > * { min-width:0; }
-  td > input, td > select { flex:1; }
+  td > input, td > select { width:100%; }
   td.act { padding-top:10px; }
   td.act .actions { width:100%; justify-content:flex-start !important; flex-wrap:wrap !important; }
   td.act .actions > form, td.act > form { flex:1; } td.act .actions > form .btn, td.act > form .btn { width:100%; }
@@ -481,6 +520,7 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
     <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg><span>环境变量</span>{{with .Badges.Vault}}<span class="badge">{{.}}</span>{{end}}</a>
     <a href="/security" class="{{if or (eq .Page "security") (eq .Page "password")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.5c0 4.2 2.9 7.4 7 9 4.1-1.6 7-4.8 7-9V6Z"/><path d="m9.3 12 2 2 3.5-4"/></svg><span>登录与安全</span></a>
     <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg><span>配置文件</span></a>
+    <a href="/logs" class="{{if eq .Page "logs"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M6 4.5h12v15H6Z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></svg><span>日志</span></a>
   </nav>
   <div class="side-foot">
     <span>{{if .Status}}<i class="dot warn"></i>服务未运行{{else}}<i class="dot"></i>服务运行中{{end}}</span>

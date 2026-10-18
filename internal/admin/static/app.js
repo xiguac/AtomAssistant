@@ -10,6 +10,8 @@
 //     应答不是 JSON（登录失效、创建任务后跳转到任务页等）时按普通跳转处理。
 //     上传文件、登录、退出、重启与带 data-poll 的表单不走这条路。
 //   - 给表格的单元格写上列名（data-label），手机上表格按一行一张卡片显示时用它标注每一项。
+//   - 带 data-show-if="字段=值1,值2" 的元素只在表单里那个字段取这几个值时显示（比如消息源选了微信，
+//     就只显示扫码需要的那几项）。
 // 脚本不可用时按钮照常提交表单并整页跳转，条目也可以逐个勾选，功能不受影响。
 (function () {
   "use strict";
@@ -96,6 +98,28 @@
     });
   });
 
+  // ---- 按字段的值显示或隐藏 ----
+
+  function showIf(form) {
+    if (!form || !form.querySelectorAll) {
+      return;
+    }
+    var els = form.querySelectorAll("[data-show-if]");
+    for (var i = 0; i < els.length; i++) {
+      var rule = els[i].getAttribute("data-show-if");
+      var eq = rule.indexOf("=");
+      var field = form.elements[rule.slice(0, eq)];
+      var allowed = rule.slice(eq + 1).split(",");
+      els[i].hidden = !field || allowed.indexOf(field.value) < 0;
+    }
+  }
+
+  document.addEventListener("change", function (ev) {
+    if (ev.target && ev.target.form) {
+      showIf(ev.target.form);
+    }
+  });
+
   // ---- 弹窗表单 ----
 
   function openDialog(btn) {
@@ -136,6 +160,7 @@
       form.elements[lock].readOnly = true;
       form.elements[lock].setAttribute("data-locked", "");
     }
+    showIf(form);
     var title = dlg.querySelector(".modal-title");
     if (title && btn.getAttribute("data-title")) {
       title.textContent = btn.getAttribute("data-title");
@@ -174,6 +199,10 @@
   // ---- 页面载入与内容区刷新后都要做的初始化 ----
 
   function init(root) {
+    var forms = root.querySelectorAll("form");
+    for (var f = 0; f < forms.length; f++) {
+      showIf(forms[f]);
+    }
     var polled = root.querySelectorAll("form[data-poll]");
     for (var i = 0; i < polled.length; i++) {
       poll(polled[i]);

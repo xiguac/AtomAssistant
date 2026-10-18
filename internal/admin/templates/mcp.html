@@ -12,7 +12,7 @@
 <div class="card">
   <div class="band">
     <div><b>{{if .Title}}{{.Title}}{{else}}{{.Name}}{{end}}</b> {{if .Title}}{{if ne .Title .Name}}<span class="chip">{{.Name}}</span> {{end}}{{end}}<span class="mono muted" style="word-break:break-all">{{if eq .Transport "http"}}{{.URL}}{{else}}{{.Command}} {{join .Args " "}}{{end}}</span></div>
-    <div class="actions" style="flex-wrap:nowrap">
+    <div class="actions" style="justify-content:flex-end">
       {{if .Secret}}{{if .KeyOK}}<span class="pill ok plain">密钥已配置</span>{{else}}<span class="pill bad plain">密钥未配置</span>{{end}}{{else}}<span class="pill plain">无需密钥</span>{{end}}
       <button type="button" class="btn sec sm" data-dialog="dlg-mcp" data-title="修改 MCP server" data-lock="name"
         data-v-name="{{.Name}}" data-v-transport="{{.Transport}}" data-v-url="{{.URL}}" data-v-command="{{.Command}}" data-v-args="{{join .Args " "}}"

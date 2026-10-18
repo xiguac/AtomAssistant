@@ -18,8 +18,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/oplog"
 	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/store"
+	"log/slog"
 )
 
 //go:embed all:migrations
@@ -136,7 +138,7 @@ func (s *Store) ResetForTest(ctx context.Context) error {
 			memory_pending, memory_revisions, memories,
 			event_subscriptions, events, vault_items, schedules, skills, mcp_installs,
 			style_samples, style_profiles, channel_chats, channel_notices, team_work,
-			seal_state, settings, task_images, schema_migrations CASCADE`)
+			seal_state, settings, task_images, op_logs, schema_migrations CASCADE`)
 	if err != nil {
 		return fmt.Errorf("pg: 重置数据库失败: %w", err)
 	}
@@ -577,6 +579,10 @@ func (s *Store) Audit(ctx context.Context, e store.AuditEntry) error {
 		e.ID, e.At, e.Actor, e.Action, e.TaskID, s.z.str("audit_log.detail", e.Detail), int16(e.TrustAtOp))
 	if err != nil {
 		return fmt.Errorf("pg: 写入审计失败: %w", err)
+	}
+	// 审计同时记进操作日志，在后台的日志页里和别的操作放在一起看。审计本身已经写成，这一步失败不算审计失败。
+	if err := s.AppendLogs(ctx, []oplog.Entry{auditLog(e)}); err != nil {
+		slog.Default().Warn("审计没能记进操作日志", "动作", e.Action, "err", err)
 	}
 	return nil
 }

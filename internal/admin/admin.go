@@ -49,6 +49,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/oplog"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/skill"
@@ -226,6 +227,40 @@ func New(opts Options) (*Server, error) {
 				out[i] = string(x)
 			}
 			return out
+		},
+		// dict 把几对键值拼成一个 map，用来给子模板传几样东西。
+		"dict": func(kv ...any) (map[string]any, error) {
+			if len(kv)%2 != 0 {
+				return nil, fmt.Errorf("dict 的参数要成对")
+			}
+			m := make(map[string]any, len(kv)/2)
+			for i := 0; i < len(kv); i += 2 {
+				k, ok := kv[i].(string)
+				if !ok {
+					return nil, fmt.Errorf("dict 的键要是文字")
+				}
+				m[k] = kv[i+1]
+			}
+			return m, nil
+		},
+		"base": path.Base,
+		"levelName": func(l slog.Level) string {
+			switch {
+			case l >= slog.LevelError:
+				return "错误"
+			case l >= slog.LevelWarn:
+				return "警告"
+			}
+			return "信息"
+		},
+		"levelClass": func(l slog.Level) string {
+			switch {
+			case l >= slog.LevelError:
+				return "bad"
+			case l >= slog.LevelWarn:
+				return "warn"
+			}
+			return ""
 		},
 		"has": func(list []string, s any) bool {
 			for _, x := range list {
@@ -460,6 +495,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /models/agent/delete", auth(s.agentDelete))
 	mux.HandleFunc("POST /models/test", auth(s.modelTest))
 	mux.HandleFunc("POST /tasks/{id}/rate", auth(s.rateWork))
+	mux.HandleFunc("GET /logs", auth(s.logsPage))
 	mux.HandleFunc("GET /files", auth(s.filesPage))
 	mux.HandleFunc("POST /files", auth(s.filesUpload))
 	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
@@ -611,8 +647,70 @@ func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.
 				}
 			}
 		}
-		h(w, r, &view{CSRF: sess.csrf, Notice: r.URL.Query().Get("ok"), Error: r.URL.Query().Get("e")})
+		v := &view{CSRF: sess.csrf, Notice: r.URL.Query().Get("ok"), Error: r.URL.Query().Get("e")}
+		if r.Method != http.MethodPost {
+			h(w, r, v)
+			return
+		}
+		// 每一次改动都记一条操作日志：做了什么、从哪来、成没成。结果由 back 填上。
+		o := &outcome{}
+		h(w, r.WithContext(context.WithValue(r.Context(), outcomeKey{}, o)), v)
+		s.logOperation(r, o)
 	}
+}
+
+// outcome 是一次后台操作的结果，由 back 填上。没经过 back 的（比如上传完直接跳转）只记做了什么。
+type outcome struct {
+	set bool
+	ok  bool
+	msg string
+}
+
+type outcomeKey struct{}
+
+// logOperation 记下一次后台操作。只记操作和结果说明，不记提交的内容：里面可能有密码、密钥。
+func (s *Server) logOperation(r *http.Request, o *outcome) {
+	args := []any{"操作", opName(r.URL.Path), "地址", r.URL.Path, "来自", r.RemoteAddr}
+	switch {
+	case !o.set:
+		s.opts.Log.Info("后台操作", args...)
+	case o.ok:
+		s.opts.Log.Info("后台操作", append(args, "结果", "成功", "说明", shorten(o.msg, 200))...)
+	default:
+		s.opts.Log.Warn("后台操作", append(args, "结果", "失败", "说明", shorten(o.msg, 200))...)
+	}
+}
+
+// opNames 是后台各个改动给人看的叫法，按地址前缀认，长的在前。
+var opNames = []struct{ prefix, name string }{
+	{"/tasks/delete", "删除已结束的任务"}, {"/tasks/", "处理任务"}, {"/tasks", "创建任务"},
+	{"/models/provider/delete", "删除模型服务"}, {"/models/provider", "保存模型服务"}, {"/models/main", "设置主 AI"},
+	{"/models/agent/delete", "删除协作模型"}, {"/models/agent", "保存协作模型"}, {"/models/test", "测试模型连接"},
+	{"/models/budget", "保存任务预算"},
+	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
+	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
+	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"},
+	{"/config", "修改配置文件"}, {"/restart", "重启服务"},
+	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
+	{"/connectors/disable", "停用连接器"}, {"/connectors/test", "测试连接器"}, {"/connectors/", "保存连接器"},
+	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
+	{"/mcp/test", "测试 MCP 连接"}, {"/mcp/sync", "读取 MCP 工具"}, {"/mcp/tools", "保存 MCP 工具授权"},
+	{"/mcp/installed/delete", "移除助手安装的 MCP server"}, {"/mcp/", "接入预置的 MCP server"},
+	{"/skills/delete", "移除 Skill"}, {"/skills", "安装 Skill"},
+	{"/prompts/extra/delete", "删除自定义提示词"}, {"/prompts/extra/toggle", "切换自定义提示词"}, {"/prompts/extra", "保存自定义提示词"},
+	{"/prompts/toggle", "切换提示词段落"}, {"/prompts", "修改提示词"},
+	{"/security/", "修改登录方式"}, {"/password", "修改登录密码"}, {"/logout", "退出登录"},
+	{"/files/delete", "删除工作区文件"}, {"/files", "上传文件"},
+}
+
+func opName(path string) string {
+	for _, n := range opNames {
+		if path == n.prefix || (strings.HasSuffix(n.prefix, "/") && strings.HasPrefix(path, n.prefix)) ||
+			strings.HasPrefix(path, n.prefix+"/") {
+			return n.name
+		}
+	}
+	return "其他操作"
 }
 
 // setupExempt 报告一个地址在"还没设置登录方式"时是否仍然可以访问：设置登录方式本身，以及退出。
@@ -632,6 +730,12 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, _ *view) {
 
 // back 做完一件事后跳回某个页面，带上一句结果。
 func back(w http.ResponseWriter, r *http.Request, to, notice string, err error) {
+	if o, ok := r.Context().Value(outcomeKey{}).(*outcome); ok {
+		o.set, o.ok, o.msg = true, err == nil, notice
+		if err != nil {
+			o.msg = err.Error()
+		}
+	}
 	// 页面上的脚本在后台提交时要的是结果本身，不是跳转。
 	if r.Header.Get("X-Requested-With") == "fetch" {
 		w.Header().Set("Content-Type", "application/json")
@@ -1379,27 +1483,51 @@ func (s *Server) workspace() (*files.Workspace, error) {
 	return ws, nil
 }
 
+// filesData 是「文件」页：用户发来的（聊天里发的、后台上传的）和助手生成的分开列。
 type filesData struct {
+	// Dir、Parent、Entries 是助手生成的文件里当前看的那一层。
 	Dir     string
 	Parent  string
 	Entries []files.Entry
-	Enabled bool
+	// Received 是用户发来的文件。
+	Received    []files.Entry
+	ReceivedDir string
+	Enabled     bool
 }
 
 func (s *Server) filesPage(w http.ResponseWriter, r *http.Request, v *view) {
-	d := filesData{Dir: r.URL.Query().Get("dir")}
+	d := filesData{Dir: strings.Trim(r.URL.Query().Get("dir"), "/"), ReceivedDir: files.ReceivedDir}
+	// 「收到的文件」目录在上面单独列，不从助手生成的那一边进去。
+	if d.Dir == files.ReceivedDir || strings.HasPrefix(d.Dir, files.ReceivedDir+"/") {
+		d.Dir = ""
+	}
 	ws, err := s.workspace()
 	if err != nil {
 		v.Error = err.Error()
-	} else {
-		d.Enabled = true
-		if d.Entries, err = ws.List(d.Dir); err != nil {
-			v.Error = err.Error()
+		v.Data = d
+		s.render(w, "files", v)
+		return
+	}
+	d.Enabled = true
+	all, err := ws.List(d.Dir)
+	if err != nil {
+		v.Error = err.Error()
+	}
+	for _, e := range all {
+		if e.Dir && e.Path == files.ReceivedDir {
+			continue
 		}
-		if d.Dir != "" && d.Dir != "." {
-			if d.Parent = path.Dir(d.Dir); d.Parent == "." {
-				d.Parent = ""
-			}
+		d.Entries = append(d.Entries, e)
+	}
+	// 还没收到过文件时这个目录不存在，当作空的。
+	if got, err := ws.List(files.ReceivedDir); err == nil {
+		d.Received = got
+	} else if !errors.Is(err, files.ErrNotFound) {
+		v.Error = err.Error()
+	}
+	if d.Dir != "" && d.Dir != "." {
+		if d.Parent = path.Dir(d.Dir); d.Parent == "." {
+			d.Parent = ""
 		}
 	}
 	v.Data = d
@@ -1433,9 +1561,9 @@ func (s *Server) filesUpload(w http.ResponseWriter, r *http.Request, _ *view) {
 		http.Redirect(w, r, to+"&e="+template.URLQueryEscaper("接收文件失败"), http.StatusSeeOther)
 		return
 	}
-	// 只取文件名本身：浏览器给的名字里不该有路径，有也不认。
+	// 只取文件名本身：浏览器给的名字里不该有路径，有也不认。后台上传的和聊天里发来的一样，放进「收到的文件」。
 	name := path.Base(strings.ReplaceAll(header.Filename, `\`, "/"))
-	saved, err := ws.Import(tmp.Name(), path.Join(dir, name))
+	saved, err := ws.Import(tmp.Name(), path.Join(files.ReceivedDir, name))
 	if err != nil {
 		http.Redirect(w, r, to+"&e="+template.URLQueryEscaper(err.Error()), http.StatusSeeOther)
 		return
@@ -1507,4 +1635,52 @@ func (s *Server) Serve(ctx context.Context, addr, certFile, keyFile string) erro
 		return nil
 	}
 	return err
+}
+
+// ---- 日志 ----
+
+// logsPerPage 是日志页一次显示多少条。
+const logsPerPage = 100
+
+type logsData struct {
+	Entries    []oplog.Entry
+	Categories []oplog.Category
+	// Category 与 Level 是当前的筛选条件，Level 取 "" / "warn" / "error"。
+	Category oplog.Category
+	Level    string
+	// Next 非空时还有更早的，是下一页的 before 参数。
+	Next string
+}
+
+// logsPage 是「日志」页：按类别、级别看操作日志，新的在前，往前翻页。
+func (s *Server) logsPage(w http.ResponseWriter, r *http.Request, v *view) {
+	q := r.URL.Query()
+	d := logsData{Categories: oplog.Categories, Category: oplog.Category(q.Get("cat")), Level: q.Get("level")}
+	if !d.Category.Valid() {
+		d.Category = ""
+	}
+	query := oplog.Query{Category: d.Category, Limit: logsPerPage}
+	switch d.Level {
+	case "warn":
+		query.MinLevel = slog.LevelWarn
+	case "error":
+		query.MinLevel = slog.LevelError
+	default:
+		d.Level, query.MinLevel = "", slog.LevelInfo
+	}
+	if b := q.Get("before"); b != "" {
+		if t, err := time.Parse(time.RFC3339Nano, b); err == nil {
+			query.Before = t
+		}
+	}
+	entries, err := s.opts.Store.ListLogs(r.Context(), query)
+	if err != nil {
+		v.Error = err.Error()
+	}
+	d.Entries = entries
+	if len(entries) == logsPerPage {
+		d.Next = entries[len(entries)-1].At.Format(time.RFC3339Nano)
+	}
+	v.Data = d
+	s.renderCtx(r.Context(), w, "logs", v)
 }

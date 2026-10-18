@@ -32,6 +32,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/mcpgw"
 	"github.com/xiguac/atomhelper/internal/media"
 	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomhelper/internal/oplog"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/seal"
@@ -60,7 +61,7 @@ func run(migrateOnly, checkOnly bool) error {
 	if err != nil {
 		return err
 	}
-	log := newLogger(cfg.LogLevel)
+	log, logs := newLogger(cfg.LogLevel)
 
 	initCtx, cancelInit := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancelInit()
@@ -85,6 +86,12 @@ func run(migrateOnly, checkOnly bool) error {
 		return err
 	}
 	log.Info("数据库迁移完成")
+	// 操作日志：从这里开始写进数据库（之前攒下的一并写进去），后台的「日志」页按类别查看。
+	logCtx, stopLogs := context.WithCancel(context.Background())
+	defer stopLogs()
+	if !migrateOnly {
+		logs.Start(logCtx, st)
+	}
 	if migrateOnly {
 		return nil
 	}
@@ -103,7 +110,7 @@ func run(migrateOnly, checkOnly bool) error {
 	problem.Store("")
 	adminOn := cfg.AdminAddr != "" && !checkOnly
 	if adminOn {
-		if err := startAdmin(ctx, cfg, st, box, bus, stop, func() string { return problem.Load().(string) }, log); err != nil {
+		if err := startAdmin(ctx, cfg, st, box, bus, stop, func() string { return problem.Load().(string) }, log.With(oplog.Key, oplog.Admin)); err != nil {
 			return err
 		}
 	}
@@ -141,12 +148,12 @@ func run(migrateOnly, checkOnly bool) error {
 		PollInterval:     cfg.PollInterval,
 		LeaseDuration:    cfg.LeaseDuration,
 		MaxStepsPerClaim: cfg.MaxStepsPerClaim,
-	}, log).WithCron(schedule.NewRunner(st.Schedules(), st, taskBudget(cfg, log)))
+	}, log.With(oplog.Key, oplog.Task)).WithCron(schedule.NewRunner(st.Schedules(), st, taskBudget(cfg, log)))
 
 	// 消息渠道：主人在聊天软件里发来的话变成任务，任务的进展推回去。
 	if len(parts.channels) > 0 {
 		hub, err := channel.NewHub(parts.channels,
-			&channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log), Images: st}, st.Channels(), log)
+			&channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log), Images: st}, st.Channels(), log.With(oplog.Key, oplog.Message))
 		if err != nil {
 			return err
 		}
@@ -312,7 +319,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if err != nil {
 		return nil, err
 	}
-	router.WithLogger(log)
+	router.WithLogger(log.With(oplog.Key, oplog.Model))
 	registry, err := file.BuildRegistry()
 	if err != nil {
 		return nil, err
@@ -338,7 +345,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		configured[spec.Name] = true
 		// 一个 MCP server 连不上不应该拖垮整个进程：其余工具照常可用，
 		// 但必须让用户知道哪些能力现在不可用。
-		connectMCP(ctx, gw, spec, log, "已连接 MCP server")
+		connectMCP(ctx, gw, spec, log.With(oplog.Key, oplog.Tool), "已连接 MCP server")
 	}
 	// 助手以前自己装上的 server。配置文件里有同名的就让位：用户亲手批准的优先。
 	installed, err := st.MCPInstalls().ListServers(ctx)
@@ -350,7 +357,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 			log.Warn("助手安装的 MCP server 与配置文件里的重名，已跳过", "server", srv.Name)
 			continue
 		}
-		connectMCP(ctx, gw, unreviewedSpec(srv), log, "已连接助手安装的 MCP server")
+		connectMCP(ctx, gw, unreviewedSpec(srv), log.With(oplog.Key, oplog.Tool), "已连接助手安装的 MCP server")
 	}
 	log.Info("工具目录就绪", "工具数", len(gw.Catalog()))
 
@@ -558,7 +565,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		log.Info("已接入邮件", "收信", box.IMAPAddr, "发信", box.SMTPAddr, "账号", box.Username)
 	}
 
-	channels, err := file.BuildChannels(safe, st, log)
+	channels, err := file.BuildChannels(safe, st, log.With(oplog.Key, oplog.Message))
 	if err != nil {
 		return nil, err
 	}
@@ -673,7 +680,7 @@ func unreviewedSpec(srv *market.Server) mcpgw.ServerSpec {
 // secretLender 是保险库，build 里装好之后填进来，供 unreviewedSpec 取用户给的 server 的密钥。
 var secretLender config.SecretLender
 
-func newLogger(level string) *slog.Logger {
+func newLogger(level string) (*slog.Logger, *oplog.Handler) {
 	var lv slog.Level
 	switch level {
 	case "debug":
@@ -685,5 +692,9 @@ func newLogger(level string) *slog.Logger {
 	default:
 		lv = slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
+	// 写到标准输出的同时，把 Info 及以上的记进操作日志，见 oplog。
+	logs := oplog.NewHandler(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: lv}))
+	l := slog.New(logs)
+	slog.SetDefault(l)
+	return l, logs
 }

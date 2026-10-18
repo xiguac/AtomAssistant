@@ -67,6 +67,8 @@ var sealedColumns = map[string]map[string]colKind{
 	"settings":    {"value": colText},
 	// 用户发给任务的图片，存的是 Base64 文字。
 	"task_images": {"data": colText},
+	// 操作日志：消息和各项内容都可能带着任务、文件的名字。
+	"op_logs": {"message": colText, "attrs": colText},
 }
 
 // sealer 是各个存储共用的加解密入口。

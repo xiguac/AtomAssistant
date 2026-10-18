@@ -160,6 +160,7 @@ func (h *Hub) justFinished(all []*core.Task) []*core.Task {
 // deliver 把一句话交给一件已有的事：它在等确认，这句话就是"不行，要这样改"；否则是回答或补充。
 func (h *Hub) deliver(ctx context.Context, t *core.Task, channel, chat, text string) error {
 	h.noteSaid(t.ID)
+	h.log.Info("消息交给已有的任务", "任务", t.ID)
 	h.follow(ctx, t, channel, chat)
 	if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
 		return h.tasks.Reject(ctx, t.ID, text)
