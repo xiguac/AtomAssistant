@@ -50,8 +50,8 @@ const DefaultBaseURL = "https://api.deepseek.com"
 type Client struct {
 	// BaseURL 为空时用 DefaultBaseURL。
 	BaseURL string
-	// Key 是 DeepSeek 的 API Key。
-	Key string
+	// Secret 在每次请求时给出 DeepSeek 的 API Key。
+	Secret func(ctx context.Context) (string, error)
 	// HTTP 为空时使用带超时的默认客户端。
 	HTTP *http.Client
 }
@@ -140,7 +140,14 @@ type problem struct {
 }
 
 func (c *Client) post(ctx context.Context, path string, in, out any) error {
-	if c.Key == "" {
+	if c.Secret == nil {
+		return fmt.Errorf("%w: 缺少 API Key", ErrInvalid)
+	}
+	key, err := c.Secret(ctx)
+	if err != nil {
+		return fmt.Errorf("deepseek: 取 API Key 失败: %w", err)
+	}
+	if key == "" {
 		return fmt.Errorf("%w: 缺少 API Key", ErrInvalid)
 	}
 	base := c.BaseURL
@@ -155,7 +162,7 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Key)
+	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http().Do(req)
 	if err != nil {

@@ -293,6 +293,15 @@ type ConnectorsConfig struct {
 	Mail     *MailConfig     `yaml:"mail,omitempty"`
 	Holidays *HolidaysConfig `yaml:"holidays,omitempty"`
 	Weather  *WeatherConfig  `yaml:"weather,omitempty"`
+	Search   *SearchConfig   `yaml:"search,omitempty"`
+}
+
+// SearchConfig 是联网搜索与读网页用的 DeepSeek 搜索接口的密钥。
+// 不写这一项时，用配置过的 DeepSeek 模型服务的密钥。
+type SearchConfig struct {
+	// Key 是 DeepSeek API Key 在保险库里的句柄（vault://名字），不接受明文。
+	// 保险库里那一条的授权名单要有 connector.search。
+	Key string `yaml:"key"`
 }
 
 // WeatherConfig 是天气数据的来源：和风天气（QWeather）的开发服务。
@@ -363,6 +372,9 @@ func (f *File) validateConnectors() error {
 			return fmt.Errorf("config: connectors.holidays.url: %w", err)
 		}
 	}
+	if c := f.Connectors.Search; c != nil && !strings.HasPrefix(c.Key, "vault://") {
+		return fmt.Errorf("config: connectors.search.key 只能写保险库句柄（vault://名字），不能直接写密钥")
+	}
 	if c := f.Connectors.Weather; c != nil {
 		if err := weather.CheckHost(c.Host); err != nil {
 			return fmt.Errorf("config: connectors.weather.host: %w", err)
@@ -379,6 +391,7 @@ const (
 	VaultUserCalendar = "connector.calendar"
 	VaultUserMail     = "connector.mail"
 	VaultUserWeather  = "connector.weather"
+	VaultUserSearch   = "connector.search"
 )
 
 // CalendarConfig 是日历连接器（CalDAV）的配置。

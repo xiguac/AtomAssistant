@@ -118,4 +118,19 @@ func TestWebTools_配置了DeepSeek就用它的密钥接通搜索接口(t *testi
 	if c, err := other.WebTools(context.Background(), &fakeLender{}); c != nil || err != nil {
 		t.Fatalf("没配 DeepSeek 时不接: %+v %v", c, err)
 	}
+
+	// 连接器里单独配了搜索密钥：用它，不管模型服务是哪家。
+	own, err := LoadFile(writeConfig(t, strings.Replace(twoProviders, "https://api.deepseek.com/v1", "https://llm.example.com/v1", 1)+
+		"connectors:\n  search:\n    key: vault://ds-search\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lender = &fakeLender{}
+	if c, err := own.WebTools(context.Background(), lender); c == nil || err != nil ||
+		strings.Join(lender.asked, ",") != "connector.search=vault://ds-search" {
+		t.Fatalf("应用连接器里的搜索密钥: %+v %v %v", c, err, lender.asked)
+	}
+	if _, err := LoadFile(writeConfig(t, twoProviders+"connectors:\n  search:\n    key: sk-plain\n")); err == nil {
+		t.Fatal("搜索密钥写明文应被拒绝")
+	}
 }

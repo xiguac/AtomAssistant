@@ -10,7 +10,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/llm"
 )
 
-// 联网搜索用的是模型服务自带的搜索能力。配置了 DeepSeek 时另有它的搜索、抓取接口（见 WebTools），
+// 联网搜索用的是模型服务自带的搜索能力。配置了 DeepSeek（模型服务或连接器里的搜索密钥）时另有它的搜索、抓取接口（见 WebTools），
 // 没有指定 purpose: search 的路由时，搜索改走那个接口。
 //
 // 模型服务自带的搜索，
@@ -110,9 +110,21 @@ func (f *File) searchRoute() (pc ProviderConfig, route RouteConfig, ok bool, err
 	return pc, route, false, nil
 }
 
-// WebTools 用配置过的 DeepSeek 服务的密钥接通它的联网搜索与网页抓取接口（/v1/tools/search、/v1/tools/fetch）。
-// 没有配置 DeepSeek 时返回 nil。有多个时主 AI 所在的那个优先。
+// WebTools 接通 DeepSeek 的联网搜索与网页抓取接口（/v1/tools/search、/v1/tools/fetch）。
+//
+// 密钥优先用连接器里单独配置的那一把（connectors.search）；没有的话，用配置过的 DeepSeek 模型服务的密钥，
+// 有多个时主 AI 所在的那个优先。两样都没有时返回 nil。
 func (f *File) WebTools(ctx context.Context, secrets SecretLender) (*deepseek.Client, error) {
+	if c := f.Connectors.Search; c != nil {
+		if secrets == nil {
+			return nil, fmt.Errorf("config: connectors.search.key 在保险库里，但保险库不可用")
+		}
+		secret, err := secrets.Lend(c.Key, VaultUserSearch)
+		if err != nil {
+			return nil, fmt.Errorf("config: connectors.search.key: %w", err)
+		}
+		return &deepseek.Client{Secret: secret}, nil
+	}
 	main, _ := (&Models{Routes: f.Routes, Fallback: f.Fallback}).Main()
 	var pick *ProviderConfig
 	for i := range f.Providers {
@@ -135,7 +147,10 @@ func (f *File) WebTools(ctx context.Context, secrets SecretLender) (*deepseek.Cl
 	if err != nil {
 		return nil, fmt.Errorf("config: provider %s 的 base_url 不合法: %w", pick.Name, err)
 	}
-	return &deepseek.Client{BaseURL: u.Scheme + "://" + u.Host, Key: key}, nil
+	return &deepseek.Client{
+		BaseURL: u.Scheme + "://" + u.Host,
+		Secret:  func(context.Context) (string, error) { return key, nil },
+	}, nil
 }
 
 // SearchRouteSet 报告用户是否写了 purpose: search 的路由，指定用某个模型来联网搜索。

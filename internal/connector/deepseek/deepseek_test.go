@@ -10,6 +10,10 @@ import (
 	"testing"
 )
 
+func key(k string) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) { return k, nil }
+}
+
 func TestClient_搜索与抓取按文档的格式请求和解析(t *testing.T) {
 	var gotAuth, gotPath string
 	var gotBody map[string]any
@@ -26,7 +30,7 @@ func TestClient_搜索与抓取按文档的格式请求和解析(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := &Client{BaseURL: srv.URL, Key: "sk-x"}
+	c := &Client{BaseURL: srv.URL, Secret: key("sk-x")}
 	ctx := context.Background()
 
 	results, err := c.Search(ctx, " DeepSeek V4 ", 5)
@@ -50,7 +54,7 @@ func TestClient_参数不合法的不发出去(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	defer srv.Close()
-	c := &Client{BaseURL: srv.URL, Key: "sk-x"}
+	c := &Client{BaseURL: srv.URL, Secret: key("sk-x")}
 	ctx := context.Background()
 	for _, u := range []string{"", "ftp://example.com/a", "file:///etc/passwd", "https://user:pw@example.com/", "example.com"} {
 		if _, err := c.Fetch(ctx, u); !errors.Is(err, ErrInvalid) {
@@ -77,7 +81,7 @@ func TestClient_出错时带上服务给的原因(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"message":"Insufficient Balance","type":"invalid_request_error"}}`))
 	}))
 	defer srv.Close()
-	_, err := (&Client{BaseURL: srv.URL, Key: "sk-x"}).Search(context.Background(), "x", 5)
+	_, err := (&Client{BaseURL: srv.URL, Secret: key("sk-x")}).Search(context.Background(), "x", 5)
 	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "余额不足") || !strings.Contains(err.Error(), "Insufficient Balance") {
 		t.Fatalf("报错不对: %v", err)
 	}
