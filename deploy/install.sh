@@ -28,13 +28,6 @@ if ! command -v psql >/dev/null 2>&1; then
 fi
 systemctl enable --now postgresql >/dev/null
 
-echo "==> 安装 ffmpeg（语音、视频转换格式用，已安装则跳过）"
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq ffmpeg >/dev/null
-fi
-
 echo "==> 服务账号与目录"
 id atomhelper >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin atomhelper
 install -d -o root -g root -m 755 "$APP" "$APP/releases"

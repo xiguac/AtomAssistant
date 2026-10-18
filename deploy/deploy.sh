@@ -5,7 +5,6 @@
 #   deploy/deploy.sh setup     第一次：装数据库、建目录和服务，然后部署
 #   deploy/deploy.sh           之后每次更新：编译、上传、切换、检查，起不来就自动退回上一版
 #   deploy/deploy.sh sandbox   安装代码沙箱：独立的 Python 环境与常用库，用 bubblewrap 隔离
-#   deploy/deploy.sh media     安装 ffmpeg：语音、视频在各聊天软件与模型之间转换格式要用它
 #   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
@@ -45,6 +44,41 @@ build() {
   done
 }
 
+# ffmpeg 随程序一起发布：语音、视频在各聊天软件与模型之间转换格式要用它。
+# 用 BtbN 编好的 Linux 版（带 opus、amr 编码器，只依赖系统自带的基础库），在本机下载一次缓存起来。
+# 服务器上按内容摘要存一份（/opt/atomhelper/tools/ffmpeg-摘要），只在没有时上传；
+# 每个版本目录里放一个指向它的链接，退回旧版本时 ffmpeg 跟着一起退。
+FFMPEG_ASSET=ffmpeg-n8.1-latest-linux64-gpl-8.1
+FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_ASSET.tar.xz
+
+ffmpeg_local() {
+  FFMPEG_BIN="bin/ffmpeg/$FFMPEG_ASSET/bin/ffmpeg"
+  if [ ! -f "$FFMPEG_BIN" ]; then
+    echo "==> 下载 ffmpeg（$FFMPEG_ASSET，只在第一次）"
+    mkdir -p bin/ffmpeg
+    curl -fsSL -m 900 -o "bin/ffmpeg/$FFMPEG_ASSET.tar.xz" "$FFMPEG_URL"
+    tar -xJf "bin/ffmpeg/$FFMPEG_ASSET.tar.xz" -C bin/ffmpeg
+  fi
+  FFMPEG_SUM="$(sha256sum "$FFMPEG_BIN" | cut -c1-16)"
+}
+
+ffmpeg_remote() {
+  local target="/opt/atomhelper/tools/ffmpeg-$FFMPEG_SUM"
+  if remote "test -x $target"; then
+    return 0
+  fi
+  echo "==> 上传 ffmpeg（只在它变了的时候）"
+  gzip -c "$FFMPEG_BIN" > "bin/ffmpeg/ffmpeg.gz"
+  "${SCP[@]}" "bin/ffmpeg/ffmpeg.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-ffmpeg.gz"
+  remote "set -e
+    sudo install -d -o root -g root -m 755 /opt/atomhelper/tools
+    gunzip -c /tmp/atomhelper-ffmpeg.gz | sudo tee $target.part >/dev/null
+    rm -f /tmp/atomhelper-ffmpeg.gz
+    sudo chmod 755 $target.part
+    sudo mv $target.part $target
+    $target -hide_banner -version | head -1"
+}
+
 healthy() {
   # 在服务器上问本机的后台：它只听 127.0.0.1。
   remote "for i in \$(seq 1 20); do curl -fsS -m 3 http://127.0.0.1:$ADMIN_PORT/healthz 2>/dev/null && exit 0; sleep 1; done; exit 1"
@@ -52,6 +86,8 @@ healthy() {
 
 release() {
   build
+  ffmpeg_local
+  ffmpeg_remote
   echo "==> 上传"
   remote "rm -rf /tmp/atomhelper-upload && mkdir -p /tmp/atomhelper-upload"
   "${SCP[@]}" "$OUT/atomd" "$OUT/atomctl" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-upload/"
@@ -60,6 +96,7 @@ release() {
     PREV=\$(readlink /opt/atomhelper/current 2>/dev/null || true)
     sudo install -d -o root -g root -m 755 /opt/atomhelper/releases/$VERSION
     sudo install -o root -g root -m 755 /tmp/atomhelper-upload/atomd /tmp/atomhelper-upload/atomctl /opt/atomhelper/releases/$VERSION/
+    sudo ln -sfn /opt/atomhelper/tools/ffmpeg-$FFMPEG_SUM /opt/atomhelper/releases/$VERSION/ffmpeg
     rm -rf /tmp/atomhelper-upload
     echo \"\$PREV\" | sudo tee /opt/atomhelper/previous >/dev/null
     sudo ln -sfn /opt/atomhelper/releases/$VERSION /opt/atomhelper/current"
@@ -123,11 +160,6 @@ case "${1:-release}" in
     "${SCP[@]}" deploy/sandbox.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-sandbox/"
     remote "sudo bash /tmp/atomhelper-sandbox/sandbox.sh && rm -rf /tmp/atomhelper-sandbox && sudo systemctl restart atomhelper"
     ;;
-  media)
-    echo "==> 安装 ffmpeg"
-    remote "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg >/dev/null && ffmpeg -hide_banner -version | head -1"
-    remote "sudo systemctl restart atomhelper"
-    ;;
   release) release ;;
   rollback) rollback ;;
   passwd)
@@ -163,7 +195,7 @@ case "${1:-release}" in
     remote "systemctl status atomhelper --no-pager -n 0; echo; readlink /opt/atomhelper/current; echo; sudo journalctl -u atomhelper -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / media / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
+    echo "未知的子命令 $1（可用：setup / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
     exit 2
     ;;
 esac

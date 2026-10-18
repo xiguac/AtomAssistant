@@ -3,8 +3,9 @@
 // 各家的格式不一样：微信、QQ 的语音是 silk，飞书的语音是 opus，钉钉收的语音要 amr；
 // 模型服务认的是 wav、mp3、amr 这类常见格式（见阿里云百炼的说明）。
 //
-// silk 用纯 Go 的编解码器处理（见 silk.go）。其余的转换交给服务器上的 ffmpeg：
-// 没装 ffmpeg 时这些转换做不了，调用方据此退回（比如把语音当文件发、告诉用户收不了）。
+// silk 用纯 Go 的编解码器处理（见 silk.go）。其余的转换交给 ffmpeg：部署时它随程序一起发布，
+// 放在程序旁边（见 deploy/deploy.sh）；找不到时这些转换做不了，调用方据此退回
+// （比如把语音当文件发、告诉用户收不了）。
 package media
 
 import (
@@ -34,7 +35,7 @@ const (
 
 var (
 	// ErrNoFFmpeg 表示服务器上没有 ffmpeg，这一项转换做不了。
-	ErrNoFFmpeg = errors.New("media: 服务器上没有安装 ffmpeg，无法转换音视频格式")
+	ErrNoFFmpeg = errors.New("media: 找不到 ffmpeg，无法转换音视频格式")
 	// ErrUnknown 表示认不出是什么格式。
 	ErrUnknown = errors.New("media: 认不出音频格式")
 )
@@ -102,19 +103,26 @@ func KindOf(name string, data []byte) Kind {
 	return KindFile
 }
 
-// Codec 做格式转换。FFmpeg 是 ffmpeg 程序的路径，为空时在 PATH 里找。
+// Codec 做格式转换。FFmpeg 是 ffmpeg 程序的路径，为空时先找程序旁边的，再在 PATH 里找。
 type Codec struct {
 	FFmpeg string
 	// Timeout 是一次转换最长多久，为空用一分钟。
 	Timeout time.Duration
 }
 
-// Default 是在 PATH 里找 ffmpeg 的转换器。
+// Default 是按默认办法找 ffmpeg 的转换器。
 var Default = &Codec{}
 
 func (c *Codec) ffmpeg() (string, error) {
 	if c.FFmpeg != "" {
 		return c.FFmpeg, nil
+	}
+	// 随程序一起发布的那个：和程序在同一个目录里。
+	if self, err := os.Executable(); err == nil {
+		beside := filepath.Join(filepath.Dir(self), "ffmpeg")
+		if info, err := os.Stat(beside); err == nil && !info.IsDir() {
+			return beside, nil
+		}
 	}
 	path, err := exec.LookPath("ffmpeg")
 	if err != nil {

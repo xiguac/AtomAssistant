@@ -192,9 +192,11 @@ atomctl vault put qqbot "QQ 机器人 AppSecret" channel.qq
 聊天里直接显示、直接播放；其余的按文件发。平台不支持的那一类（比如微信发不了语音）自动改成按文件发。
 发语音时各家要的格式也不一样（QQ 要 silk，飞书要 opus，钉钉要 amr），发视频时飞书、钉钉要一张封面，这些都会自动转好。
 
-语音、视频的格式转换要服务器上装有 **ffmpeg**（微信、QQ 的 silk 语音除外，由程序自己编解码）。
-新装的服务器 `deploy/deploy.sh setup` 会一并装上；已经在跑的用 `deploy/deploy.sh media` 补装。
-没装时：飞书发来的语音转不了格式会告诉用户；发语音、视频会改成按文件发。
+语音、视频的格式转换靠 **ffmpeg**（微信、QQ 的 silk 语音除外，由程序自己编解码）。它**随程序一起发布**：
+`deploy/deploy.sh` 在本机下载一次静态编译的 Linux 版（BtbN 的 8.1 GPL 构建，带 opus、amr 编码器）缓存起来，
+服务器上按内容摘要只存一份、只在变了时上传，每个版本目录里放一个指向它的链接，退回旧版本时跟着一起退。
+不用在服务器上安装任何东西。程序先找自己旁边的 ffmpeg，找不到再到 PATH 里找；都没有时启动日志会提示，
+飞书发来的语音转不了格式会告诉用户，发语音、视频会改成按文件发。
 
 **谁的话算数。** 渠道必须是你亲手在后台或配置文件里填写的，助手没有任何办法自己开通渠道或添加主人。
 但一个机器人谁都能给它发消息，所以每个渠道还要列出主人（`owners`）：
@@ -359,8 +361,7 @@ Anthropic 协议没有这个开关，只能靠提示词约束。
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env   # 填上服务器地址和 SSH 私钥路径
-deploy/deploy.sh setup     # 第一次：装 PostgreSQL 和 ffmpeg、建账号和目录、装 systemd 服务、上传程序
-deploy/deploy.sh media     # 已经在跑的服务器补装 ffmpeg（语音、视频转换格式用）
+deploy/deploy.sh setup     # 第一次：装 PostgreSQL、建账号和目录、装 systemd 服务、上传程序（ffmpeg 随程序一起传）
 deploy/deploy.sh passwd    # 设置后台口令并启动（口令在你的终端里输入，不落在任何文件里）
 deploy/deploy.sh tunnel    # 打开隧道，然后访问 http://localhost:8780
 deploy/deploy.sh           # 之后每次更新：编译、上传、切换；新版本起不来会自动退回上一版

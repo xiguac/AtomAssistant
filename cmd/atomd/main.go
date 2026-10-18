@@ -490,7 +490,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	planner = planner.WithInputs(inputs.Main, inputs.Workers)
 	// 语音、视频的格式转换靠 ffmpeg（微信、QQ 的 silk 语音除外）。
 	if len(file.Channels) > 0 && !media.Default.HasFFmpeg() {
-		log.Warn("服务器上没有安装 ffmpeg：飞书发来的语音转不了格式；发语音、视频时会改成按文件发。安装：deploy/deploy.sh media")
+		log.Warn("找不到 ffmpeg（它随程序一起发布，应在程序旁边）：飞书发来的语音转不了格式；发语音、视频时会改成按文件发")
 	}
 
 	// 协作模型：主模型做预处理和审核，事情交给任务模型去办，交给谁看用户以往的评价。
