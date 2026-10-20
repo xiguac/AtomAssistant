@@ -109,6 +109,10 @@ func TestTriager_按模型的回答定出归属(t *testing.T) {
 		if m.lastPurp != llm.PurposePlan || !m.lastReq.JSONMode || !strings.Contains(user, "订酒店") || !strings.Contains(user, "住观前街附近") {
 			t.Fatalf("交给模型的内容不对: %s", user)
 		}
+		// 不自己限输出长度：开着思考时思考也算在输出里，限紧了正文会被挤掉。
+		if m.lastReq.MaxTokens != 0 {
+			t.Fatalf("不该限输出长度: %d", m.lastReq.MaxTokens)
+		}
 		// 每件事带上用户上次说到它是多久以前，刚办完的标出来；系统提示讲明半小时之内默认算接着说。
 		if !strings.Contains(user, "3 minutes ago") || !strings.Contains(user, "2 hours ago") || !strings.Contains(user, "just finished") ||
 			!strings.Contains(m.lastReq.Messages[0].Content, "within the last 30 minutes") {

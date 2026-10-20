@@ -72,13 +72,14 @@ func (t *Triager) Triage(ctx context.Context, text string, candidates []channel.
 			i+1, c.Title, state, c.Status, ago(c.Idle), c.Goal)
 	}
 	fmt.Fprintf(&sb, "\nNew message from the user:\n%s\n", text)
-	// 归属判断得准，交给主模型；输出只有一个小 JSON。
+	// 归属判断得准，交给主模型。输出虽然只有一个小 JSON，但不限输出长度（用路由配的上限）：
+	// 开着思考时思考也算在输出里，限得太紧会把正文挤掉，只剩一个空回答。
 	resp, err := t.model.Complete(ctx, llm.PurposePlan, llm.Request{
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: triagePrompt},
 			{Role: llm.RoleUser, Content: sb.String()},
 		},
-		MaxTokens: 60, JSONMode: true,
+		JSONMode: true,
 	})
 	if err != nil {
 		return channel.Verdict{}, fmt.Errorf("agent: 判断消息归属失败: %w", err)
