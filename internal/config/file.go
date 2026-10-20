@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomhelper/internal/media"
 	"github.com/xiguac/atomhelper/internal/pay"
 	"github.com/xiguac/atomhelper/internal/policy"
 	"github.com/xiguac/atomhelper/internal/sandbox"
@@ -58,6 +60,22 @@ type File struct {
 	Budget *BudgetConfig `yaml:"budget,omitempty"`
 	// Sandbox 是代码沙箱的配置。不写这一节，助手不能跑代码。要先启用文件处理。
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+	// ASR 是语音识别的配置。不写这一节，聊天里发来的语音消息收不了。
+	ASR *ASRConfig `yaml:"asr,omitempty"`
+}
+
+// ASRConfig 是语音识别服务的配置。服务由 deploy/deploy.sh asr 装在本机。
+type ASRConfig struct {
+	// URL 是服务地址，如 http://127.0.0.1:8765。
+	URL string `yaml:"url"`
+}
+
+// SpeechRecognizer 按配置构造语音识别的客户端。没有配置时返回 nil。
+func (f *File) SpeechRecognizer() *media.ASR {
+	if f.ASR == nil {
+		return nil
+	}
+	return &media.ASR{URL: f.ASR.URL}
 }
 
 // SandboxConfig 是代码沙箱的配置。
@@ -701,6 +719,12 @@ func (f *File) validate() error {
 	}
 	if err := f.Budget.Check(); err != nil {
 		return err
+	}
+	if c := f.ASR; c != nil {
+		u, err := url.Parse(c.URL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("config: asr 的 url 要写成 http://主机:端口，实际 %q", c.URL)
+		}
 	}
 	if c := f.Sandbox; c != nil {
 		if c.TimeoutSeconds < 0 || c.TimeoutSeconds > 3600 || c.MemoryMB < 0 || c.MemoryMB > 16384 {

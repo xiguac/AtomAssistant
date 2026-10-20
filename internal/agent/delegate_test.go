@@ -768,33 +768,20 @@ func TestPlanner_看不了图片的模型不给图片带图的活派给看得了
 	}
 }
 
-func TestPlanner_语音只交给听得了的模型(t *testing.T) {
+func TestPlanner_即使模型听得了也不交给它语音(t *testing.T) {
 	ctx := context.Background()
 	task := core.NewTask("t", "处理语音", core.TrustUser)
 	voice := fakeImages{{MIME: "audio/wav", Data: []byte("RIFF")}}
-	textOnly := []llm.Input{llm.InputText, llm.InputImage}
 	withAudio := []llm.Input{llm.InputText, llm.InputAudio}
 
-	// 主模型听得了：语音挂在最后一条用户消息上，不挂到图片里。
+	// 早先收下的语音也不挂：语音消息在消息源那里就转成了文字。
 	m := &fakeModel{replies: []string{`{"action":"finish","reason":"好"}`}}
 	p := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithImages(voice).WithInputs(withAudio, nil)
 	if _, err := p.Decide(ctx, task, nil); err != nil {
 		t.Fatal(err)
 	}
 	last := m.lastReq.Messages[len(m.lastReq.Messages)-1]
-	if len(last.Audio) != 1 || len(last.Images) != 0 || !strings.Contains(last.Content, "voice message(s)") {
-		t.Fatalf("听得了语音的主模型应收到语音: %d %d %q", len(last.Audio), len(last.Images), last.Content)
-	}
-
-	// 主模型听不了：派给听得了的协作模型，简单的事也交出去。
-	main := &fakeModel{replies: []string{`{"category":"writing","tier":"simple","title":"听语音"}`}}
-	dp, _, _ := delegated(t, main, &scriptedWorkers{})
-	dp = dp.WithImages(voice).WithInputs(textOnly, map[string][]llm.Input{"写手": textOnly, "分析师": withAudio})
-	d, err := dp.Decide(ctx, task, nil)
-	if err != nil || !strings.Contains(d.Reason, "交给 分析师") {
-		t.Fatalf("带语音的活应派给听得了的协作模型: %q %v", d.Reason, err)
-	}
-	if last := main.lastReq.Messages[len(main.lastReq.Messages)-1]; len(last.Audio) != 0 || !strings.Contains(last.Content, "cannot receive voice message(s)") {
-		t.Fatalf("听不了的主模型只该被告知有语音: %q", last.Content)
+	if len(last.Audio) != 0 || strings.Contains(last.Content, "voice message") {
+		t.Fatalf("不该把语音交给模型: %d %q", len(last.Audio), last.Content)
 	}
 }

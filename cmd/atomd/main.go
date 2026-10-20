@@ -170,7 +170,11 @@ func run(migrateOnly, checkOnly bool) error {
 		}
 		// 配置的模型都收不了的那几类媒体，收到时直接告诉用户。
 		if parts.inputs != nil {
-			hub = hub.WithMedia(parts.inputs.Any(llm.InputImage), parts.inputs.Any(llm.InputAudio), parts.inputs.Any(llm.InputVideo))
+			hub = hub.WithMedia(parts.inputs.Any(llm.InputImage), parts.inputs.Any(llm.InputVideo))
+		}
+		// 语音消息转成文字交给助手，不把语音交给模型。
+		if parts.asr != nil {
+			hub = hub.WithASR(parts.asr)
 		}
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
@@ -293,7 +297,9 @@ type parts struct {
 	workspace *files.Workspace
 	// inputs 是各个模型支持的输入，demo 模式下为空。
 	inputs *config.ModelInputs
-	close  func()
+	// asr 非空时聊天里发来的语音消息转成文字交给助手。
+	asr   *media.ASR
+	close func()
 }
 
 // build 按配置装出各个部件。
@@ -590,6 +596,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	return &parts{
 		team:      len(file.Workers()) > 0,
 		inputs:    &inputs,
+		asr:       file.SpeechRecognizer(),
 		triage:    agent.NewTriager(router),
 		workspace: workspace,
 		channels:  channels,

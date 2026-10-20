@@ -280,8 +280,8 @@ type Hub struct {
 	files FileSink
 	// accept 是配置的模型收得了哪几类媒体：都收不了的那一类，收到时直接告诉用户，不交给任务。
 	accept accepted
-	// codec 把用户发来的语音转成模型认的格式。
-	codec *media.Codec
+	// asr 把用户发来的语音消息转成文字，见 voice.go。为空时收不了语音。
+	asr Transcriber
 	// saidAt 是用户最近说到各件事的时间，判断新的话归给谁时用，见 triage.go。
 	saidAt map[string]time.Time
 
@@ -295,7 +295,7 @@ type Hub struct {
 func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hub, error) {
 	h := &Hub{
 		bindings: make(map[string]Binding), tasks: tasks, state: state, log: log, fetch: fetchMedia,
-		accept: accepted{image: true}, codec: media.Default,
+		accept: accepted{image: true},
 		now:    func() time.Time { return time.Now().UTC() },
 		hinted: make(map[string]time.Time),
 	}
@@ -312,14 +312,14 @@ func NewHub(bindings []Binding, tasks Tasks, state State, log *slog.Logger) (*Hu
 	return h, nil
 }
 
-// accepted 记录配置的模型里有没有收得了图片、语音、视频的。
+// accepted 记录配置的模型里有没有收得了图片、视频的。语音不交给模型，转成文字，见 voice.go。
 type accepted struct {
-	image, audio, video bool
+	image, video bool
 }
 
-// WithMedia 说明配置的模型里有没有收得了图片、语音、视频的。不设置时只收图片。
-func (h *Hub) WithMedia(image, audio, video bool) *Hub {
-	h.accept = accepted{image: image, audio: audio, video: video}
+// WithMedia 说明配置的模型里有没有收得了图片、视频的。不设置时只收图片。
+func (h *Hub) WithMedia(image, video bool) *Hub {
+	h.accept = accepted{image: image, video: video}
 	return h
 }
 
@@ -488,13 +488,28 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		m.Files = nil
 		m.Text = text
 	}
+	// plain 是不带说明的原话，只用来认"同意"这类整句的表态；text 是交给任务和模型的。
+	plain := text
+	// 语音消息转成文字，和打的字一样处理，只在前面说明是语音转的。
+	if len(m.Voices) > 0 {
+		spoken := h.transcribe(ctx, channel, m)
+		m.Voices = nil
+		if spoken != "" {
+			plain = strings.TrimSpace(plain + "\n" + spoken)
+			text = strings.TrimSpace(text + "\n" + voiceNote + spoken)
+		}
+		if text == "" && len(m.Images)+len(m.Videos) == 0 {
+			// 什么都没转出来，transcribe 已经告诉用户了。
+			return nil
+		}
+	}
 	// 没有一个模型收得了的那一类：告诉用户，不收。有文字的话文字照常处理。
 	var refused []string
 	for _, k := range []struct {
 		list *[]Attachment
 		ok   bool
 		name string
-	}{{&m.Images, h.accept.image, "图片"}, {&m.Voices, h.accept.audio, "语音"}, {&m.Videos, h.accept.video, "视频"}} {
+	}{{&m.Images, h.accept.image, "图片"}, {&m.Videos, h.accept.video, "视频"}} {
 		if len(*k.list) > 0 && !k.ok {
 			refused = append(refused, k.name)
 			*k.list = nil
@@ -502,11 +517,11 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	}
 	if len(refused) > 0 {
 		h.say(ctx, channel, m.Chat, unreadable+"（"+strings.Join(refused, "、")+"）。")
-		if text == "" && len(m.Images)+len(m.Voices)+len(m.Videos) == 0 {
+		if text == "" && len(m.Images)+len(m.Videos) == 0 {
 			return nil
 		}
 	}
-	if len(m.Images)+len(m.Voices)+len(m.Videos) > 0 {
+	if len(m.Images)+len(m.Videos) > 0 {
 		return h.routeMedia(ctx, channel, m, text, tag)
 	}
 	if text == "" {
@@ -540,7 +555,7 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		return h.create(ctx, text, tag)
 	}
 	// 有动作在等确认，而这句话就是一个"同意"：放行。这不需要判断。
-	if isApproval(text) {
+	if isApproval(plain) {
 		for _, t := range active {
 			if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
 				h.follow(ctx, t, channel, m.Chat)
@@ -631,6 +646,8 @@ func (h *Hub) create(ctx context.Context, text, tag string) error {
 
 // createTask 新建一个任务，标题取 title 的头一句。
 func (h *Hub) createTask(ctx context.Context, title, goal, tag string) (string, error) {
+	// 语音转的话，标题取转出来的文字，不取前面那句说明。
+	title = strings.TrimPrefix(title, voiceNote)
 	if i := strings.IndexAny(title, "\n。"); i > 0 {
 		title = title[:i]
 	}
@@ -870,7 +887,7 @@ func chunk(text string, max int) []string {
 }
 
 // 媒体的几个上限：一条消息最多收几张图片、几段语音、几个视频，单个多大，取回一个最多等多久。
-// 语音、视频以 Base64 交给模型服务，阿里云百炼对单个 Base64 的限制是 10 MB，所以原件不超过 7 MB。
+// 视频以 Base64 交给模型服务，阿里云百炼对单个 Base64 的限制是 10 MB，所以原件不超过 7 MB。
 const (
 	maxPictures     = 4
 	maxVoices       = 3
@@ -881,17 +898,17 @@ const (
 	mediaTimeout    = 2 * time.Minute
 )
 
-// mediaOnlyGoal 是用户只发了图片、语音或视频，没有打字时任务的目标。what 是"图片""语音"这样的叫法。
+// mediaOnlyGoal 是用户只发了图片或视频，没有说话时任务的目标。what 是"图片""视频"这样的叫法。
 func mediaOnlyGoal(what string) string {
-	return "用户发来了" + what + "，没有附文字说明。" + what + "随上下文一起给出：看明白、听明白它是什么，" +
+	return "用户发来了" + what + "，没有附文字说明。" + what + "随上下文一起给出：看明白它是什么，" +
 		"能判断出用户想让你做什么就去办，判断不出就问用户。"
 }
 
-// routeMedia 处理一条带图片、语音或视频的消息：取回来，原样交给任务，再把用户说的话送过去。
+// routeMedia 处理一条带图片或视频的消息：取回来，原样交给任务，再把用户说的话送过去。
+// 语音消息不走这里，在 route 里已经转成了文字。
 //
-// 不在这里转成文字：转写会丢掉版式、图表、语气、画面里的细节，所以任务里的模型拿到的是原件
-// （语音只换成模型认的格式）。原件和用户打的字分开送：打的字是他亲口说的，
-// 图片、语音、视频里的内容可能是别人的，两者的信任等级不一样。
+// 不在这里转成文字：转写会丢掉版式、图表、画面里的细节，所以任务里的模型拿到的是原件。
+// 原件和用户的话分开送：话是他亲口说的，图片、视频里的内容可能是别人的，两者的信任等级不一样。
 func (h *Hub) routeMedia(ctx context.Context, channel string, m Message, text, tag string) error {
 	var pictures []Picture
 	var kinds, problems []string
@@ -943,16 +960,6 @@ func (h *Hub) routeMedia(ctx context.Context, channel string, m Message, text, t
 			return Picture{}, fmt.Errorf("图片超过 %d MB", maxPictureBytes>>20)
 		}
 		return p, nil
-	})
-	take(m.Voices, maxVoices, "语音", "段", mediaTimeout, func(p Picture) (Picture, error) {
-		data, mime, err := h.codec.ForModel(ctx, p.Data)
-		if err != nil {
-			return Picture{}, err
-		}
-		if len(data) > maxMediaBytes {
-			return Picture{}, fmt.Errorf("语音太长（转换后超过 %d MB）", maxMediaBytes>>20)
-		}
-		return Picture{MIME: mime, Data: data}, nil
 	})
 	take(m.Videos, maxVideos, "视频", "个", mediaTimeout, func(p Picture) (Picture, error) {
 		mime := media.Sniff(p.Data)

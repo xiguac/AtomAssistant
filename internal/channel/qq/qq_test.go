@@ -356,7 +356,8 @@ func TestDispatch_消息里的图片附件带给上层(t *testing.T) {
 	data := `{"id":"m1","content":"看看这个","timestamp":"2026-10-13T10:00:00+08:00","author":{"user_openid":"OPENID1"},` +
 		`"attachments":[{"content_type":"image/jpeg","filename":"a.jpg","url":"https://multimedia.nt.qq.com.cn/a.jpg"},` +
 		`{"content_type":"voice","url":"https://multimedia.nt.qq.com.cn/b.silk"},{"content_type":"image/png","url":""},` +
-		`{"content_type":"file","filename":"合同.pdf","url":"https://multimedia.nt.qq.com.cn/c.pdf"}]}`
+		`{"content_type":"file","filename":"合同.pdf","url":"https://multimedia.nt.qq.com.cn/c.pdf"},` +
+		`{"content_type":"audio/mpeg","filename":"录音.mp3","url":"https://multimedia.nt.qq.com.cn/e.mp3"}]}`
 	b.dispatch(payload{Op: opDispatch, Type: eventC2C, Data: json.RawMessage(data)}, &session{}, newRecent(8),
 		func(m channel.Message) { got = append(got, m) })
 	if len(got) != 1 || got[0].Text != "看看这个" {
@@ -366,8 +367,8 @@ func TestDispatch_消息里的图片附件带给上层(t *testing.T) {
 	if imgs := got[0].Images; len(imgs) != 1 || imgs[0].URL != "https://multimedia.nt.qq.com.cn/a.jpg" || imgs[0].ContentType != "image/jpeg" {
 		t.Fatalf("图片附件不对: %+v", got[0].Images)
 	}
-	// 图片以外的附件（语音、视频除外）当作文件，带着文件名。
-	if fs := got[0].Files; len(fs) != 1 || fs[0].Name != "合同.pdf" || fs[0].URL != "https://multimedia.nt.qq.com.cn/c.pdf" {
+	// 图片以外的附件（语音消息、视频除外）当作文件，带着文件名。当作文件发来的音频也是文件。
+	if fs := got[0].Files; len(fs) != 2 || fs[0].Name != "合同.pdf" || fs[0].URL != "https://multimedia.nt.qq.com.cn/c.pdf" || fs[1].Name != "录音.mp3" {
 		t.Fatalf("文件附件不对: %+v", got[0].Files)
 	}
 	// 语音单独带给上层，格式由上层取回之后按内容认。

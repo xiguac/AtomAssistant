@@ -10,32 +10,17 @@ import (
 	"github.com/xiguac/atomhelper/internal/media"
 )
 
-func TestRoute_语音视频交给支持它们的模型(t *testing.T) {
+func TestRoute_视频交给支持它的模型(t *testing.T) {
 	h, qq, tasks := hub(t)
-	h = h.WithMedia(true, true, true)
+	h = h.WithMedia(true, true)
 	ctx := context.Background()
-	wav := media.WAV(make([]byte, 16000*2), 16000)
 	mp4 := append([]byte{0, 0, 0, 0x18}, []byte("ftypisom-video-body")...)
 	h.fetch = func(_ context.Context, a Attachment) (Picture, error) {
-		if strings.HasSuffix(a.URL, ".mp4") {
-			return Picture{MIME: media.Sniff(mp4), Data: mp4}, nil
-		}
-		return Picture{MIME: media.Sniff(wav), Data: wav}, nil
-	}
-
-	// 只发了一段语音：建一个"处理语音"的任务，语音交给它（wav 模型认，原样给）。
-	m := from("OWNER", "", "m1")
-	m.Voices = []Attachment{{URL: "https://cdn.example.com/a.wav"}}
-	h.Handle(ctx, "qq", m)
-	if len(tasks.log) != 2 || !strings.HasPrefix(tasks.log[0], "create:处理语音|用户发来了语音") || tasks.log[1] != "attach:处理语音|1 张|qq" {
-		t.Fatalf("只发语音应建任务并交给它: %v", tasks.log)
-	}
-	if got := tasks.attached[0]; len(got) != 1 || got[0].MIME != media.MIMEWAV {
-		t.Fatalf("交给任务的应是模型认的格式: %+v", got)
+		return Picture{MIME: media.Sniff(mp4), Data: mp4}, nil
 	}
 
 	// 视频配一句话：话是目标，视频单独交给任务。
-	m = from("OWNER", "这段视频里说了什么", "m2")
+	m := from("OWNER", "这段视频里说了什么", "m2")
 	m.Videos = []Attachment{{URL: "https://cdn.example.com/b.mp4"}}
 	h.Handle(ctx, "qq", m)
 	if last := tasks.attached[len(tasks.attached)-1]; len(last) != 1 || last[0].MIME != media.MIMEMP4 {
@@ -54,15 +39,14 @@ func TestRoute_语音视频交给支持它们的模型(t *testing.T) {
 	}
 }
 
-func TestRoute_没有模型收得了语音时直接告诉用户(t *testing.T) {
+func TestRoute_没有模型收得了视频时直接告诉用户(t *testing.T) {
 	h, qq, tasks := hub(t)
-	h = h.WithMedia(true, false, false)
+	h = h.WithMedia(true, false)
 	ctx := context.Background()
 	m := from("OWNER", "", "m1")
-	m.Voices = []Attachment{{URL: "https://cdn.example.com/a.silk"}}
 	m.Videos = []Attachment{{URL: "https://cdn.example.com/b.mp4"}}
 	h.Handle(ctx, "qq", m)
-	if len(tasks.log) != 0 || len(qq.sent) != 1 || qq.sent[0].Text != unreadable+"（语音、视频）。" {
+	if len(tasks.log) != 0 || len(qq.sent) != 1 || qq.sent[0].Text != unreadable+"（视频）。" {
 		t.Fatalf("应直接回复看不懂，不建任务: %v %+v", tasks.log, qq.sent)
 	}
 }

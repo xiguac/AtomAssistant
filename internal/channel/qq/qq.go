@@ -530,8 +530,8 @@ func (b *Bot) dispatch(p payload, sess *session, seen *recent, handle func(chann
 			case a.URL == "":
 			case strings.HasPrefix(a.ContentType, "image/"):
 				msg.Images = append(msg.Images, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
-			case strings.HasPrefix(a.ContentType, "voice") || strings.HasPrefix(a.ContentType, "audio/"):
-				// 语音的格式（QQ 是 silk）由中枢取回之后按内容认，再转成模型认的格式。
+			case strings.HasPrefix(a.ContentType, "voice"):
+				// 只有 QQ 原生的语音消息算语音，由中枢取回之后转成文字。当作文件发来的音频（audio/*）按文件收。
 				msg.Voices = append(msg.Voices, channel.Attachment{URL: a.URL, ContentType: a.ContentType})
 			case strings.HasPrefix(a.ContentType, "video"):
 				msg.Videos = append(msg.Videos, channel.Attachment{URL: a.URL, ContentType: a.ContentType})

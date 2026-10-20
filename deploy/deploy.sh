@@ -5,6 +5,7 @@
 #   deploy/deploy.sh setup     第一次：装数据库、建目录和服务，然后部署
 #   deploy/deploy.sh           之后每次更新：编译、上传、切换、检查，起不来就自动退回上一版
 #   deploy/deploy.sh sandbox   安装代码沙箱：独立的 Python 环境与常用库，用 bubblewrap 隔离
+#   deploy/deploy.sh asr       安装语音识别服务（聊天里的语音消息转成文字；识别程序在 ASR_DIR，默认 ../asr-1.0）
 #   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
@@ -160,6 +161,19 @@ case "${1:-release}" in
     "${SCP[@]}" deploy/sandbox.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-sandbox/"
     remote "sudo bash /tmp/atomhelper-sandbox/sandbox.sh && rm -rf /tmp/atomhelper-sandbox && sudo systemctl restart atomhelper"
     ;;
+  asr)
+    # 只传识别程序、模型和自检用的音频；asr-1.0 里自带的 python/ 是 Windows 版，服务器上另建环境。
+    ASR_DIR="${ASR_DIR:-../asr-1.0}"
+    [ -f "$ASR_DIR/rt/webdemo.py" ] || { echo "在 $ASR_DIR 找不到识别程序（rt/webdemo.py），用 ASR_DIR 指定" >&2; exit 1; }
+    echo "==> 打包识别程序和模型（$ASR_DIR）"
+    PKG="$(mktemp -d)"
+    trap 'rm -rf "$PKG"' EXIT
+    tar -czf "$PKG/asr.tar.gz" --exclude=__pycache__ -C "$ASR_DIR" rt models samples selfcheck.py
+    echo "==> 上传（约 150 MB）"
+    remote "rm -rf /tmp/atomhelper-asr && mkdir -p /tmp/atomhelper-asr"
+    "${SCP[@]}" deploy/asr.sh deploy/atomhelper-asr.service "$PKG/asr.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-asr/"
+    remote "sudo bash /tmp/atomhelper-asr/asr.sh && rm -rf /tmp/atomhelper-asr && sudo systemctl restart atomhelper"
+    ;;
   release) release ;;
   rollback) rollback ;;
   passwd)
@@ -195,7 +209,7 @@ case "${1:-release}" in
     remote "systemctl status atomhelper --no-pager -n 0; echo; readlink /opt/atomhelper/current; echo; sudo journalctl -u atomhelper -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
+    echo "未知的子命令 $1（可用：setup / asr / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
     exit 2
     ;;
 esac

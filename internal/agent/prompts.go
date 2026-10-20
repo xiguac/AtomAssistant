@@ -176,11 +176,14 @@ func sections(parts ...string) string {
 	return strings.Join(kept, "\n\n")
 }
 
-// mediaLimits 是一次决策最多带的媒体条数：只带最近收到的这几条。语音、视频大，带得更少。
-var mediaLimits = map[llm.Input]int{llm.InputImage: 4, llm.InputAudio: 3, llm.InputVideo: 1}
+// mediaLimits 是一次决策最多带的媒体条数：只带最近收到的这几条。视频大，带得更少。
+var mediaLimits = map[llm.Input]int{llm.InputImage: 4, llm.InputVideo: 1}
 
 // mediaKinds 是会随上下文交给模型的几类媒体，按这个先后挂上去。
-var mediaKinds = []llm.Input{llm.InputImage, llm.InputAudio, llm.InputVideo}
+//
+// 没有语音：模型听语音按音频计 token，太贵。聊天里的语音消息在消息源那里就转成了文字（见 channel/voice.go），
+// 即使模型支持语音输入也不给它语音。
+var mediaKinds = []llm.Input{llm.InputImage, llm.InputVideo}
 
 // MediaSource 给出用户发给一个任务的图片、语音、视频，由 *pg.Store 提供。
 type MediaSource interface {
@@ -325,8 +328,6 @@ func (p *Planner) withImages(ctx context.Context, t *core.Task, msgs []llm.Messa
 		switch kind {
 		case llm.InputImage:
 			out[at].Images = items
-		case llm.InputAudio:
-			out[at].Audio = items
 		case llm.InputVideo:
 			out[at].Video = items
 		}
@@ -338,4 +339,4 @@ func (p *Planner) withImages(ctx context.Context, t *core.Task, msgs []llm.Messa
 }
 
 // mediaNoun 是写给模型看的各类媒体的叫法。
-var mediaNoun = map[llm.Input]string{llm.InputImage: "image(s)", llm.InputAudio: "voice message(s)", llm.InputVideo: "video(s)"}
+var mediaNoun = map[llm.Input]string{llm.InputImage: "image(s)", llm.InputVideo: "video(s)"}

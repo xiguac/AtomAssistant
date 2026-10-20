@@ -776,7 +776,7 @@ func TestRoute_文件收进工作区换成一句话照常处理(t *testing.T) {
 
 func TestRoute_没有模型看得了图片时直接告诉用户(t *testing.T) {
 	h, qq, tasks := hub(t)
-	h = h.WithMedia(false, false, false)
+	h = h.WithMedia(false, false)
 	ctx := context.Background()
 	img := Attachment{URL: "https://img.example.com/1.jpg", ContentType: "image/jpeg"}
 
