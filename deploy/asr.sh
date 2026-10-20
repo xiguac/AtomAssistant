@@ -43,9 +43,16 @@ chmod -R go-w "$DIR"
 THREADS=$(nproc)
 [ "$THREADS" -gt 8 ] && THREADS=8
 
+# 自检要再起一份识别程序：先停掉在跑的那份，4G 内存的机器放不下两份（同时跑会把机器拖进 swap 卡死）。
+# 停的这一会儿发来的语音会被告知没转成；自检不过就把旧的重新起来。
+systemctl stop atomhelper-asr 2>/dev/null || true
 echo "==> 自检：跑自带的 12 条音频（载入加预热要十几秒）"
-(cd "$DIR/app.new" && PYTHONPATH="$DIR/app.new" PYTHONIOENCODING=utf-8 ASR_BLAS_THREADS="$THREADS" \
-  ASR_MODELS="$DIR/app.new/models/unpacked_v6" "$DIR/venv/bin/python3" selfcheck.py)
+if ! (cd "$DIR/app.new" && PYTHONPATH="$DIR/app.new" PYTHONIOENCODING=utf-8 ASR_BLAS_THREADS="$THREADS" \
+  ASR_MODELS="$DIR/app.new/models/unpacked_v6" "$DIR/venv/bin/python3" selfcheck.py); then
+  echo "!! 自检没通过，新版本不装，旧的照常运行" >&2
+  [ -d "$DIR/app" ] && systemctl start atomhelper-asr || true
+  exit 1
+fi
 
 rm -rf "$DIR/app.old"
 [ -d "$DIR/app" ] && mv "$DIR/app" "$DIR/app.old"
