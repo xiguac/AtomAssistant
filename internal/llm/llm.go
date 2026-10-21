@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -86,6 +87,11 @@ type Timing struct {
 	FirstContent time.Duration
 	// ReasoningChars 是模型思考过程的字数。思考过程不交给调用方，只计数。
 	ReasoningChars int
+	// FinishReason 是模型服务报的结束原因（stop、length 等）。
+	FinishReason string
+	// ReasoningHasJSON 为真表示思考过程里出现过 JSON 对象。正文为空时用它判断答案是不是写进了思考里。
+	// 只记这一点，不记思考的原文：里面可能有用户的隐私，日志不该有。
+	ReasoningHasJSON bool
 }
 
 // Provider 是一家模型服务的适配器。
@@ -276,9 +282,22 @@ func (r *Router) logCall(what string, route Route, req Request, resp Response, t
 		"输入字数", chars,
 		"输入token", resp.Usage.PromptTokens, "缓存token", resp.Usage.CachedTokens,
 		"输出token", resp.Usage.CompletionTokens,
+		"结束原因", resp.Timing.FinishReason, "消息条数", len(req.Messages),
 	}
 	if err != nil {
 		r.log.Warn("模型调用失败", append(args, "err", err)...)
+		return
+	}
+	// 正文为空的那一次要能查出原因：结束原因、正文里到底是什么（这时只有空白，不涉及内容）、
+	// 答案是不是写进了思考里。
+	if strings.TrimSpace(resp.Content) == "" {
+		raw := resp.Content
+		if len(raw) > 40 {
+			raw = raw[:40]
+		}
+		r.log.Warn("模型调用正文为空", append(args,
+			"JSON模式", req.JSONMode, "正文原样", fmt.Sprintf("%q", raw),
+			"思考里有JSON", resp.Timing.ReasoningHasJSON)...)
 		return
 	}
 	r.log.Info("模型调用", args...)

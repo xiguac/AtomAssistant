@@ -99,6 +99,46 @@ func TestOpenAICompatible_记下先想了多久再开口(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatible_正文为空时记下结束原因和思考里有没有答案(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sse(w,
+			`data: {"choices":[{"delta":{"reasoning_content":"用户住在杭州，答案是 {\"action\":\"finish\"}"}}]}`,
+			`data: {"choices":[{"delta":{"content":"\n\n"},"finish_reason":"stop"}]}`,
+			`data: [DONE]`,
+		)
+	}))
+	defer srv.Close()
+
+	p, err := NewOpenAICompatible(OpenAIConfig{Name: "ds", BaseURL: srv.URL, APIKey: "k", Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	r := NewRouter().WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	if err := r.AddProvider(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetFallback(Route{Provider: "ds", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := r.Complete(context.Background(), PurposePlan, Request{JSONMode: true, Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Timing.FinishReason != "stop" || !resp.Timing.ReasoningHasJSON {
+		t.Fatalf("诊断信息不对: %+v", resp.Timing)
+	}
+	for _, want := range []string{"模型调用正文为空", "结束原因=stop", `正文原样="\"\\n\\n\""`, "思考里有JSON=true", "JSON模式=true", "消息条数=1"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("日志里应有 %q: %s", want, logs.String())
+		}
+	}
+	// 思考的原文可能有用户的隐私，不进日志。
+	if strings.Contains(logs.String(), "杭州") {
+		t.Fatalf("日志里不应有思考的原文: %s", logs.String())
+	}
+}
+
 func TestOpenAICompatible_流里报错要带出原因(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		sse(w, `data: {"error":{"message":"quota exceeded"}}`)

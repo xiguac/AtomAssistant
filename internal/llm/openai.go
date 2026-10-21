@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -122,9 +123,12 @@ type chatResponse struct {
 		Type    string `json:"type"`
 	} `json:"error"`
 
-	// 以下两项只在流式返回里由 readOpenAIStream 填：第一段正文到达的时间、思考过程的字数。
-	firstContent   time.Time
-	reasoningChars int
+	// 以下几项只在流式返回里由 readOpenAIStream 填：第一段正文到达的时间、思考过程的字数、
+	// 结束原因、思考过程里有没有 JSON 对象。
+	firstContent     time.Time
+	reasoningChars   int
+	finishReason     string
+	reasoningHasJSON bool
 }
 
 // Complete 执行一次补全。
@@ -178,9 +182,11 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 		}
 		out, err := p.finish(parsed, req)
 		out.Timing = Timing{
-			FirstByte:      dog.since(dog.first),
-			FirstContent:   dog.since(parsed.firstContent),
-			ReasoningChars: parsed.reasoningChars,
+			FirstByte:        dog.since(dog.first),
+			FirstContent:     dog.since(parsed.firstContent),
+			ReasoningChars:   parsed.reasoningChars,
+			FinishReason:     parsed.finishReason,
+			ReasoningHasJSON: parsed.reasoningHasJSON,
 		}
 		return out, err
 	}
@@ -261,10 +267,11 @@ type chatChunk struct {
 	} `json:"error"`
 }
 
-// readOpenAIStream 把流式返回拼成一份完整的返回。思考过程（reasoning_content）不要。
+// readOpenAIStream 把流式返回拼成一份完整的返回。思考过程（reasoning_content）不交给调用方，
+// 只用来数字数、看里面有没有 JSON 对象。
 func readOpenAIStream(r io.Reader) (chatResponse, error) {
 	var out chatResponse
-	var text strings.Builder
+	var text, reasoning strings.Builder
 	gotChoice := false
 	err := readEvents(r, func(data []byte) error {
 		var c chatChunk
@@ -281,7 +288,11 @@ func readOpenAIStream(r io.Reader) (chatResponse, error) {
 		for _, ch := range c.Choices {
 			gotChoice = true
 			text.WriteString(ch.Delta.Content)
+			reasoning.WriteString(ch.Delta.ReasoningContent)
 			out.reasoningChars += utf8.RuneCountInString(ch.Delta.ReasoningContent)
+			if ch.FinishReason != "" {
+				out.finishReason = ch.FinishReason
+			}
 			if ch.Delta.Content != "" && out.firstContent.IsZero() {
 				out.firstContent = time.Now()
 			}
@@ -297,13 +308,18 @@ func readOpenAIStream(r io.Reader) (chatResponse, error) {
 	if err != nil {
 		return chatResponse{}, err
 	}
+	out.reasoningHasJSON = jsonObjectStart.MatchString(reasoning.String())
 	if gotChoice {
 		var c chatChoice
 		c.Message.Content = text.String()
+		c.FinishReason = out.finishReason
 		out.Choices = []chatChoice{c}
 	}
 	return out, nil
 }
+
+// jsonObjectStart 匹配一个 JSON 对象的开头：左花括号后面跟着一个带引号的键。
+var jsonObjectStart = regexp.MustCompile(`\{\s*"`)
 
 func truncate(s string, max int) string {
 	s = strings.TrimSpace(s)
