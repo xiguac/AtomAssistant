@@ -16,6 +16,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomhelper/internal/session"
 	"github.com/xiguac/atomhelper/internal/skill"
 	"github.com/xiguac/atomhelper/internal/vault"
 )
@@ -110,6 +111,8 @@ type Planner struct {
 	hasHolidays bool
 	// conversation 非空时，属于会话的任务看得到同一个会话里最近的对话，见 conversation.go。
 	conversation ConversationStore
+	// sessions 非空时"此前的对话"取自每天的会话，任务还能查以前的摘要，见 session.go。
+	sessions session.Store
 	// canRequestSecrets 为真表示助手可以在后台登记待用户填写的环境变量。
 	canRequestSecrets bool
 	// hasSandbox 为真表示启用了沙箱。
@@ -310,6 +313,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	// 在沙箱里跑代码能读整个工作区，别人写的流程没声明就不能用。
 	if p.hasSandbox {
 		gated = append(gated, sandboxTool)
+	}
+	// 以前的对话是用户最私人的记录，别人写的流程没声明就不能翻。
+	if p.sessions != nil {
+		gated = append(gated, recallTool)
 	}
 	// 别人写的流程不能让后台多出一个向用户要密钥的输入框。
 	if p.canRequestSecrets {

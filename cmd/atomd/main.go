@@ -164,6 +164,11 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.triage != nil {
 			hub = hub.WithTriage(parts.triage)
 		}
+		// 用户和助手说的话记进每天的会话；每天过完写成摘要。
+		hub = hub.WithSession(st.Sessions())
+		if parts.digest != nil {
+			go parts.digest.Run(ctx)
+		}
 		// 启用了文件处理：用户在聊天里发来的文件收进工作区。
 		if parts.workspace != nil {
 			hub = hub.WithFiles(parts.workspace)
@@ -298,8 +303,10 @@ type parts struct {
 	// inputs 是各个模型支持的输入，demo 模式下为空。
 	inputs *config.ModelInputs
 	// asr 非空时聊天里发来的语音消息转成文字交给助手。
-	asr   *media.ASR
-	close func()
+	asr *media.ASR
+	// digest 非空时每天过完把那天的会话写成摘要。
+	digest *agent.Digest
+	close  func()
 }
 
 // build 按配置装出各个部件。
@@ -445,10 +452,12 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		// 用户发来的图片原样随上下文交给模型看。
 		WithImages(st).
 		// 聊天里一句接一句地说：新任务带上同一个会话里最近的对话。
-		WithConversation(st)
+		WithConversation(st).
+		// 话记在每天的会话里：新任务带上当天之前的会话和昨天的摘要，任务可以回头查以前的摘要。
+		WithSessions(st.Sessions())
 	planner = planner.WithSecretRequests(true)
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills()).
-		WithSecretRequests(requests)
+		WithSecretRequests(requests).WithSessions(st.Sessions())
 
 	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。
 	if router.CanSearch() {
@@ -598,6 +607,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		inputs:    &inputs,
 		asr:       file.SpeechRecognizer(),
 		triage:    agent.NewTriager(router),
+		digest:    agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)),
 		workspace: workspace,
 		channels:  channels,
 		outbox:    outbox,

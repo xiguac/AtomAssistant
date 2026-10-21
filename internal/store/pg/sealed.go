@@ -69,6 +69,9 @@ var sealedColumns = map[string]map[string]colKind{
 	"task_images": {"data": colText},
 	// 操作日志：消息和各项内容都可能带着任务、文件的名字。
 	"op_logs": {"message": colText, "attrs": colText},
+	// 会话：用户和助手说的每一句话，以及每天的摘要。
+	"session_messages":  {"text": colText},
+	"session_summaries": {"summary": colText},
 }
 
 // sealer 是各个存储共用的加解密入口。

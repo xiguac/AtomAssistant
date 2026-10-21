@@ -594,13 +594,19 @@ type fakeTriage struct {
 	err   error
 	asked []string
 	seen  []Candidate
+	// reply 非空时回答"不用办事，直接回这句"。
+	reply string
+	last  TriageInput
 }
 
-func (f *fakeTriage) Triage(_ context.Context, text string, cands []Candidate) (Verdict, error) {
-	f.asked, f.seen = append(f.asked, text), cands
+func (f *fakeTriage) Triage(_ context.Context, in TriageInput) (Verdict, error) {
+	text, cands := in.Text, in.Candidates
+	f.asked, f.seen, f.last = append(f.asked, text), cands, in
 	switch {
 	case f.err != nil:
 		return Verdict{}, f.err
+	case f.reply != "":
+		return Verdict{Reply: f.reply}, nil
 	case f.id != "":
 		return Verdict{TaskID: f.id}, nil
 	case f.pick == 0:

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomhelper/internal/session"
 )
 
 // 一句话该归给谁。
@@ -35,15 +36,28 @@ type Candidate struct {
 }
 
 // Verdict 是判断的结果：TaskID 非空表示这句话是说那件事的；New 为真表示是一件新的事；
-// 两者都没有表示拿不准。
+// Reply 非空表示这句话不用办什么事（道谢、寒暄、"知道了"），直接这样回一句；
+// 都没有表示拿不准。
 type Verdict struct {
 	TaskID string
 	New    bool
+	Reply  string
+}
+
+// TriageInput 是判断一句话归给谁时能看到的全部材料。
+type TriageInput struct {
+	// Text 是用户刚说的这句话。
+	Text       string
+	Candidates []Candidate
+	// Today 是今天的会话里在这句话之前说过的，早的在前。没接入会话时为空。
+	Today []session.Message
+	// Earlier 是最近一天会话的摘要，没有则为空。
+	Earlier *session.Summary
 }
 
 // Triager 判断一句话该归给哪件事，由主模型实现（agent.Triager）。
 type Triager interface {
-	Triage(ctx context.Context, text string, candidates []Candidate) (Verdict, error)
+	Triage(ctx context.Context, in TriageInput) (Verdict, error)
 }
 
 // WithTriage 接入主模型的判断。不接入时按老办法：有任务在等用户就归给它，否则算新的事。
@@ -54,7 +68,8 @@ func (h *Hub) WithTriage(t Triager) *Hub {
 
 const (
 	// maxCandidates 是交给模型判断的事的个数上限，取最近的。
-	maxCandidates = 8
+	// 给得宽一些：拖了好几天的长程任务排在后面，被截掉的话，用户再提起它就会被当成一件新的事。
+	maxCandidates = 20
 	// askTTL 是"这句话是说哪件事"这个问题等用户回答的时间。过了就不等了，那句话算一件新的事。
 	askTTL = 10 * time.Minute
 	// continueWindow 是"接着说"的时间窗：用户上次说到一件事在这之内，新的话默认是接着它说的；
@@ -211,5 +226,5 @@ func (h *Hub) askWhich(ctx context.Context, channel, chat, tag, text string, can
 		fmt.Fprintf(&sb, "%d. %s（%s）\n", i+1, oneLine(c.Title, 30), c.Status)
 	}
 	sb.WriteString("0. 都不是，是一件新的事\n回个序号就行。")
-	h.say(ctx, channel, chat, sb.String())
+	h.reply(ctx, channel, chat, sb.String())
 }

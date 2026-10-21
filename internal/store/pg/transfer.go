@@ -27,7 +27,7 @@ type Section string
 const (
 	// SectionMemory 长期记忆：记忆、版本链、待裁决候选，以及学到的表达风格。
 	SectionMemory Section = "memory"
-	// SectionTasks 任务：任务、步骤日志、审计、定时任务。
+	// SectionTasks 任务：任务、步骤日志、审计、定时任务，以及用户与助手的会话。
 	SectionTasks Section = "tasks"
 	// SectionEvents 事件：事件与订阅。它们引用任务，导入前任务板块必须已经在库里。
 	SectionEvents Section = "events"
@@ -41,7 +41,8 @@ const (
 // 表名只来自这里，不接受外部输入，所以拼进 SQL 是安全的。
 var sectionTables = map[Section][]string{
 	SectionMemory: {"memories", "memory_revisions", "memory_pending", "style_samples", "style_profiles"},
-	SectionTasks:  {"tasks", "task_steps", "audit_log", "schedules", "channel_chats", "channel_notices", "team_work"},
+	SectionTasks: {"tasks", "task_steps", "audit_log", "schedules", "channel_chats", "channel_notices", "team_work",
+		"session_messages", "session_summaries"},
 	SectionEvents: {"events", "event_subscriptions"},
 	SectionVault:  {"vault_items"},
 	SectionSkills: {"skills", "mcp_installs"},

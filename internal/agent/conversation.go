@@ -50,7 +50,13 @@ func inConversation(t *core.Task) bool {
 
 // conversationSegment 把同一个会话里、这个任务之前的最近几轮对话写成一段背景。
 func (p *Planner) conversationSegment(ctx context.Context, t *core.Task) (llm.Segment, bool, error) {
-	if p.conversation == nil || !inConversation(t) {
+	if !inConversation(t) {
+		return llm.Segment{}, false, nil
+	}
+	if p.sessions != nil {
+		return p.sessionSegment(ctx, t)
+	}
+	if p.conversation == nil {
 		return llm.Segment{}, false, nil
 	}
 	// 多取一些：里面有这个任务自己，也可能有比窗口更早的。

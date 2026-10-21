@@ -93,14 +93,16 @@ func TestTriager_按模型的回答定出归属(t *testing.T) {
 		{ID: "C", Title: "查天气", Goal: "苏州周五天气", Status: "刚办完：周五多云", Idle: 2 * time.Hour, Finished: true},
 	}
 	for reply, want := range map[string]channel.Verdict{
-		`{"target": "2"}`:      {TaskID: "B"},
-		`{"target": 1}`:        {TaskID: "A"},
-		`{"target": "new"}`:    {New: true},
-		`{"target": "unsure"}`: {},
-		`{"target": "7"}`:      {},
+		`{"target": "2"}`:                     {TaskID: "B"},
+		`{"target": 1}`:                       {TaskID: "A"},
+		`{"target": "new"}`:                   {New: true},
+		`{"target": "unsure"}`:                {},
+		`{"target": "7"}`:                     {},
+		`{"target": "reply", "reply": "不客气"}`: {Reply: "不客气"},
+		`{"target": "reply"}`:                 {},
 	} {
 		m := &fakeModel{replies: []string{reply}}
-		got, err := NewTriager(m).Triage(context.Background(), "住观前街附近", cands)
+		got, err := NewTriager(m).Triage(context.Background(), channel.TriageInput{Text: "住观前街附近", Candidates: cands})
 		if err != nil || got != want {
 			t.Fatalf("回答 %s 应得到 %+v: %+v %v", reply, want, got, err)
 		}
@@ -119,7 +121,7 @@ func TestTriager_按模型的回答定出归属(t *testing.T) {
 			t.Fatalf("交给模型的内容里应有时间线索: %s", user)
 		}
 	}
-	if _, err := NewTriager(&fakeModel{replies: []string{"不是 JSON"}}).Triage(context.Background(), "x", cands); err == nil {
+	if _, err := NewTriager(&fakeModel{replies: []string{"不是 JSON"}}).Triage(context.Background(), channel.TriageInput{Text: "x", Candidates: cands}); err == nil {
 		t.Fatal("看不懂的输出应报错，由调用方退回按规则处理")
 	}
 }

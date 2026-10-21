@@ -10,6 +10,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/llm"
 	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomhelper/internal/session"
 )
 
 // ToolCaller 是 Actuator 依赖的工具调用能力。
@@ -64,6 +65,8 @@ type Actuator struct {
 	library        SkillLibrary
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
+	// sessions 非空时可以查以前的会话，见 session.go。
+	sessions session.Store
 }
 
 // WithCalendar 接入日历连接器。
@@ -333,6 +336,14 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 			return kernel.Result{}, err
 		}
 		// 代码是模型写的，处理的是工作区里的文件；输出和读文件一样按工具输出对待。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if s.ToolName == ToolRecall {
+		out, err := a.runRecall(ctx, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 以前的对话里有助手转述过的外部内容，和"此前的对话"一样按工具输出对待。
 		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
 	}
 	if s.ToolName == ToolWeather {

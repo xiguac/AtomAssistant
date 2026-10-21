@@ -35,6 +35,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/kernel"
 	"github.com/xiguac/atomhelper/internal/media"
 	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomhelper/internal/session"
 )
 
 // Message 是从渠道进来的一条消息。
@@ -284,6 +285,8 @@ type Hub struct {
 	asr Transcriber
 	// saidAt 是用户最近说到各件事的时间，判断新的话归给谁时用，见 triage.go。
 	saidAt map[string]time.Time
+	// sessions 非空时用户和助手说的话都记进当天的会话，见 session.go。
+	sessions session.Store
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -521,6 +524,12 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 			return nil
 		}
 	}
+	// 记进今天的会话。带着图片、视频的，记一句发来了什么：原件交给任务，会话里只要知道有这回事。
+	said := text
+	if len(m.Images)+len(m.Videos) > 0 {
+		said = strings.TrimSpace(said + "\n" + fmt.Sprintf("（发来了 %d 张图片、%d 个视频）", len(m.Images), len(m.Videos)))
+	}
+	current := h.remember(ctx, session.RoleUser, channel, "", said)
 	if len(m.Images)+len(m.Videos) > 0 {
 		return h.routeMedia(ctx, channel, m, text, tag)
 	}
@@ -573,7 +582,7 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		return err
 	}
 	cands := h.candidatesOf(active, h.justFinished(all))
-	verdict, err := h.triage.Triage(ctx, text, cands)
+	verdict, err := h.triage.Triage(ctx, h.triageInput(ctx, text, current, cands))
 	if err != nil {
 		// 判断不了不能把话丢了：退回老办法，并留下痕迹。
 		h.log.Error("判断消息归属失败，按规则处理", "err", err)
@@ -591,6 +600,9 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		return h.create(ctx, text, tag)
 	case verdict.TaskID != "":
 		return pick(verdict.TaskID)
+	case verdict.Reply != "":
+		h.reply(ctx, channel, m.Chat, verdict.Reply)
+		return nil
 	}
 	// 模型也拿不准：刚说过的那件事最可能是在接着说；时间窗里没有，才问用户。
 	if c, ok := recent(cands); ok {
@@ -709,6 +721,8 @@ func (h *Hub) Notify(ctx context.Context, since time.Time) error {
 			errs = append(errs, fmt.Errorf("channel: 向 %s 推送任务 %s 的进展失败: %w", channel, t.ID, err))
 			continue
 		}
+		// 标上是哪件事的进展：会话里好几件事交错着说，回头看的时候要分得清。
+		h.remember(ctx, session.RoleAssistant, channel, t.ID, "（"+t.Title+"）"+text)
 		if err := h.state.PutNotice(ctx, t.ID, fingerprint); err != nil {
 			errs = append(errs, err)
 		}
