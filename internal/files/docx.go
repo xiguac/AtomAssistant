@@ -321,7 +321,7 @@ func (w *Workspace) DocWrite(rel, markdown string) (Saved, error) {
 			lists = b.list
 		}
 	}
-	return w.save(rel, func() ([]byte, error) {
+	return w.save(rel, byAssistant, func() ([]byte, error) {
 		return writeZip([]zipPart{
 			{"[Content_Types].xml", docxContentTypes},
 			{"_rels/.rels", docxRootRels},

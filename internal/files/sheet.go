@@ -205,7 +205,7 @@ func (w *Workspace) SheetWrite(rel string, edits []SheetEdit) (SheetResult, erro
 	if err := f.UpdateLinkedValue(); err != nil {
 		return SheetResult{}, fmt.Errorf("files: 标记重算失败: %w", err)
 	}
-	saved, err := w.save(rel, func() ([]byte, error) {
+	saved, err := w.save(rel, byAssistant, func() ([]byte, error) {
 		buf, err := f.WriteToBuffer()
 		if err != nil {
 			return nil, fmt.Errorf("files: 保存表格失败: %w", err)

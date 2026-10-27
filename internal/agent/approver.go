@@ -237,6 +237,8 @@ var inHouse = map[string]bool{
 	ToolVaultRequest: true,
 	// 断网的沙箱，结果只写进本机工作区的一个新目录。
 	ToolSandboxRun: true,
+	// 建链接、撤销链接、在工作区里复制文件，都不把东西交给谁；地址要出去得经过对外发送的动作。
+	ToolShareCreate: true, ToolShareRevoke: true, ToolShareCopy: true,
 }
 
 // outbound 报告一个动作是不是对外发送：发信、付款与付费请求、通过 MCP 工具向外部服务提交信息。
@@ -275,6 +277,11 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 	// 有外传风险的安装必须由用户批准，没有任何规则能放行它。
 	if reason, risky := a.installRisk(d); risky {
 		return kernel.ApprovalManual, reason, nil
+	}
+
+	// 用户的文件复制成可以对外分享的副本，同样只能由用户批准：自主模式、放行规则都不适用。
+	if d.ToolName == ToolShareCopy {
+		return kernel.ApprovalManual, shareCopyReason(d.Input), nil
 	}
 
 	// 按地址装 MCP server 只对用户亲口给的地址直接放行。地址是助手从别处读来的（网页、邮件、搜索结果），

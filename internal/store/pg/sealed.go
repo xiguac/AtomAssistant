@@ -72,6 +72,8 @@ var sealedColumns = map[string]map[string]colKind{
 	// 会话：用户和助手说的每一句话，以及每天的摘要。
 	"session_messages":  {"text": colText},
 	"session_summaries": {"summary": colText},
+	// 对外分享的链接：分享的路径和文件清单。
+	"share_links": {"path": colText, "files": colText},
 }
 
 // sealer 是各个存储共用的加解密入口。

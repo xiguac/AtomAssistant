@@ -12,11 +12,13 @@ import (
 	"github.com/xiguac/atomhelper/internal/channel"
 	"github.com/xiguac/atomhelper/internal/core"
 	"github.com/xiguac/atomhelper/internal/event"
+	"github.com/xiguac/atomhelper/internal/files"
 	"github.com/xiguac/atomhelper/internal/market"
 	"github.com/xiguac/atomhelper/internal/memory"
 	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/session"
+	"github.com/xiguac/atomhelper/internal/share"
 	"github.com/xiguac/atomhelper/internal/skill"
 	"github.com/xiguac/atomhelper/internal/store"
 	"github.com/xiguac/atomhelper/internal/style"
@@ -77,6 +79,7 @@ var plainColumns = map[string][]string{
 	"op_logs":             {"id", "category"},
 	"session_messages":    {"id", "day", "role", "channel", "task_id"},
 	"session_summaries":   {"day"},
+	"share_links":         {"id", "token_hash", "task_id"},
 	"seal_state":          {"key_id"},
 	"schema_migrations":   {"version"},
 }
@@ -199,6 +202,8 @@ func TestSealed_写进去的都是密文(t *testing.T) {
 	}
 	must(s.Sessions().Append(ctx, session.Message{At: now, Role: session.RoleUser, Channel: "qq", Text: "帮我订周五去杭州的票"}))
 	must(s.Sessions().PutSummary(ctx, session.Summary{Day: "2026-10-20", Text: "订了去杭州的票"}))
+	must(s.CreateShare(ctx, &share.Link{ID: "share-1", TaskID: task.ID, Path: "报告/十月.docx",
+		Files: []files.Pinned{{Path: "报告/十月.docx", Size: 3, SHA256: "abc"}}, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}, "hash-1"))
 
 	// 每张登记了加密列的表都得真的有数据，否则下面的检查是空转。
 	for table := range sealedColumns {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomhelper/internal/share"
 )
 
 // Config 是 atomd 的运行配置。
@@ -56,6 +57,14 @@ type Config struct {
 	AdminTLSCert string
 	AdminTLSKey  string
 
+	// ShareAddr 是文件下载入口的监听地址，如 127.0.0.1:8790。为空则不开，助手也就没有分享文件的工具。
+	// ShareBaseURL 是外面访问这个入口用的地址，下载链接以它开头，如 https://files.example.com。
+	// 不是本机地址时必须同时给出 TLS 证书，否则拒绝启动，见 share.CheckConfig。
+	ShareAddr    string
+	ShareBaseURL string
+	ShareTLSCert string
+	ShareTLSKey  string
+
 	// SkillScanner 是 Skill 安装前扫描器的可执行文件，空值按 skillspector。
 	// SkillScannerArgs 是追加给它的参数，按空白分隔。
 	// 这两项只能由用户在环境里配置：助手没有任何途径改它们，也就关不掉扫描。
@@ -84,6 +93,11 @@ func Load() (*Config, error) {
 		AdminTLSCert:      os.Getenv("ATOM_ADMIN_TLS_CERT"),
 		AdminTLSKey:       os.Getenv("ATOM_ADMIN_TLS_KEY"),
 
+		ShareAddr:    os.Getenv("ATOM_SHARE_ADDR"),
+		ShareBaseURL: os.Getenv("ATOM_SHARE_BASE_URL"),
+		ShareTLSCert: os.Getenv("ATOM_SHARE_TLS_CERT"),
+		ShareTLSKey:  os.Getenv("ATOM_SHARE_TLS_KEY"),
+
 		SkillScanner:     os.Getenv("ATOM_SKILL_SCANNER"),
 		SkillScannerArgs: strings.Fields(os.Getenv("ATOM_SKILL_SCANNER_ARGS")),
 	}
@@ -97,6 +111,11 @@ func Load() (*Config, error) {
 	// 开了入口却没有令牌，等于把事件总线敞给所有能连上这个端口的人。
 	if c.WebhookAddr != "" && c.WebhookToken == "" {
 		return nil, fmt.Errorf("config: 设置了 ATOM_WEBHOOK_ADDR 就必须设置 ATOM_WEBHOOK_TOKEN")
+	}
+	if c.ShareAddr != "" {
+		if err := share.CheckConfig(c.ShareAddr, c.ShareBaseURL, c.ShareTLSCert != "" && c.ShareTLSKey != ""); err != nil {
+			return nil, fmt.Errorf("config: ATOM_SHARE_*: %w", err)
+		}
 	}
 
 	var err error

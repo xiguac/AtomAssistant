@@ -37,6 +37,7 @@ import (
 	"github.com/xiguac/atomhelper/internal/schedule"
 	"github.com/xiguac/atomhelper/internal/seal"
 	"github.com/xiguac/atomhelper/internal/skill"
+	"github.com/xiguac/atomhelper/internal/share"
 	"github.com/xiguac/atomhelper/internal/skillscan"
 	"github.com/xiguac/atomhelper/internal/store/pg"
 	"github.com/xiguac/atomhelper/internal/style"
@@ -199,6 +200,14 @@ func run(migrateOnly, checkOnly bool) error {
 		defer stopWebhook()
 	}
 
+	if parts.shares != nil {
+		stopShare, err := serveShare(ctx, cfg, parts.shares, log.With(oplog.Key, oplog.Tool))
+		if err != nil {
+			return err
+		}
+		defer stopShare()
+	}
+
 	return sched.Run(ctx)
 }
 
@@ -285,6 +294,42 @@ func serveWebhook(ctx context.Context, cfg *config.Config, bus *event.Bus, log *
 	}, nil
 }
 
+// serveShare 开文件下载入口，返回一个用于关停它的函数。和 Webhook 一样先同步监听再异步服务。
+func serveShare(ctx context.Context, cfg *config.Config, svc *share.Service, log *slog.Logger) (func(), error) {
+	ln, err := net.Listen("tcp", cfg.ShareAddr)
+	if err != nil {
+		return nil, fmt.Errorf("下载入口监听 %s 失败: %w", cfg.ShareAddr, err)
+	}
+	srv := &http.Server{
+		Handler:           svc.Handler(log),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       time.Minute,
+		MaxHeaderBytes:    16 << 10,
+	}
+	tls := cfg.ShareTLSCert != "" && cfg.ShareTLSKey != ""
+	go func() {
+		var err error
+		if tls {
+			err = srv.ServeTLS(ln, cfg.ShareTLSCert, cfg.ShareTLSKey)
+		} else {
+			err = srv.Serve(ln)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("下载入口异常退出", "err", err)
+		}
+	}()
+	log.Info("下载入口已开启", "地址", ln.Addr().String(), "https", tls, "外部地址", cfg.ShareBaseURL)
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Error("关闭下载入口失败", "err", err)
+		}
+	}, nil
+}
+
 // parts 是按配置装出来的可插拔部件。approver 与 epilogue 可以为 nil。
 type parts struct {
 	planner  kernel.Planner
@@ -300,6 +345,8 @@ type parts struct {
 	triage channel.Triager
 	// workspace 非空表示启用了文件处理。
 	workspace *files.Workspace
+	// shares 非空表示开启了对外分享，要开下载入口。
+	shares *share.Service
 	// inputs 是各个模型支持的输入，demo 模式下为空。
 	inputs *config.ModelInputs
 	// asr 非空时聊天里发来的语音消息转成文字交给助手。
@@ -390,6 +437,10 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}
 	if workspace != nil {
 		agent.FileDefaults(approval)
+		// 建、撤销下载链接直接做：地址要出去，得经过发信、HTTP 请求这些由用户确认的动作。
+		if cfg.ShareAddr != "" {
+			agent.ShareDefaults(approval)
+		}
 	}
 	// 缺少能力时助手自己找、扫描通过就装。扫描器不可用时装不上，但照样能找。
 	agent.CapabilityDefaults(approval)
@@ -540,6 +591,18 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		actuator = actuator.WithFiles(workspace)
 		log.Info("已启用文件处理", "工作区", workspace.Root, "加密存放", file.Files.Encrypt)
 	}
+	// 对外分享：给助手生成的文件建临时下载链接。下载入口由 run 在助手装好之后开。
+	var shares *share.Service
+	if cfg.ShareAddr != "" {
+		if workspace == nil {
+			log.Warn("设置了 ATOM_SHARE_ADDR，但没有启用文件处理（files 一节），对外分享不可用")
+		} else {
+			shares = &share.Service{Store: st, Workspace: workspace, BaseURL: cfg.ShareBaseURL}
+			planner = planner.WithShares(true)
+			actuator = actuator.WithShares(shares)
+			log.Info("已启用对外分享", "外部地址", cfg.ShareBaseURL)
+		}
+	}
 	// 代码沙箱：断网、只读工作区，跑出来的文件收进工作区。机器上跑不了时只记下原因，不影响别的能力。
 	if runner, err := file.SandboxRunner(workspace); err != nil {
 		return nil, err
@@ -609,6 +672,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		triage:    agent.NewTriager(router),
 		digest:    agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)),
 		workspace: workspace,
+		shares:    shares,
 		channels:  channels,
 		outbox:    outbox,
 		planner:   planner,

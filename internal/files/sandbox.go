@@ -94,7 +94,7 @@ func (w *Workspace) Snapshot(dst string, maxBytes int64) error {
 
 // WriteFile 把一份内容写进工作区，返回它的路径。已有同名文件时旧的留底。
 func (w *Workspace) WriteFile(rel string, data []byte) (string, error) {
-	saved, err := w.save(rel, func() ([]byte, error) { return data, nil })
+	saved, err := w.save(rel, byAssistant, func() ([]byte, error) { return data, nil })
 	if err != nil {
 		return "", err
 	}

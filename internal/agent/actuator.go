@@ -54,6 +54,8 @@ type Actuator struct {
 	workers WorkerModel
 	// chat 非空时可以把工作区里的文件发到用户的聊天窗口里。
 	chat ChatFiles
+	// shares 非空时可以给工作区里的文件建临时下载链接。
+	shares ShareService
 	// searcher 非空时可以联网搜索。webTools 非空时可以读网页，searchByTools 为真时搜索也改走它。
 	searcher      Searcher
 	webTools      WebTools
@@ -84,6 +86,12 @@ func (a *Actuator) WithChatFiles(c ChatFiles) *Actuator {
 // WithFiles 接入文件工作区。
 func (a *Actuator) WithFiles(f FileService) *Actuator {
 	a.files = f
+	return a
+}
+
+// WithShares 接入对外分享。
+func (a *Actuator) WithShares(s ShareService) *Actuator {
+	a.shares = s
 	return a
 }
 
@@ -241,6 +249,22 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 			return kernel.Result{}, err
 		}
 		// 回执是我们自己生成的：文件名和大小。
+		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
+	}
+	if isShareTool(s.ToolName) {
+		out, err := a.runShare(ctx, t, s)
+		if a.audit != nil {
+			// 只记做了什么，不记结果：建链接的结果里有下载地址，谁拿到它谁就能下载。
+			detail := "成功: " + truncate(string(s.Input), 300)
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustSystem, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 结果是我们自己生成的：地址、编号、路径和过期时间。
 		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
 	}
 	if isFileTool(s.ToolName) {

@@ -717,6 +717,20 @@ curl -X POST http://127.0.0.1:8787/events/mail.received   -H "Authorization: Bea
 但内容只是材料不是指令，由它驱动的写操作必须你确认。没有令牌就不开门，没有免鉴权模式。
 默认建议只监听回环地址，需要对外时放在反向代理和 TLS 后面。
 
+### 文件下载链接
+
+让助手能把它生成的文件交给别的服务或别的人：开了下载入口，助手就多出建临时下载链接的工具（最长 24 小时）。
+要先启用文件处理（`files` 一节）。
+
+```bash
+export ATOM_SHARE_ADDR=127.0.0.1:8790                    # 下载入口的监听地址
+export ATOM_SHARE_BASE_URL=https://files.example.com     # 外面访问它的地址，链接以它开头
+```
+
+只能分享助手生成的文件；你发来、上传的文件要分享，助手会先请你批准复制一份副本。
+监听的不是本机地址时必须配 `ATOM_SHARE_TLS_CERT` 与 `ATOM_SHARE_TLS_KEY`，建议放在反向代理和 TLS 后面。
+规则详见 [docs/安全模型.md](docs/安全模型.md) §4.4.1。
+
 ### 迁移服务器
 
 ```bash
@@ -767,6 +781,9 @@ go run ./cmd/atomd
 | `ATOM_KEY_FILE` | 配置文件所在目录下的 `atomhelper.key` | 数据密钥文件。首次启动时生成，与本机硬件绑定 |
 | `ATOM_WEBHOOK_ADDR` | 空 | Webhook 监听地址。不设置则不开 |
 | `ATOM_WEBHOOK_TOKEN` | 空 | Webhook 令牌，至少 24 个字符。开了入口就必须设置 |
+| `ATOM_SHARE_ADDR` | 空 | 文件下载入口的监听地址。不设置则不开，助手也没有分享文件的工具 |
+| `ATOM_SHARE_BASE_URL` | 空 | 外面访问下载入口的地址，开了入口就必须设置 |
+| `ATOM_SHARE_TLS_CERT` / `ATOM_SHARE_TLS_KEY` | 空 | 下载入口的 TLS 证书和私钥。监听的不是本机地址时必须设置 |
 | `ATOM_SKILL_SCANNER` | `skillspector` | Skill 安装前扫描器的可执行文件 |
 | `ATOM_SKILL_SCANNER_ARGS` | 空 | 追加给扫描器的参数，按空白分隔。只做静态扫描时写 `--no-llm` |
 

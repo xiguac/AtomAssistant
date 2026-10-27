@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xiguac/atomhelper/internal/seal"
@@ -52,6 +53,13 @@ type Workspace struct {
 	// box 用来解开加密存放的文件；encrypt 为真时新写入的文件也加密。
 	box     *seal.Box
 	encrypt bool
+
+	// mu 保护下面两样：几个任务可能同时写文件、同时建分享链接。
+	mu sync.Mutex
+	// origins 是文件来源记录（见 origins.go），第一次用到时从磁盘读出来。
+	origins map[string]originEntry
+	// sums 缓存用户文件的内容摘要，免得每次建分享链接都把加密的文件全解一遍，见 share.go。
+	sums map[string]cachedSum
 }
 
 // WithSeal 接入文件加密。
@@ -132,7 +140,8 @@ func (w *Workspace) resolve(rel string, forWrite bool) (abs, norm string, err er
 	if err != nil {
 		return "", "", err
 	}
-	if forWrite && (norm == "" || norm == versionsDir || strings.HasPrefix(norm, versionsDir+"/")) {
+	// 以 . 开头的是留底目录和工作区自己的记录（谁放进来的哪个文件，见 origins.go），不让写。
+	if forWrite && (norm == "" || hidden(norm)) {
 		return "", "", fmt.Errorf("%w: 不能写到这个位置", ErrInvalid)
 	}
 	abs = filepath.Join(w.Root, filepath.FromSlash(norm))
@@ -238,7 +247,7 @@ func (w *Workspace) Receive(name string, data []byte) (string, error) {
 		}
 		rel = path.Join(ReceivedDir, fmt.Sprintf("%s (%d)%s", stem, i, ext))
 	}
-	saved, err := w.save(rel, func() ([]byte, error) { return data, nil })
+	saved, err := w.save(rel, byUser, func() ([]byte, error) { return data, nil })
 	if err != nil {
 		return "", err
 	}
@@ -315,12 +324,22 @@ type Saved struct {
 	Replaced string `json:"previous_version,omitempty"`
 }
 
-// save 把一个文件写进工作区。produce 给出文件的完整内容。
+// hidden 报告一个规范化的相对路径里有没有以 . 开头的一段。
+func hidden(norm string) bool {
+	for _, seg := range strings.Split(norm, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// save 把一个文件写进工作区。who 是谁放进来的，produce 给出文件的完整内容。
 //
 // 内容先在内存里备齐，开了加密就先加密，然后才落盘——明文不会出现在磁盘上。
 // 先写临时文件再改名：写到一半出错或者进程被杀，原来的文件完好无损，
 // 不会留下一个打不开的半截文件。目标已经存在时，旧的那份先挪去留底。
-func (w *Workspace) save(rel string, produce func() ([]byte, error)) (Saved, error) {
+func (w *Workspace) save(rel string, who origin, produce func() ([]byte, error)) (Saved, error) {
 	abs, norm, err := w.resolve(rel, true)
 	if err != nil {
 		return Saved{}, err
@@ -332,6 +351,7 @@ func (w *Workspace) save(rel string, produce func() ([]byte, error)) (Saved, err
 	if err != nil {
 		return Saved{}, err
 	}
+	plain := data
 	if w.encrypt {
 		if w.box == nil {
 			return Saved{}, fmt.Errorf("files: 配置要求文件加密存放，但当前没有可用的数据密钥")
@@ -361,6 +381,9 @@ func (w *Workspace) save(rel string, produce func() ([]byte, error)) (Saved, err
 	if err := os.Rename(tmp, abs); err != nil {
 		return Saved{}, fmt.Errorf("files: 写入文件失败: %w", err)
 	}
+	if err := w.record(norm, who, plain); err != nil {
+		return Saved{}, err
+	}
 	return out, nil
 }
 
@@ -384,7 +407,7 @@ func (w *Workspace) Import(src, rel string) (Saved, error) {
 	if strings.TrimSpace(rel) == "" {
 		rel = filepath.Base(src)
 	}
-	return w.save(rel, func() ([]byte, error) {
+	return w.save(rel, byUser, func() ([]byte, error) {
 		raw, err := os.ReadFile(src)
 		if err != nil {
 			return nil, fmt.Errorf("files: 读取 %s 失败: %w", src, err)

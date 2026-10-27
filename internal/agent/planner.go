@@ -133,6 +133,8 @@ type Planner struct {
 	reviewActions bool
 	// canSendFiles 为真表示接了消息渠道，可以把文件发到聊天窗口里。
 	canSendFiles bool
+	// hasShares 为真表示开启了对外分享。
+	hasShares bool
 	// hasWeb 为真表示接入了联网搜索，hasFetch 为真表示可以读网页。
 	hasWeb   bool
 	hasFetch bool
@@ -241,6 +243,12 @@ func (p *Planner) WithChatFiles(enabled bool) *Planner {
 	return p
 }
 
+// WithShares 向模型开放对外分享（临时下载链接）。要同时启用了文件处理才有意义。
+func (p *Planner) WithShares(enabled bool) *Planner {
+	p.hasShares = enabled
+	return p
+}
+
 // WithHolidays 向模型开放节假日查询。
 func (p *Planner) WithHolidays(enabled bool) *Planner {
 	p.hasHolidays = enabled
@@ -293,6 +301,10 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 		gated = append(gated, fileToolset...)
 		if p.canSendFiles {
 			gated = append(gated, fileSendTool)
+		}
+		// 下载链接让外面的人能取走工作区里的文件，别人写的流程没声明就不能用。
+		if p.hasShares {
+			gated = append(gated, shareToolset...)
 		}
 	}
 	// 派活会把材料交给另一家模型服务，别人写的流程没声明就不能用。
