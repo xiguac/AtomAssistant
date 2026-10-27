@@ -108,6 +108,8 @@ type Options struct {
 	Restart func()
 	// Status 返回当前的运行状况；非空表示助手本身没能启动（比如配置还没填完），只有后台在运行。
 	Status func() string
+	// ShareOn 为真表示开了文件下载入口（ATOM_SHARE_ADDR），「文件」页显示下载链接的设置和列表。
+	ShareOn bool
 	Log    *slog.Logger
 }
 
@@ -500,6 +502,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /files", auth(s.filesUpload))
 	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
 	mux.HandleFunc("POST /files/delete", auth(s.filesDelete))
+	mux.HandleFunc("POST /files/share/base", auth(s.shareBaseSave))
+	mux.HandleFunc("POST /files/share/revoke", auth(s.shareRevoke))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -1493,6 +1497,8 @@ type filesData struct {
 	Received    []files.Entry
 	ReceivedDir string
 	Enabled     bool
+	// Shares 是「下载链接」一节，见 shares.go。
+	Shares sharesData
 }
 
 func (s *Server) filesPage(w http.ResponseWriter, r *http.Request, v *view) {
@@ -1529,6 +1535,9 @@ func (s *Server) filesPage(w http.ResponseWriter, r *http.Request, v *view) {
 		if d.Parent = path.Dir(d.Dir); d.Parent == "." {
 			d.Parent = ""
 		}
+	}
+	if d.Shares, err = s.loadShares(r); err != nil {
+		v.Error = err.Error()
 	}
 	v.Data = d
 	s.render(w, "files", v)

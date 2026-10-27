@@ -78,12 +78,21 @@ type Workspace interface {
 	CopyReceived(rel string) (string, error)
 }
 
+// BaseURLSetting 是外部访问地址在后台设置里的名字。地址由用户在管理后台「文件」页填写。
+const BaseURLSetting = "share.base_url"
+
+// Settings 读后台设置，由 *pg.Store 提供。
+type Settings interface {
+	Setting(ctx context.Context, key string) (string, error)
+}
+
 // Service 建、列、撤销链接，并提供下载入口（见 http.go）。
 type Service struct {
 	Store     Store
 	Workspace Workspace
-	// BaseURL 是外面访问下载入口用的地址，如 https://files.example.com。
-	BaseURL string
+	// Settings 里有外部访问地址（BaseURLSetting），如 https://atom.example.com/download。
+	// 每次建链接时现读：用户在后台改了地址，不必重启。
+	Settings Settings
 	// now 测试时可以换掉。
 	now func() time.Time
 }
@@ -113,6 +122,13 @@ func (s *Service) Create(ctx context.Context, taskID, rel string, ttl time.Durat
 	if ttl < time.Minute || ttl > MaxTTL {
 		return Created{}, fmt.Errorf("%w: 有效期要在 1 分钟到 24 小时之间", ErrInvalid)
 	}
+	base, err := s.Settings.Setting(ctx, BaseURLSetting)
+	if err != nil {
+		return Created{}, err
+	}
+	if base == "" {
+		return Created{}, fmt.Errorf("%w: 还没有设置下载链接的外部访问地址，请用户在管理后台「文件」页填写", ErrInvalid)
+	}
 	now := s.clock()
 	if err := s.Store.DeleteExpiredShares(ctx, now); err != nil {
 		return Created{}, err
@@ -136,7 +152,7 @@ func (s *Service) Create(ctx context.Context, taskID, rel string, ttl time.Durat
 	if err := s.Store.CreateShare(ctx, l, hash); err != nil {
 		return Created{}, err
 	}
-	out := Created{ID: l.ID, URL: s.link(token, ""), Path: l.Path, Dir: dir, ExpiresAt: l.ExpiresAt}
+	out := Created{ID: l.ID, URL: link(base, token, ""), Path: l.Path, Dir: dir, ExpiresAt: l.ExpiresAt}
 	for _, p := range pinned {
 		out.Files = append(out.Files, p.Path)
 	}
@@ -165,9 +181,9 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
-// link 拼出下载地址。sub 是目录链接里某个文件相对于目录的路径，逐段转义。
-func (s *Service) link(token, sub string) string {
-	u := strings.TrimRight(s.BaseURL, "/") + "/s/" + token
+// link 拼出下载地址。base 是外部访问地址；sub 是目录链接里某个文件相对于目录的路径，逐段转义。
+func link(base, token, sub string) string {
+	u := strings.TrimRight(base, "/") + "/s/" + token
 	if sub == "" {
 		return u
 	}
@@ -207,13 +223,19 @@ func validToken(s string) bool {
 	return true
 }
 
-// CheckConfig 校验下载入口的配置：外部地址必须是 http(s) 的绝对地址；
-// 监听的不是本机地址时必须有 TLS——文件会在网络上明文传输。
-func CheckConfig(addr, baseURL string, tls bool) error {
-	u, err := url.Parse(baseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("share: 外部访问地址要写成 https://域名[:端口][/前缀] 的样子，实际是 %q", baseURL)
+// NormalizeBaseURL 校验并规范化外部访问地址：必须是 http(s) 的绝对地址，不带查询串和片段，去掉末尾的 /。
+func NormalizeBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+		u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(raw, "?") || strings.HasSuffix(raw, "#") {
+		return "", fmt.Errorf("%w: 外部访问地址要写成 https://域名[:端口][/路径] 的样子", ErrInvalid)
 	}
+	return strings.TrimRight(raw, "/"), nil
+}
+
+// CheckAddr 校验下载入口的监听地址：不是本机地址时必须有 TLS——文件会在网络上明文传输。
+func CheckAddr(addr string, tls bool) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("share: 监听地址 %q 不合法: %w", addr, err)

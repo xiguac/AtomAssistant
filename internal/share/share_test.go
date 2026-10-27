@@ -77,6 +77,11 @@ func (m *memStore) RevokeShare(_ context.Context, id string, now time.Time) (boo
 
 func (m *memStore) DeleteExpiredShares(context.Context, time.Time) error { return nil }
 
+// memSettings 是测试用的后台设置。
+type memSettings map[string]string
+
+func (m memSettings) Setting(_ context.Context, key string) (string, error) { return m[key], nil }
+
 type fixture struct {
 	t   *testing.T
 	ws  *files.Workspace
@@ -92,10 +97,11 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	f := &fixture{t: t, ws: ws, now: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)}
-	f.svc = &Service{Store: newMemStore(), Workspace: ws, now: func() time.Time { return f.now }}
+	settings := memSettings{}
+	f.svc = &Service{Store: newMemStore(), Workspace: ws, Settings: settings, now: func() time.Time { return f.now }}
 	f.srv = httptest.NewServer(f.svc.Handler(nil))
 	t.Cleanup(f.srv.Close)
-	f.svc.BaseURL = f.srv.URL + "/"
+	settings[BaseURLSetting] = f.srv.URL
 	return f
 }
 
@@ -269,33 +275,57 @@ func TestShare_建链接的限制(t *testing.T) {
 	}
 }
 
-func TestCheckConfig(t *testing.T) {
-	for _, ok := range []struct {
-		addr, base string
-		tls        bool
-	}{
-		{"127.0.0.1:8790", "https://files.example.com", false},
-		{"localhost:8790", "http://118.195.207.111:8790/dl", false},
-		{"0.0.0.0:443", "https://files.example.com", true},
+func TestShare_没设外部访问地址建不了链接(t *testing.T) {
+	f := setup(t)
+	f.write("a.txt", "a")
+	f.svc.Settings = memSettings{}
+	if _, err := f.svc.Create(context.Background(), "", "a.txt", 0); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "外部访问地址") {
+		t.Fatalf("没设外部访问地址应报错: %v", err)
+	}
+}
+
+func TestShare_带路径前缀的外部访问地址(t *testing.T) {
+	f := setup(t)
+	f.write("图/a.png", "PNG a")
+	// 反向代理把 /download/ 转给下载入口时会去掉前缀，这里直接拿令牌后面的部分访问。
+	f.svc.Settings = memSettings{BaseURLSetting: "https://atom.example.com/download"}
+	c, err := f.svc.Create(context.Background(), "", "图", 0)
+	if err != nil || !strings.HasPrefix(c.URL, "https://atom.example.com/download/s/") {
+		t.Fatalf("链接应以外部访问地址开头: %v %q", err, c.URL)
+	}
+	code, _, body := f.get(f.srv.URL + strings.TrimPrefix(c.URL, "https://atom.example.com/download"))
+	if code != http.StatusOK || !strings.Contains(body, `"url":"https://atom.example.com/download/s/`) {
+		t.Fatalf("清单里的地址应以外部访问地址开头: %d %q", code, body)
+	}
+}
+
+func TestNormalizeBaseURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://atom.hivehyde.com/download":   "https://atom.hivehyde.com/download",
+		" https://atom.hivehyde.com/download/": "https://atom.hivehyde.com/download",
+		"http://127.0.0.1:8790":                "http://127.0.0.1:8790",
 	} {
-		if err := CheckConfig(ok.addr, ok.base, ok.tls); err != nil {
-			t.Errorf("%+v 应被允许: %v", ok, err)
+		if got, err := NormalizeBaseURL(in); err != nil || got != want {
+			t.Errorf("%q: 期望 %q，实际 %q (%v)", in, want, got, err)
 		}
 	}
-	for _, bad := range []struct {
-		addr, base string
-		tls        bool
-	}{
-		{"0.0.0.0:8790", "https://files.example.com", false},
-		{":8790", "https://files.example.com", false},
-		{"127.0.0.1:8790", "", false},
-		{"127.0.0.1:8790", "files.example.com", false},
-		{"127.0.0.1:8790", "ftp://files.example.com", false},
-		{"127.0.0.1:8790", "https://files.example.com/?a=1", false},
-		{"127.0.0.1", "https://files.example.com", false},
-	} {
-		if err := CheckConfig(bad.addr, bad.base, bad.tls); err == nil {
-			t.Errorf("%+v 应被拒绝", bad)
+	for _, bad := range []string{"", "atom.hivehyde.com/download", "ftp://a.com", "https://a.com/?x=1", "https://a.com/#x",
+		"https://user:pass@a.com", "javascript:alert(1)", "https://"} {
+		if _, err := NormalizeBaseURL(bad); err == nil {
+			t.Errorf("%q 应被拒绝", bad)
+		}
+	}
+}
+
+func TestCheckAddr(t *testing.T) {
+	for addr, tls := range map[string]bool{"127.0.0.1:8790": false, "localhost:8790": false, "[::1]:8790": false, "0.0.0.0:443": true} {
+		if err := CheckAddr(addr, tls); err != nil {
+			t.Errorf("%s tls=%v 应被允许: %v", addr, tls, err)
+		}
+	}
+	for _, addr := range []string{"0.0.0.0:8790", ":8790", "118.195.207.111:8790", "127.0.0.1"} {
+		if err := CheckAddr(addr, false); err == nil {
+			t.Errorf("%s 没有 TLS 应被拒绝", addr)
 		}
 	}
 }

@@ -58,10 +58,9 @@ type Config struct {
 	AdminTLSKey  string
 
 	// ShareAddr 是文件下载入口的监听地址，如 127.0.0.1:8790。为空则不开，助手也就没有分享文件的工具。
-	// ShareBaseURL 是外面访问这个入口用的地址，下载链接以它开头，如 https://files.example.com。
-	// 不是本机地址时必须同时给出 TLS 证书，否则拒绝启动，见 share.CheckConfig。
+	// 不是本机地址时必须同时给出 TLS 证书，否则拒绝启动，见 share.CheckAddr。
+	// 外面访问它用的地址（下载链接以它开头）在管理后台「文件」页填写，存在后台设置里。
 	ShareAddr    string
-	ShareBaseURL string
 	ShareTLSCert string
 	ShareTLSKey  string
 
@@ -94,7 +93,6 @@ func Load() (*Config, error) {
 		AdminTLSKey:       os.Getenv("ATOM_ADMIN_TLS_KEY"),
 
 		ShareAddr:    os.Getenv("ATOM_SHARE_ADDR"),
-		ShareBaseURL: os.Getenv("ATOM_SHARE_BASE_URL"),
 		ShareTLSCert: os.Getenv("ATOM_SHARE_TLS_CERT"),
 		ShareTLSKey:  os.Getenv("ATOM_SHARE_TLS_KEY"),
 
@@ -113,7 +111,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: 设置了 ATOM_WEBHOOK_ADDR 就必须设置 ATOM_WEBHOOK_TOKEN")
 	}
 	if c.ShareAddr != "" {
-		if err := share.CheckConfig(c.ShareAddr, c.ShareBaseURL, c.ShareTLSCert != "" && c.ShareTLSKey != ""); err != nil {
+		if err := share.CheckAddr(c.ShareAddr, c.ShareTLSCert != "" && c.ShareTLSKey != ""); err != nil {
 			return nil, fmt.Errorf("config: ATOM_SHARE_*: %w", err)
 		}
 	}

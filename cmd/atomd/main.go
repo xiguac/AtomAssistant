@@ -241,6 +241,7 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 		// 让进程正常退出，由 systemd 拉起新的。
 		Restart: restart,
 		Status:  status,
+		ShareOn: cfg.ShareAddr != "",
 		Log:     log,
 	})
 	if err != nil {
@@ -320,7 +321,7 @@ func serveShare(ctx context.Context, cfg *config.Config, svc *share.Service, log
 			log.Error("下载入口异常退出", "err", err)
 		}
 	}()
-	log.Info("下载入口已开启", "地址", ln.Addr().String(), "https", tls, "外部地址", cfg.ShareBaseURL)
+	log.Info("下载入口已开启", "地址", ln.Addr().String(), "https", tls)
 	return func() {
 		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -597,10 +598,10 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		if workspace == nil {
 			log.Warn("设置了 ATOM_SHARE_ADDR，但没有启用文件处理（files 一节），对外分享不可用")
 		} else {
-			shares = &share.Service{Store: st, Workspace: workspace, BaseURL: cfg.ShareBaseURL}
+			shares = &share.Service{Store: st, Workspace: workspace, Settings: st}
 			planner = planner.WithShares(true)
 			actuator = actuator.WithShares(shares)
-			log.Info("已启用对外分享", "外部地址", cfg.ShareBaseURL)
+			log.Info("已启用对外分享", "下载入口", cfg.ShareAddr)
 		}
 	}
 	// 代码沙箱：断网、只读工作区，跑出来的文件收进工作区。机器上跑不了时只记下原因，不影响别的能力。

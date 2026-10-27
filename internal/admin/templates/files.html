@@ -19,6 +19,37 @@
   {{if .Entries}}{{template "filetable" (dict "Entries" .Entries "Dir" .Dir "CSRF" $.CSRF)}}{{else}}<div class="empty">{{if .Dir}}这个目录是空的。{{else}}助手还没有生成文件。{{end}}</div>{{end}}
   <div class="band foot"><span class="note muted">删除后不可恢复。目录须先清空方可删除；被替换文件的历史版本不受影响。</span></div>
 </div>
+<h2>下载链接 {{if .Shares.On}}<span class="count">{{len .Shares.Links}}</span>{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+{{if .Shares.On}}
+<form method="post" action="/files/share/base" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad">
+    <label for="share-base">外部访问地址</label><input id="share-base" type="text" name="base" value="{{if .Shares.Base}}{{.Shares.Base}}{{else}}{{.Shares.Suggest}}{{end}}" placeholder="https://atom.example.com/download">
+    <div class="help">{{if .Shares.Base}}下载链接以此地址开头。{{else}}尚未保存，以上为按当前域名给出的建议值。保存前助手无法创建下载链接。{{end}}反向代理须将该路径转发至下载入口。</div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">修改后仅对新建的链接生效。</span>
+    <button class="btn">保存</button>
+  </div>
+</form>
+<div class="card" style="margin-top:12px">
+  {{if .Shares.Links}}<table>
+    <thead><tr><th>分享内容</th><th class="r" style="width:130px">创建时间</th><th class="r" style="width:130px">过期时间</th><th class="r" style="width:90px">操作</th></tr></thead>
+    <tbody>{{range .Shares.Links}}<tr>
+      <td><span class="fname">{{if .Dir}}<svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg>{{else}}<svg class="ico" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg>{{end}}<span>{{.Path}}{{if .Dir}}（{{len .Files}} 个文件）{{end}}</span></span></td>
+      <td class="time r">{{when .CreatedAt}}</td>
+      <td class="time r">{{when .ExpiresAt}}</td>
+      <td class="r"><form method="post" action="/files/share/revoke">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+        <button class="btn danger sm">撤销</button></form></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">当前没有有效的下载链接。</div>{{end}}
+  <div class="band foot"><span class="note muted">仅可分享助手生成的文件，有效期最长 24 小时。撤销后立即失效。链接地址只在创建时提供，此处不显示。</span></div>
+</div>
+{{else}}
+<div class="card pad"><div class="note">下载入口尚未开启。在服务器的环境变量中设置 <span class="mono">ATOM_SHARE_ADDR=127.0.0.1:8790</span> 并重启服务后，可在此设置外部访问地址、管理下载链接。</div></div>
+{{end}}
+
 <div class="card" style="margin-top:16px"><div class="pad note">在「配置文件」页的 files 一节中设置 <span class="mono">encrypt: true</span> 后，写入工作区的文件将以密文保存，读取与下载时自动解密。默认未启用。</div></div>
 
 <dialog class="modal" id="dlg-upload">

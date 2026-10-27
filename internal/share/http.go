@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"path"
 	"strconv"
@@ -63,7 +64,13 @@ func (s *Service) Handler(log *slog.Logger) http.Handler {
 		}
 		sub := r.PathValue("sub")
 		if sub == "" && l.Dir {
-			s.listing(w, l, token)
+			base, err := s.Settings.Setting(r.Context(), BaseURLSetting)
+			if err != nil {
+				log.Error("读取外部访问地址失败", "err", err)
+				http.Error(w, "服务暂时不可用", http.StatusServiceUnavailable)
+				return
+			}
+			listing(w, l, base, token)
 			return
 		}
 		p, ok := pick(l, sub)
@@ -86,7 +93,7 @@ func (s *Service) Handler(log *slog.Logger) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		log.Info("分享的文件被下载", "链接", l.ID, "文件", p.Path, "来源", r.RemoteAddr)
+		log.Info("分享的文件被下载", "链接", l.ID, "文件", p.Path, "来源", client(r))
 		name := path.Base(p.Path)
 		ct, known := contentTypes[strings.ToLower(path.Ext(name))]
 		if !known {
@@ -126,8 +133,19 @@ func pick(l *Link, sub string) (files.Pinned, bool) {
 	return files.Pinned{}, false
 }
 
+// client 给出下载者的地址。经本机的反向代理转过来时取代理记下的 X-Forwarded-For，只用于日志。
+func client(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if ip := net.ParseIP(host); err == nil && ip != nil && ip.IsLoopback() {
+		if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); fwd != "" {
+			return fwd
+		}
+	}
+	return r.RemoteAddr
+}
+
 // listing 列出目录链接里的文件。
-func (s *Service) listing(w http.ResponseWriter, l *Link, token string) {
+func listing(w http.ResponseWriter, l *Link, base, token string) {
 	type item struct {
 		Path string `json:"path"`
 		Size int64  `json:"size"`
@@ -140,7 +158,7 @@ func (s *Service) listing(w http.ResponseWriter, l *Link, token string) {
 	}{Name: path.Base(l.Path), ExpiresAt: l.ExpiresAt}
 	for _, p := range l.Files {
 		rel := strings.TrimPrefix(p.Path, l.Path+"/")
-		out.Files = append(out.Files, item{Path: rel, Size: p.Size, URL: s.link(token, rel)})
+		out.Files = append(out.Files, item{Path: rel, Size: p.Size, URL: link(base, token, rel)})
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(out)
