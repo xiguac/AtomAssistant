@@ -50,8 +50,6 @@
 <div class="card pad"><div class="note">下载入口尚未开启。在服务器的环境变量中设置 <span class="mono">ATOM_SHARE_ADDR=127.0.0.1:8790</span> 并重启服务后，可在此设置外部访问地址、管理下载链接。</div></div>
 {{end}}
 
-<div class="card" style="margin-top:16px"><div class="pad note">在「配置文件」页的 files 一节中设置 <span class="mono">encrypt: true</span> 后，写入工作区的文件将以密文保存，读取与下载时自动解密。默认未启用。</div></div>
-
 <dialog class="modal" id="dlg-upload">
 <form method="post" action="/files" enctype="multipart/form-data">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
@@ -62,9 +60,7 @@
 </dialog>
 {{else}}
 <div class="card pad">
-  <div class="note">文件处理功能尚未启用。请在「配置文件」页添加以下配置并重启服务：</div>
-  <pre>files:
-  dir: /var/lib/atomassistant/files</pre>
+  <div class="note">文件处理功能尚未启用：配置中缺少 files 一节。</div>
 </div>
 {{end}}
 {{end}}

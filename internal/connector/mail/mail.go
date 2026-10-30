@@ -122,7 +122,7 @@ func security(addr string, s Security, implicit string) (Security, error) {
 // dial 登录 IMAP。调用方负责 Logout。
 func (c *Client) dial(ctx context.Context) (*client.Client, error) {
 	if c.IMAPAddr == "" || c.Username == "" || c.Secret == nil {
-		return nil, fmt.Errorf("%w: 邮件连接器缺少地址、账号或密码来源", ErrInvalid)
+		return nil, fmt.Errorf("%w: 邮件数据源缺少地址、账号或密码来源", ErrInvalid)
 	}
 	sec, err := security(c.IMAPAddr, c.IMAPSecurity, "993")
 	if err != nil {

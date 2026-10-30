@@ -154,7 +154,7 @@ func (s *Server) calendarSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		})
 	}()
 	if err == nil {
-		s.opts.Log.Info("日历连接器已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
+		s.opts.Log.Info("日历数据源已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
 	}
 	back(w, r, "/connectors", "日历配置已保存，重启服务后生效。", err)
 }
@@ -191,7 +191,7 @@ func (s *Server) mailSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		})
 	}()
 	if err == nil {
-		s.opts.Log.Info("邮件连接器已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
+		s.opts.Log.Info("邮件数据源已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
 	}
 	back(w, r, "/connectors", "邮件配置已保存，重启服务后生效。", err)
 }
@@ -237,7 +237,7 @@ func (s *Server) weatherSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		})
 	}()
 	if err == nil {
-		s.opts.Log.Info("天气连接器已在后台修改", "更换密钥", key != "", "来自", r.RemoteAddr)
+		s.opts.Log.Info("天气数据源已在后台修改", "更换密钥", key != "", "来自", r.RemoteAddr)
 	}
 	back(w, r, "/connectors", "天气配置已保存，重启服务后生效。", err)
 }
@@ -329,13 +329,13 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 			}
 			all.Search = nil
 		default:
-			return errors.New("连接器类型无效")
+			return errors.New("数据源类型无效")
 		}
 		return nil
 	})
 	if err == nil {
 		s.dropCredential(r.Context(), handle, user)
-		s.opts.Log.Info("连接器已在后台停用", "连接器", which, "来自", r.RemoteAddr)
+		s.opts.Log.Info("数据源已在后台停用", "数据源", which, "来自", r.RemoteAddr)
 	}
 	back(w, r, "/connectors", names[which]+"已停用，重启服务后生效。", err)
 }
@@ -452,7 +452,7 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 			}
 			return fmt.Sprintf("联网搜索连接成功，返回 %d 条结果。", len(results)), nil
 		}
-		return "", errors.New("连接器类型无效")
+		return "", errors.New("数据源类型无效")
 	}()
 	back(w, r, "/connectors", result, err)
 }

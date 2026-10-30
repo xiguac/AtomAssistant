@@ -220,7 +220,7 @@ func (e *env) signIn(c *http.Client, pw, code string) (int, string) {
 
 func TestAdmin_不登录什么都看不到(t *testing.T) {
 	e := setup(t)
-	for _, path := range []string{"/", "/vault", "/memory", "/config", "/files", "/tasks/x", "/files/download?path=a"} {
+	for _, path := range []string{"/", "/vault", "/memory", "/files", "/tasks/x", "/files/download?path=a"} {
 		if code, body := e.get(path); code != http.StatusSeeOther || strings.Contains(body, "环境变量") {
 			t.Errorf("%s 未登录应跳去登录页，实际 %d", path, code)
 		}
@@ -277,7 +277,7 @@ func TestAdmin_改动要带防伪令牌保险库只进不出(t *testing.T) {
 		t.Fatalf("授权的工具应取得到原值: %q %v", got, err)
 	}
 	// 后台的任何页面上都看不到它。
-	for _, path := range []string{"/vault", "/", "/config", "/memory"} {
+	for _, path := range []string{"/vault", "/", "/memory"} {
 		if _, body := e.get(path); strings.Contains(body, secret) {
 			t.Fatalf("%s 页面上出现了环境变量的内容", path)
 		}
@@ -367,38 +367,9 @@ func TestAdmin_任务与外部内容的转义(t *testing.T) {
 	}
 }
 
-func TestAdmin_配置校验与文件(t *testing.T) {
+func TestAdmin_文件(t *testing.T) {
 	e := setup(t)
 	e.login()
-
-	// 有错的配置一个字都不写进去。
-	before, _ := os.ReadFile(e.cfg)
-	for name, bad := range map[string]string{
-		"拼错的字段":   "filez:\n  dir: /tmp\n",
-		"密钥写了明文":  "providers:\n  - {name: d, base_url: 'https://x', api_key: sk-abcdef}\n",
-		"不是 YAML": "::: [",
-	} {
-		code, loc := e.post("/config", url.Values{"csrf": {e.csrf}, "text": {bad}})
-		if code != http.StatusSeeOther || !strings.Contains(loc, "未保存") {
-			t.Errorf("%s: 应被拒绝: %d %s", name, code, loc)
-		}
-		if now, _ := os.ReadFile(e.cfg); !bytes.Equal(now, before) {
-			t.Fatalf("%s: 校验不过时配置文件不应被改动", name)
-		}
-	}
-	good := string(before) + "reply:\n  style: balanced\nproviders:\n  - {name: deepseek, base_url: 'https://api.deepseek.com', api_key: 'vault://deepseek'}\n"
-	if code, loc := e.post("/config", url.Values{"csrf": {e.csrf}, "text": {strings.ReplaceAll(good, "\n", "\r\n")}}); code != http.StatusSeeOther || !strings.Contains(loc, "已保存") {
-		t.Fatalf("合法的配置应保存: %d %s", code, loc)
-	}
-	if now, _ := os.ReadFile(e.cfg); string(now) != good {
-		t.Fatalf("保存的内容不对（换行应统一）: %q", now)
-	}
-	if bak, _ := os.ReadFile(e.cfg + ".bak"); !bytes.Equal(bak, before) {
-		t.Fatal("旧配置应留一个备份")
-	}
-	if _, body := e.get("/config"); !strings.Contains(body, "style: balanced") {
-		t.Fatal("配置页应显示当前的配置")
-	}
 
 	// 上传：浏览器给的文件名里带路径也只认最后一段，出不了工作区。
 	upload := func(filename, dir, content string) (int, string) {
@@ -753,7 +724,7 @@ func TestAdmin_渠道页接入机器人并指定主人(t *testing.T) {
 	}
 }
 
-func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
+func TestAdmin_数据源页配置日历邮件与节假日(t *testing.T) {
 	e := setup(t)
 	e.login()
 	post := func(path string, form url.Values) string {
@@ -812,21 +783,21 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 	// 密码各存一条、各自授权，带着空格也原样存取。
 	cal, err := file.Calendar(e.vault)
 	if err != nil || cal.Default != "个人" {
-		t.Fatalf("日历连接器不对: %+v %v", cal, err)
+		t.Fatalf("日历数据源不对: %+v %v", cal, err)
 	}
 	if got, err := cal.Secret(ctx); err != nil || got != "cal pass word" {
 		t.Fatalf("日历密码应能从环境变量取出且原样: %v", err)
 	}
 	box, err := file.Mail(e.vault)
 	if err != nil || box.Name != "张三" || box.SMTPAddr != "smtp.example.com:587" {
-		t.Fatalf("邮件连接器不对: %+v %v", box, err)
+		t.Fatalf("邮件数据源不对: %+v %v", box, err)
 	}
 	if got, err := box.Secret(ctx); err != nil || got != "mail-secret-9" {
 		t.Fatalf("邮件密码应能从环境变量取出: %v", err)
 	}
 	qw, err := file.Weather(e.vault)
 	if err != nil || qw.Host != "abcxyz.qweatherapi.com" {
-		t.Fatalf("天气连接器不对: %+v %v", qw, err)
+		t.Fatalf("天气数据源不对: %+v %v", qw, err)
 	}
 	if got, err := qw.Secret(ctx); err != nil || got != "qw-key-42" {
 		t.Fatalf("天气的 API KEY 应能从环境变量取出: %v", err)
@@ -834,7 +805,7 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 	_, body := e.get("/connectors")
 	if strings.Contains(body, "cal pass word") || strings.Contains(body, "mail-secret-9") || strings.Contains(body, "qw-key-42") ||
 		!strings.Contains(body, `value="me@example.com"`) || !strings.Contains(body, `value="abcxyz.qweatherapi.com"`) || strings.Count(body, "已配置") < 4 {
-		t.Fatal("连接器页应显示账号与状态，不显示密码")
+		t.Fatal("数据源页应显示账号与状态，不显示密码")
 	}
 
 	// 修改时留空密码：沿用原密码。
@@ -864,7 +835,7 @@ func TestAdmin_连接器页配置日历邮件与节假日(t *testing.T) {
 		{"which": {"mail"}, "imap": {"imap.example.com:993"}, "username": {"me"}}:                            "请填写密码",
 		{"which": {"weather"}}: "API",
 		{"which": {"weather"}, "host": {"abcxyz.qweatherapi.com"}}: "KEY",
-		{"which": {"ftp"}}: "连接器类型无效",
+		{"which": {"ftp"}}: "数据源类型无效",
 	} {
 		if loc := post("/connectors/test", *form); !strings.Contains(loc, want) {
 			t.Fatalf("连接测试应提示 %q: %s", want, loc)
@@ -886,14 +857,17 @@ func TestAdmin_保险库的授权工具从列表勾选(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, body := e.get("/vault")
-	// 可选项来自当前配置；页面上没有手写标识的输入框。
-	for _, want := range []string{`value="connector.calendar"`, `value="connector.mail"`, `value="provider.qwen"`, `value="channel.qq"`, `value="maps.book_ride"`} {
-		if !strings.Contains(body, `type="checkbox" name="tools" `+want) {
-			t.Fatalf("授权列表里应有 %s", want)
+	// 个人信息只授权给工具：可选项是配置里的工具，模型服务、消息源、数据源这些服务不在其中。
+	if !strings.Contains(body, `type="checkbox" name="tools" value="maps.book_ride"`) {
+		t.Fatal("授权列表里应有配置里的工具")
+	}
+	for _, not := range []string{`value="connector.calendar"`, `value="connector.mail"`, `value="provider.qwen"`, `value="channel.qq"`} {
+		if strings.Contains(body, `type="checkbox" name="tools" `+not) {
+			t.Fatalf("授权列表里不应有服务 %s", not)
 		}
 	}
-	// 下拉框里带一个输入框：还没配置的模型服务或渠道，可以直接写标识。
-	if !strings.Contains(body, `<details class="dropdown">`) || !strings.Contains(body, `type="text" name="tools" list="tool-prefixes"`) {
+	// 下拉框里带一个输入框，可以直接写工具名。
+	if !strings.Contains(body, `<details class="dropdown">`) || !strings.Contains(body, `type="text" name="tools" list="tool-names"`) {
 		t.Fatal("授权工具应是带输入框的下拉框")
 	}
 	// 勾了两项：两项都记入授权名单。
@@ -1173,8 +1147,8 @@ func TestAdmin_环境变量页填写助手登记的待填写条目(t *testing.T)
 	if list, _ := reqs.List(ctx); len(list) != 0 {
 		t.Fatalf("处理完之后不应还有待填写的条目: %+v", list)
 	}
-	if _, body = e.get("/vault"); strings.Contains(body, "待填写") || strings.Contains(body, "flight-key-77") || !strings.Contains(body, "MCP server flight") {
-		t.Fatal("填好的条目应归入服务凭据，页面上不显示值")
+	if _, body = e.get("/vault"); strings.Contains(body, "待填写") || strings.Contains(body, "flight-key-77") || strings.Contains(body, "vault://flight") {
+		t.Fatal("填好的是 MCP 的密钥，归 MCP 页管理，环境变量页上不列出，更不显示值")
 	}
 }
 
@@ -1325,7 +1299,7 @@ func TestAdmin_预算用尽的任务设置新上限后继续(t *testing.T) {
 	}
 }
 
-func TestAdmin_连接器页配置联网搜索密钥(t *testing.T) {
+func TestAdmin_数据源页配置联网搜索密钥(t *testing.T) {
 	e := setup(t)
 	e.login()
 	post := func(path string, form url.Values) string {
@@ -1373,7 +1347,7 @@ func TestAdmin_连接器页配置联网搜索密钥(t *testing.T) {
 		t.Fatalf("留空应用已保存的密钥: %s %s", loc, auth)
 	}
 	if _, body := e.get("/connectors"); strings.Contains(body, "sk-search-7") || !strings.Contains(body, "联网搜索") {
-		t.Fatal("连接器页应显示搜索一项，不显示密钥")
+		t.Fatal("数据源页应显示搜索一项，不显示密钥")
 	}
 	if loc := post("/connectors/disable", url.Values{"which": {"search"}}); !strings.Contains(loc, "已停用") {
 		t.Fatalf("停用失败: %s", loc)

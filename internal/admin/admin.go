@@ -85,8 +85,6 @@ const (
 	lockFor     = 5 * time.Minute
 	// maxUpload 是上传文件的大小上限，与工作区的单文件上限一致。
 	maxUpload = files.MaxFileBytes
-	// maxConfigBytes 是配置文件的大小上限。
-	maxConfigBytes = 1 << 20
 )
 
 // Options 是后台的依赖。
@@ -444,8 +442,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /memory/dismiss", auth(s.memoryDismiss))
 	mux.HandleFunc("POST /memory/affirm", auth(s.memoryAffirm))
 	mux.HandleFunc("POST /memory/forget", auth(s.memoryForget))
-	mux.HandleFunc("GET /config", auth(s.configPage))
-	mux.HandleFunc("POST /config", auth(s.configSave))
 	mux.HandleFunc("POST /restart", auth(s.restart))
 	mux.HandleFunc("GET /channels", auth(s.channelsPage))
 	mux.HandleFunc("POST /channels", auth(s.channelSave))
@@ -636,8 +632,6 @@ func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.
 			limit := int64(1 << 20)
 			if r.URL.Path == "/files" {
 				limit = maxUpload + (1 << 20)
-			} else if r.URL.Path == "/config" {
-				limit = maxConfigBytes + (1 << 16)
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			got := r.FormValue("csrf")
@@ -698,9 +692,9 @@ var opNames = []struct{ prefix, name string }{
 	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
 	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
 	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"},
-	{"/config", "修改配置文件"}, {"/restart", "重启服务"},
+	{"/restart", "重启服务"},
 	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
-	{"/connectors/disable", "停用连接器"}, {"/connectors/test", "测试连接器"}, {"/connectors/", "保存连接器"},
+	{"/connectors/disable", "停用数据源"}, {"/connectors/test", "测试数据源"}, {"/connectors/", "保存数据源"},
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
 	{"/mcp/test", "测试 MCP 连接"}, {"/mcp/sync", "读取 MCP 工具"}, {"/mcp/tools", "保存 MCP 工具授权"},
 	{"/mcp/installed/delete", "移除助手安装的 MCP server"}, {"/mcp/", "接入预置的 MCP server"},
@@ -1277,55 +1271,15 @@ func (s *Server) vaultPage(w http.ResponseWriter, r *http.Request, v *view) {
 	if d.Requests, err = s.requests().List(r.Context()); err != nil {
 		v.Error = err.Error()
 	}
+	// 这一页只放个人信息。模型密钥、消息源凭据、MCP 密钥、数据源的密码同样加密存在这里，
+	// 但它们在各自的管理页面里填写和更换，不在这一页列出。
 	for _, m := range metas {
-		if m.Service() {
-			d.Services = append(d.Services, serviceItem{Meta: m, Owners: owners(m.AllowedTools)})
-		} else {
+		if !m.Service() {
 			d.Items = append(d.Items, m)
 		}
 	}
 	v.Data = d
 	s.render(w, "vault", v)
-}
-
-// serviceItem 是保险库总览里的一条服务凭据。
-type serviceItem struct {
-	vault.Meta
-	Owners []owner
-}
-
-// owner 是一条服务凭据属于哪个配置对象，以及在哪个页面管理它。
-type owner struct {
-	Kind, Name, Page string
-}
-
-// owners 把授权名单里的服务名字翻成给人看的归属。
-func owners(users []string) []owner {
-	kinds := []struct{ prefix, kind, page string }{
-		{"provider.", "模型服务", "/models"},
-		{"channel.", "消息源", "/channels"},
-		{"mcp.", "MCP server", "/mcp"},
-	}
-	out := make([]owner, 0, len(users))
-	for _, u := range users {
-		switch u {
-		case config.VaultUserCalendar:
-			out = append(out, owner{"连接器", "日历", "/connectors"})
-			continue
-		case config.VaultUserMail:
-			out = append(out, owner{"连接器", "邮件", "/connectors"})
-			continue
-		case config.VaultUserWeather:
-			out = append(out, owner{"连接器", "天气", "/connectors"})
-			continue
-		}
-		for _, k := range kinds {
-			if name, ok := strings.CutPrefix(u, k.prefix); ok {
-				out = append(out, owner{k.kind, name, k.page})
-			}
-		}
-	}
-	return out
 }
 
 // requests 是助手登记的、待用户填写的条目。
@@ -1382,7 +1336,7 @@ func (s *Server) vaultReplace(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("环境变量条目的值已更换", "名字", label, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/vault", "条目「"+label+"」的值已更换。供模型服务、消息源、连接器、MCP server 使用的需重启服务后生效。", err)
+	back(w, r, "/vault", "条目「"+label+"」的值已更换。供模型服务、消息源、数据源、MCP server 使用的需重启服务后生效。", err)
 }
 
 // vaultRequestDismiss 忽略一条待填写的条目。
@@ -1400,8 +1354,6 @@ type vaultData struct {
 	Requests []vault.Request
 	// Items 是个人信息：授权给工具、由模型用句柄引用的条目。
 	Items []vault.Meta
-	// Services 是服务凭据：在各自的管理页面里填写、由系统连接时取用的条目。
-	Services []serviceItem
 	// Tools 是可以被授权使用保险库条目的对象，供页面勾选。
 	Tools []toolOption
 }
@@ -1412,40 +1364,19 @@ type toolOption struct {
 	Value, Label string
 }
 
-// toolOptions 列出当前配置里所有可以被授权的对象：模型服务、连接器、消息渠道、已授权的 MCP 工具。
-//
-// 做成勾选而不是手写：标识写错一个字符，授权就悄悄落空，调用时才报错。
-// 已有条目上出现过、但配置里已经没有的标识也列出来，免得替换条目时把它丢掉。
+// toolOptions 列出个人信息可以授权给的工具：配置里用到的工具，以及已有条目授权过的工具。
+// 模型服务、消息源、MCP server、数据源这些服务只用自己的凭据，不在可选之列。
 func (s *Server) toolOptions(metas []vault.Meta) []toolOption {
-	out := []toolOption{
-		{config.VaultUserCalendar, "日历连接器"},
-		{config.VaultUserMail, "邮件连接器"},
-		{config.VaultUserWeather, "天气连接器"},
-	}
-	seen := map[string]bool{config.VaultUserCalendar: true, config.VaultUserMail: true, config.VaultUserWeather: true}
+	var out []toolOption
+	seen := map[string]bool{}
 	add := func(value, label string) {
-		if value != "" && !seen[value] {
+		if value != "" && !seen[value] && !vault.ServiceUser(value) {
 			seen[value] = true
 			out = append(out, toolOption{value, label})
 		}
 	}
 	// 配置读不出来时只少了这部分选项，页面照常可用。
 	if raw, err := os.ReadFile(s.opts.ConfigPath); err == nil {
-		if m, err := config.ReadModels(raw); err == nil {
-			for _, p := range m.Providers {
-				add(p.VaultUser(), "模型服务 "+p.Name)
-			}
-		}
-		if list, err := config.ReadChannels(raw); err == nil {
-			for _, c := range list {
-				add(c.VaultUser(), "消息源 "+c.Name)
-			}
-		}
-		if t, err := config.ReadToolset(raw); err == nil {
-			for _, m := range t.MCP {
-				add(m.VaultUser(), "MCP server "+m.Name)
-			}
-		}
 		for _, name := range config.ReadToolNames(raw) {
 			add(name, "工具 "+name)
 		}
@@ -1527,15 +1458,6 @@ func (s *Server) memoryForget(w http.ResponseWriter, r *http.Request, _ *view) {
 
 // ---- 配置 ----
 
-func (s *Server) configPage(w http.ResponseWriter, _ *http.Request, v *view) {
-	raw, err := os.ReadFile(s.opts.ConfigPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		v.Error = "读取配置文件失败: " + err.Error()
-	}
-	v.Data = map[string]string{"Text": string(raw), "Path": s.opts.ConfigPath}
-	s.render(w, "config", v)
-}
-
 // writeConfig 校验并写入配置文件：先写到旁边的临时文件里校验，通过了才替换，旧的那份留一个备份。
 func (s *Server) writeConfig(text string) error {
 	if s.opts.ConfigPath == "" {
@@ -1572,24 +1494,9 @@ func (s *Server) writeConfig(text string) error {
 	return nil
 }
 
-// configSave 校验并保存配置。校验不过的一个字都不会写进去。
-func (s *Server) configSave(w http.ResponseWriter, r *http.Request, _ *view) {
-	text := strings.ReplaceAll(r.PostFormValue("text"), "\r\n", "\n")
-	if len(text) > maxConfigBytes {
-		back(w, r, "/config", "", errors.New("配置内容超出长度限制"))
-		return
-	}
-	if err := s.writeConfig(text); err != nil {
-		back(w, r, "/config", "", err)
-		return
-	}
-	s.opts.Log.Info("配置已在后台修改", "来自", r.RemoteAddr)
-	back(w, r, "/config", "配置已保存，重启服务后生效。", nil)
-}
-
 func (s *Server) restart(w http.ResponseWriter, r *http.Request, v *view) {
 	if s.opts.Restart == nil {
-		back(w, r, "/config", "", errors.New("当前进程未由进程管理器托管，请手动重启"))
+		back(w, r, "/", "", errors.New("当前进程未由进程管理器托管，请手动重启"))
 		return
 	}
 	s.opts.Log.Info("后台请求重启", "来自", r.RemoteAddr)

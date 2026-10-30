@@ -23,7 +23,7 @@ func connectorCmd(st *pg.Store, cfg *config.Config, args []string) error {
 		return err
 	}
 	if file == nil {
-		return fmt.Errorf("未设置 ATOM_CONFIG，不知道要检查哪些连接器")
+		return fmt.Errorf("未设置 ATOM_CONFIG，不知道要检查哪些数据源")
 	}
 	safe, err := vault.Open(st.Vault(), cfg.VaultKey)
 	if err != nil {
@@ -142,7 +142,7 @@ func connectorCmd(st *pg.Store, cfg *config.Config, args []string) error {
 		}
 	}
 	if checked == 0 {
-		fmt.Println("配置里没有 connectors 一节，没有接入任何连接器")
+		fmt.Println("配置里没有 connectors 一节，没有接入任何数据源")
 	}
 	return nil
 }

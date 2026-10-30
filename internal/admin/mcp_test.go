@@ -151,15 +151,13 @@ func TestAdmin_MCP页接入server密钥进保险库并登记工具(t *testing.T)
 		t.Fatalf("已有的授权应保留: %v %+v", err, file)
 	}
 
-	// 保险库是总览：服务凭据和个人信息分开列，服务凭据标明归属。
+	// 环境变量页只列个人信息：MCP 的密钥同样加密存着，但在 MCP 页管理，不出现在这里。
 	if err := e.vault.Seal(context.Background(), "身份证", "110101199001011234", "本人身份证号", []string{"maps.share"}); err != nil {
 		t.Fatal(err)
 	}
 	_, body = e.get("/vault")
-	personal, services, ok := strings.Cut(body, "<b>服务凭据</b>")
-	if !ok || !strings.Contains(personal, "vault://身份证") || strings.Contains(personal, "vault://mcp.maps") ||
-		!strings.Contains(services, "vault://mcp.maps") || !strings.Contains(services, `href="/mcp">MCP server maps</a>`) {
-		t.Fatal("环境变量页应把个人信息和服务凭据分开列，服务凭据链接到它的管理页面")
+	if !strings.Contains(body, "vault://身份证") || strings.Contains(body, "vault://mcp.maps") || strings.Contains(body, "服务凭据") {
+		t.Fatal("环境变量页应只列个人信息，不列服务凭据")
 	}
 	// 一个 server 可以要好几项密钥：在卡片上再加一项，页面上每一项各有一个输入框；它只授权给这个 server。
 	if loc := post("/mcp/key", url.Values{"name": {"maps"}, "secret_name": {"app id"}, "key": {"x"}}); !strings.Contains(loc, "e=") {

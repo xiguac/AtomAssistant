@@ -76,7 +76,7 @@ func (r *Requests) Add(ctx context.Context, req Request) error {
 		return fmt.Errorf("%w: 名字只能用字母、数字、中文及 _ - .", ErrBadRequest)
 	}
 	if ownedByPage(req.Label) {
-		return fmt.Errorf("%w: %s 是模型服务、消息源或连接器的凭据，只能由用户在对应的管理页面填写", ErrBadRequest, req.Label)
+		return fmt.Errorf("%w: %s 是模型服务、消息源或数据源的凭据，只能由用户在对应的管理页面填写", ErrBadRequest, req.Label)
 	}
 	req.Note = strings.Join(strings.Fields(req.Note), " ")
 	if req.Note == "" {

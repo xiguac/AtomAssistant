@@ -151,9 +151,9 @@ reply:
 #   url: http://127.0.0.1:8765
 
 # ---------------------------------------------------------------
-# 连接器：直连开放协议的日历（CalDAV）和邮件（IMAP/SMTP）。不写的那一项就不接入。
+# 数据源：直连开放协议的日历（CalDAV）和邮件（IMAP/SMTP）。不写的那一项就不接入。
 #
-# password 只能写保险库句柄，不接受明文。先把密码存进去并授权给连接器：
+# password 只能写保险库句柄，不接受明文。先把密码存进去并授权给数据源：
 #   atomctl vault put icloud "iCloud App 专用密码" connector.calendar,connector.mail
 # iCloud 要用「App 专用密码」（在 account.apple.com 的"登录与安全"里生成），不是 Apple ID 的登录密码。
 # 写好之后用 atomctl connector check 试连。
@@ -182,7 +182,7 @@ reply:
 #   # 查实时天气、10 天内的逐日预报和正在生效的气象预警。
 #   # host 是你自己的 API Host（控制台的「设置」里看），key 是 API KEY，只能写保险库句柄：
 #   #   atomctl vault put connector.weather "和风天气 API KEY" connector.weather
-#   # 也可以在管理后台的「连接器」页里填。
+#   # 也可以在管理后台的「数据源」页里填。
 #   weather:
 #     host: abcxyz.qweatherapi.com
 #     key: vault://connector.weather
@@ -316,7 +316,7 @@ approval:
       amount_below_yuan: 100
       domain: personal
 
-    # 日历的新建和修改默认直接执行（接入了日历连接器时）。想要每次都确认就写 never：
+    # 日历的新建和修改默认直接执行（接入了日历数据源时）。想要每次都确认就写 never：
     # - tool: calendar.create
     #   never: true
 

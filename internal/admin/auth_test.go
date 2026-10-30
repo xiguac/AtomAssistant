@@ -84,7 +84,7 @@ func TestAuth_没设置登录方式时哪里都去不了(t *testing.T) {
 		t.Fatal("页面应说明必须先设置登录方式")
 	}
 	csrf := reCSRF.FindStringSubmatch(body)[1]
-	for _, path := range []string{"/", "/vault", "/memory", "/config", "/files", "/models"} {
+	for _, path := range []string{"/", "/vault", "/memory", "/files", "/models"} {
 		if code, _ := e.get(path); code != http.StatusSeeOther {
 			t.Errorf("%s 在设置登录方式之前应去不了，实际 %d", path, code)
 		}

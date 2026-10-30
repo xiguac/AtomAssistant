@@ -116,7 +116,7 @@ func (c *Client) loc() *time.Location {
 // dial 取出密码并建立一个带认证的客户端。密码只活在这次调用里。
 func (c *Client) dial(ctx context.Context) (*caldav.Client, error) {
 	if c.Endpoint == "" || c.Username == "" || c.Secret == nil {
-		return nil, fmt.Errorf("%w: 日历连接器缺少地址、账号或密码来源", ErrInvalid)
+		return nil, fmt.Errorf("%w: 日历数据源缺少地址、账号或密码来源", ErrInvalid)
 	}
 	password, err := c.Secret(ctx)
 	if err != nil {
