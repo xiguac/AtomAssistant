@@ -158,11 +158,19 @@ type Router struct {
 	fallback  *Route
 	workers   map[string]Route
 	log       *slog.Logger
+	usage     func(Usage, int64)
 }
 
 // WithLogger 让每次模型调用都记一行耗时与用量。不设就不记。
 func (r *Router) WithLogger(l *slog.Logger) *Router {
 	r.log = l
+	return r
+}
+
+// WithUsage 让每次成功的模型调用都把用量和开销（百万分之一元）交给 fn，后台按天统计 token 用它。
+// fn 在调用方的 goroutine 里同步执行，要快。
+func (r *Router) WithUsage(fn func(u Usage, costMicros int64)) *Router {
+	r.usage = fn
 	return r
 }
 
@@ -261,6 +269,9 @@ func (r *Router) run(ctx context.Context, what string, route Route, req Request)
 			what, route.Provider, route.Model, err)
 	}
 	resp.CostMicros = route.costMicros(resp.Usage)
+	if r.usage != nil {
+		r.usage(resp.Usage, resp.CostMicros)
+	}
 	return resp, nil
 }
 

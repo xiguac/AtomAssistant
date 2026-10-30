@@ -381,6 +381,16 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		return nil, err
 	}
 	router.WithLogger(log.With(oplog.Key, oplog.Model))
+	// 每次模型调用的用量按天累加，后台概览页显示今天和昨天用了多少 token。
+	router.WithUsage(func(u llm.Usage, costMicros int64) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		err := st.AddUsage(ctx, time.Now(), pg.DayUsage{Calls: 1, PromptTokens: u.PromptTokens,
+			CachedTokens: u.CachedTokens, CompletionTokens: u.CompletionTokens, CostMicros: costMicros})
+		if err != nil {
+			log.Warn("记录模型用量失败", "err", err)
+		}
+	})
 	registry, err := file.BuildRegistry()
 	if err != nil {
 		return nil, err

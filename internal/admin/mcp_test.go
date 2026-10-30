@@ -24,6 +24,7 @@ import (
 	"github.com/xiguac/atomassistant/internal/agent"
 	"github.com/xiguac/atomassistant/internal/config"
 	"github.com/xiguac/atomassistant/internal/skillscan"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // keyedMCP 起一个要在网址里带 key 的远程 MCP server，像高德那样：一个自称只读的工具，一个没有自称的。
@@ -558,14 +559,15 @@ func TestAdmin_系统提示词页可以自己添加段落(t *testing.T) {
 	}
 }
 
-func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T) {
+func TestAdmin_批量处理任务而记忆不受影响(t *testing.T) {
 	e := setup(t)
 	e.login()
 	ctx := context.Background()
-	post := func(form url.Values) string {
+	post := func(action string, form url.Values) string {
 		t.Helper()
 		form.Set("csrf", e.csrf)
-		_, loc := e.post("/tasks/delete", form)
+		form.Set("action", action)
+		_, loc := e.post("/tasks/batch", form)
 		return loc
 	}
 	// 四个任务：两个办完了，一个失败了，一个还在排队。
@@ -609,16 +611,21 @@ func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T)
 		t.Fatal(err)
 	}
 
-	_, body := e.get("/tasks")
-	if !strings.Contains(body, `name="id" value="`+done1.ID+`"`) || strings.Contains(body, `name="id" value="`+queued.ID+`"`) {
-		t.Fatal("只有已结束的任务可以勾选删除")
+	listed := func(query, id string) bool {
+		t.Helper()
+		_, body := e.get("/?" + query)
+		return strings.Contains(body, `name="id" value="`+id+`"`)
 	}
-	if loc := post(url.Values{}); !strings.Contains(loc, "请先勾选") {
+	if !listed("tab=ended", done1.ID) || listed("tab=ended", queued.ID) || !listed("tab=active", queued.ID) || listed("tab=active", done1.ID) {
+		t.Fatal("「已结束」只列结束了的任务，「进行中」只列没结束的")
+	}
+	if loc := post("delete", url.Values{}); !strings.Contains(loc, "请先勾选") {
 		t.Fatalf("什么都没选应提示: %s", loc)
 	}
-	// 勾选删除：没结束的任务即使编号混在里面也删不掉。
-	if loc := post(url.Values{"id": {done1.ID, queued.ID}}); !strings.Contains(loc, "已删除 1 个") {
-		t.Fatalf("应只删掉结束了的那一个: %s", loc)
+	// 勾选删除：没结束的任务即使编号混在里面也删不掉。操作完回到原来那个列表。
+	if loc := post("delete", url.Values{"id": {done1.ID, queued.ID}, "back": {"tab=ended"}}); !strings.Contains(loc, "已删除 1 个") ||
+		!strings.Contains(loc, "1 个不适用") || !strings.HasPrefix(loc, "/?tab=ended&ok=") {
+		t.Fatalf("应只删掉结束了的那一个，并回到原列表: %s", loc)
 	}
 	if _, err := e.store.GetTask(ctx, done1.ID); err == nil {
 		t.Fatal("勾选的已结束任务应被删除")
@@ -641,16 +648,78 @@ func TestAdmin_批量删除已结束的任务而记忆不受影响(t *testing.T)
 		t.Fatalf("任务模型的评分记录应保留: %+v %v", tally, err)
 	}
 
-	// 删除全部已结束的：完成的和失败的都删，排队的留着。
-	if loc := post(url.Values{"all": {"1"}}); !strings.Contains(loc, "已删除 2 个") {
-		t.Fatalf("应删掉剩下两个已结束的任务: %s", loc)
+	// 归档：只收起已结束的，收起后只在「已归档」里出现；取消归档放回来。
+	if loc := post("archive", url.Values{"id": {failed.ID, queued.ID}}); !strings.Contains(loc, "已归档 1 个") {
+		t.Fatalf("应只归档结束了的那一个: %s", loc)
 	}
-	left, err := e.store.ListTasks(ctx, false, 10)
-	if err != nil || len(left) != 1 || left[0].ID != queued.ID {
-		t.Fatalf("只应剩下还在排队的任务: %+v %v", left, err)
+	if listed("tab=all", failed.ID) || listed("tab=ended", failed.ID) || !listed("tab=archived", failed.ID) {
+		t.Fatal("归档的任务只应出现在「已归档」里")
 	}
-	_ = done2
-	_ = failed
+	if loc := post("unarchive", url.Values{"id": {failed.ID}}); !strings.Contains(loc, "已取消归档 1 个") || !listed("tab=ended", failed.ID) {
+		t.Fatalf("取消归档后应回到「已结束」: %s", loc)
+	}
+
+	// 取消：只作用于没结束的。
+	if loc := post("cancel", url.Values{"id": {queued.ID, done2.ID}}); !strings.Contains(loc, "已取消 1 个") {
+		t.Fatalf("应只取消还在排队的那一个: %s", loc)
+	}
+	if tk, err := e.store.GetTask(ctx, queued.ID); err != nil || tk.State != core.StateCancelled {
+		t.Fatalf("排队的任务应被取消: %+v %v", tk, err)
+	}
+	if loc := post("explode", url.Values{"id": {done2.ID}}); !strings.Contains(loc, "未知的操作") {
+		t.Fatalf("不认识的操作应报错: %s", loc)
+	}
+	// 回去的地址只认查询条件，不能被拿去跳到别的网站。
+	if loc := post("archive", url.Values{"id": {done2.ID}, "back": {"//evil.example"}}); !strings.HasPrefix(loc, "/?ok=") {
+		t.Fatalf("带斜杠的回跳地址应被忽略: %s", loc)
+	}
+}
+
+func TestAdmin_概览页按日期筛选任务并显示token用量(t *testing.T) {
+	e := setup(t)
+	e.login()
+	ctx := context.Background()
+	now := time.Now()
+	old := core.NewTask("上个月的事", "上个月的事", core.TrustUser)
+	old.CreatedAt = now.AddDate(0, -1, 0)
+	fresh := core.NewTask("今天的事", "今天的事", core.TrustUser)
+	for _, tk := range []*core.Task{old, fresh} {
+		if err := e.store.CreateTask(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed := func(query, id string) bool {
+		t.Helper()
+		_, body := e.get("/?" + query)
+		return strings.Contains(body, `name="id" value="`+id+`"`)
+	}
+	if !listed("tab=today", fresh.ID) || listed("tab=today", old.ID) || listed("tab=week", old.ID) || !listed("tab=all", old.ID) {
+		t.Fatal("今日、近 7 日应按创建时间筛选")
+	}
+	day := old.CreatedAt.Format(time.DateOnly)
+	if !listed("tab=all&from="+day+"&to="+day, old.ID) || listed("tab=all&from="+day+"&to="+day, fresh.ID) {
+		t.Fatal("自选日期应包含起止当天")
+	}
+	if _, body := e.get("/?tab=all&from=昨天"); !strings.Contains(body, "开始日期格式不对") {
+		t.Fatal("日期格式不对应提示")
+	}
+
+	if err := e.store.AddUsage(ctx, now, pg.DayUsage{Calls: 2, PromptTokens: 12000, CompletionTokens: 3000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AddUsage(ctx, now, pg.DayUsage{Calls: 1, PromptTokens: 500, CompletionTokens: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.store.AddUsage(ctx, now.AddDate(0, 0, -1), pg.DayUsage{Calls: 1, PromptTokens: 800, CompletionTokens: 200}); err != nil {
+		t.Fatal(err)
+	}
+	_, body := e.get("/")
+	if !strings.Contains(body, "<b>1.6 万</b><span>今日 token 消耗 · 3 次调用") || !strings.Contains(body, "<b>1000</b><span>昨日 token 消耗 · 1 次调用") {
+		t.Fatalf("应显示今天、昨天的 token 用量:\n%s", body[strings.Index(body, `class="stat"`):][:600])
+	}
+	if code, _ := e.get("/tasks"); code != http.StatusSeeOther {
+		t.Fatalf("旧的任务页地址应跳到概览页: %d", code)
+	}
 }
 
 func TestAdmin_渠道页接入飞书钉钉与微信扫码连接(t *testing.T) {

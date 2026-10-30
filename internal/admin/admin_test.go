@@ -355,11 +355,8 @@ func TestAdmin_任务与外部内容的转义(t *testing.T) {
 	if !strings.Contains(body, "待确认操作：") || !strings.Contains(body, ">mail.send</span>") || !strings.Contains(body, "不可撤销") || !strings.Contains(body, "收到，周五见") || !strings.Contains(body, "liwei@example.com") {
 		t.Fatalf("应完整展示等确认的动作:\n%s", body)
 	}
-	if _, home := e.get("/"); !strings.Contains(home, `需要你处理 <span class="count warn">1</span>`) || !strings.Contains(home, "待确认：") {
-		t.Fatal("概览页应把它列在需要你处理里")
-	}
-	if _, list := e.get("/tasks"); !strings.Contains(list, `待处理 <span class="count warn">1</span>`) || !strings.Contains(list, `<span class="badge">1</span>`) {
-		t.Fatal("任务页应把它列在待处理里，导航上标出数量")
+	if _, home := e.get("/"); !strings.Contains(home, `<b class="warn">1</b><span>等待你处理的任务</span>`) || !strings.Contains(home, `<span class="badge">1</span>`) {
+		t.Fatal("概览页应数出一个等你处理的任务，导航上标出数量")
 	}
 	if code, loc := e.post("/tasks/"+id+"/approve", url.Values{"csrf": {e.csrf}}); code != http.StatusSeeOther || !strings.Contains(loc, "已批准") {
 		t.Fatalf("批准失败: %d %s", code, loc)

@@ -1,6 +1,6 @@
 {{define "content"}}
-<div class="pagehead"><h1>概览</h1><a class="btn sec sm" href="/tasks">全部任务</a></div>
-<div class="sub">需要你处理的事项、正在执行的任务与最近的结果。</div>
+<div class="pagehead"><h1>概览</h1></div>
+<div class="sub">任务进展与模型用量，在这里创建和管理任务。</div>
 
 {{with .Data}}
 {{if .Setup}}
@@ -15,21 +15,13 @@
 {{end}}
 
 <div class="stat">
-  <a href="/tasks"><b class="{{if .Waiting}}warn{{end}}">{{len .Waiting}}</b><span>待处理任务</span></a>
-  <a href="/tasks"><b>{{len .Active}}</b><span>进行中</span></a>
-  <a href="/vault"><b class="{{if .VaultRequests}}warn{{end}}">{{.VaultRequests}}</b><span>待填写的环境变量</span></a>
-  <a href="/memory"><b class="{{if .MemoryPending}}warn{{end}}">{{.MemoryPending}}</b><span>待核实的记忆</span></a>
+  <a href="/?tab=active"><b>{{.Active}}</b><span>进行中的任务</span></a>
+  <a href="/?tab=active"><b class="{{if .Waiting}}warn{{end}}">{{.Waiting}}</b><span>等待你处理的任务</span></a>
+  <div><b>{{tokens .Today.Tokens}}</b><span>今日 token 消耗{{if .Today.Calls}} · {{.Today.Calls}} 次调用{{end}}{{if .Today.CostMicros}} · {{yuan .Today.CostMicros}}{{end}}</span></div>
+  <div><b>{{tokens .Yesterday.Tokens}}</b><span>昨日 token 消耗{{if .Yesterday.Calls}} · {{.Yesterday.Calls}} 次调用{{end}}{{if .Yesterday.CostMicros}} · {{yuan .Yesterday.CostMicros}}{{end}}</span></div>
 </div>
 
-<div class="cols">
-<div>
-<h2 style="margin-top:0">需要你处理 <span class="count {{if or .Waiting .VaultRequests .MemoryPending}}warn{{end}}">{{add (add (len .Waiting) .VaultRequests) .MemoryPending}}</span></h2>
-<div class="card">
-  {{range .Waiting}}<a class="todo" href="/tasks/{{.ID}}">
-    <span class="ico-wrap"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg></span>
-    <div class="body"><b>{{short .Title 40}}</b><span>{{waitKind .}}：{{short (waitText .) 120}}</span></div>
-    <span class="w">{{when .UpdatedAt}}</span>
-  </a>{{end}}
+{{if or .VaultRequests .MemoryPending}}<div class="card notices">
   {{if .VaultRequests}}<a class="todo" href="/vault">
     <span class="ico-wrap"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg></span>
     <div class="body"><b>{{.VaultRequests}} 项环境变量待填写</b><span>助手在任务中需要用到的密钥或个人信息，由你填写后才可使用</span></div>
@@ -38,40 +30,65 @@
     <span class="ico-wrap"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/></svg></span>
     <div class="body"><b>{{.MemoryPending}} 条记忆待核实</b><span>与已有记忆冲突或来源于外部内容的信息，确认后才会生效</span></div>
   </a>{{end}}
-  {{if not (or .Waiting .VaultRequests .MemoryPending)}}<div class="empty">暂无需要处理的事项。</div>{{end}}
-</div>
+</div>{{end}}
 
-<h2>进行中 <span class="count {{if .Active}}info{{end}}">{{len .Active}}</span></h2>
-<div class="card rows">
-  {{range .Active}}<a href="/tasks/{{.ID}}">
-    <span class="t">{{short .Title 30}}</span>
-    <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
-    <span class="d">{{short .Reason 100}}</span>
-    <span class="w">{{when .UpdatedAt}}</span>
-  </a>{{else}}<div class="empty" style="justify-content:center">暂无进行中的任务。</div>{{end}}
-</div>
-
-<h2>最近结束 <a class="btn sec sm" href="/tasks">查看全部</a></h2>
-<div class="card rows">
-  {{range .Recent}}<a href="/tasks/{{.ID}}">
-    <span class="t">{{short .Title 30}}</span>
-    <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
-    <span class="d">{{short .Reason 100}}</span>
-    <span class="w">{{when .UpdatedAt}}</span>
-  </a>{{else}}<div class="empty" style="justify-content:center">暂无已结束的任务。</div>{{end}}
-</div>
-</div>
-
-<div class="lead">
-<form method="post" action="/tasks" class="card quick sticky">
+<form method="post" action="/tasks" class="card quick">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>交代一件事</b></div>
+  <div class="band"><b>创建任务</b></div>
   <div class="pad" style="padding-bottom:8px">
     <textarea class="bare" name="goal" aria-label="任务内容" placeholder="例如：下周五下午三点与供应商开会，地点 3 号会议室，请添加日程"></textarea>
   </div>
   <div class="band foot"><span class="note muted">信息不足时，助手会向你提问。</span><button class="btn">创建任务</button></div>
 </form>
+
+{{with .List}}
+<h2>任务 <span class="count">{{.Total}}</span></h2>
+<div class="filters tasks-filter">
+  <nav class="seg" aria-label="任务筛选">
+    {{range taskTabs}}<a href="/?tab={{.ID}}{{with $.Data.List.From}}&amp;from={{.}}{{end}}{{with $.Data.List.To}}&amp;to={{.}}{{end}}" class="{{if eq .ID $.Data.List.Tab}}on{{end}}">{{.Name}}</a>{{end}}
+  </nav>
+  <form method="get" action="/" class="dates">
+    <input type="hidden" name="tab" value="{{.Tab}}">
+    <label><span>创建日期</span><input type="date" name="from" value="{{.From}}" aria-label="开始日期"></label>
+    <span class="muted">至</span>
+    <input type="date" name="to" value="{{.To}}" aria-label="结束日期">
+    <button class="btn sec sm">筛选</button>
+    {{if or .From .To}}<a class="btn sec sm" href="/?tab={{.Tab}}">清除日期</a>{{end}}
+  </form>
 </div>
-</div>
+
+{{if .Tasks}}<form method="post" action="/tasks/batch" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="back" value="{{.Query}}">
+  <div class="band">
+    <label class="check"><input type="checkbox" data-check-all aria-label="全选本页任务">全选本页</label>
+    <div class="actions">
+      {{if eq .Tab "archived"}}<button class="btn sec sm" name="action" value="unarchive">取消归档</button>
+      {{else}}<button class="btn sec sm" name="action" value="archive">归档</button>
+      <button class="btn sec sm" name="action" value="cancel">取消任务</button>{{end}}
+      <button class="btn danger sm" name="action" value="delete">删除</button>
+    </div>
+  </div>
+  <div class="rows">
+  {{range .Tasks}}<div>
+    <input type="checkbox" name="id" value="{{.ID}}" aria-label="选择任务「{{short .Title 30}}」">
+    <a class="pick" href="/tasks/{{.ID}}">
+      <span class="t">{{short .Title 30}}</span>
+      <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
+      <span class="d">{{short .Reason 100}}</span>
+      <span class="w">{{when .CreatedAt}}</span>
+    </a>
+  </div>{{end}}
+  </div>
+  <div class="band foot">
+    <span class="note muted">删除与归档只作用于已结束的任务，取消只作用于未结束的任务，其余勾选项会跳过。删除不可恢复，任务提炼的记忆与评分不受影响。</span>
+    {{if gt .Pages 1}}<div class="actions pager">
+      {{if gt .Page 1}}<a class="btn sec sm" href="/?{{.Query}}&amp;p={{add .Page -1}}">上一页</a>{{end}}
+      <span class="muted">第 {{.Page}} / {{.Pages}} 页</span>
+      {{if lt .Page .Pages}}<a class="btn sec sm" href="/?{{.Query}}&amp;p={{add .Page 1}}">下一页</a>{{end}}
+    </div>{{end}}
+  </div>
+</form>{{else}}<div class="card empty">没有符合条件的任务。</div>{{end}}
+{{end}}
 {{end}}
 {{end}}

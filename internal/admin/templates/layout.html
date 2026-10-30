@@ -41,9 +41,6 @@ svg.ico { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; st
 .nav a:hover { background:var(--canvas); color:var(--text); }
 .nav a.on { background:var(--wash); color:var(--primary); }
 .nav a > span:first-of-type { flex:1; min-width:0; }
-/* 导航按用途分组：日常用的、助手能做什么、系统本身。 */
-.nav-group { padding:12px 12px 4px; font-size:11px; line-height:14px; font-weight:500; letter-spacing:.05em; color:var(--muted); }
-.nav-group:first-child { padding-top:0; }
 /* 待处理的数量：琥珀色只用于"等你处理"。 */
 .badge { flex:none; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--warn-bar); color:#fff; font:600 11px/18px var(--sans); text-align:center; }
 .side { overflow-y:auto; }
@@ -120,8 +117,8 @@ h2 { font-size:16px; line-height:24px; font-weight:600; letter-spacing:-.005em; 
 /* 表单 */
 label { display:block; font-size:13px; line-height:16px; font-weight:500; color:var(--text-2); margin-bottom:6px; }
 .help { font-size:12px; line-height:16px; color:var(--muted); margin-top:6px; }
-input[type=text], input[type=password], textarea, select { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:13px/20px var(--sans); padding:7px 10px; outline:0; }
-input[type=text], input[type=password], select { height:36px; }
+input[type=text], input[type=password], input[type=date], textarea, select { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--text); font:13px/20px var(--sans); padding:7px 10px; outline:0; }
+input[type=text], input[type=password], input[type=date], select { height:36px; }
 .checks { display:flex; flex-wrap:wrap; gap:8px 18px; }
 /* 下拉多选：不用脚本，展开与收起靠 details，选中的数量靠 :has 反映在框里 */
 details.dropdown { display:block; position:relative; }
@@ -365,11 +362,18 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 .setup .todo.done .body b { color:var(--text-2); }
 .quick textarea { min-height:72px; }
 .stat { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:20px; }
-.stat a { display:block; padding:14px 16px; background:var(--card); border:1px solid var(--line); border-radius:8px; color:inherit; }
+.stat > * { display:block; min-width:0; padding:14px 16px; background:var(--card); border:1px solid var(--line); border-radius:8px; color:inherit; }
 .stat a:hover { border-color:var(--line-strong); color:inherit; }
 .stat b { display:block; font-size:22px; line-height:28px; font-weight:600; }
 .stat b.warn { color:var(--warn); }
 .stat span { font-size:12px; color:var(--text-2); }
+.notices { margin-bottom:20px; }
+.quick { margin-bottom:8px; }
+.tasks-filter { align-items:center; justify-content:space-between; }
+.tasks-filter .dates { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.tasks-filter .dates label { display:flex; align-items:center; gap:8px; margin:0; font-weight:400; color:var(--text-2); font-size:13px; white-space:nowrap; }
+.tasks-filter .dates input[type=date] { width:150px; }
+.pager { align-items:center; }
 
 
 /* 后台提交后的提示：浮在页面下方，几秒后自行消失，不挪动页面内容。 */
@@ -389,10 +393,8 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   .navtoggle:focus-visible ~ .side .burger { outline:2px solid rgba(37,99,235,.3); outline-offset:2px; }
   .nav { display:none; padding:4px 12px 8px; gap:4px; }
   .navtoggle:checked ~ .side .nav { display:grid; grid-template-columns:1fr 1fr; padding-bottom:12px; }
-  .nav-group { grid-column:1 / -1; padding:12px 4px 2px; }
-  .nav-group:first-child { padding-top:4px; }
-  /* 底部标签栏：常用的四页加「更多」，「更多」展开全部导航。 */
-  .tabbar { display:grid; grid-template-columns:repeat(5,1fr); position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--card); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+  /* 底部标签栏：常用的三页加「更多」，「更多」展开全部导航。 */
+  .tabbar { display:grid; grid-template-columns:repeat(4,1fr); position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--card); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
   .tabbar a, .tabbar label { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; height:56px; margin:0; color:var(--text-2); font-size:11px; line-height:14px; font-weight:500; cursor:pointer; }
   .tabbar .on { color:var(--primary); }
   .tabbar svg.ico { width:22px; height:22px; }
@@ -400,7 +402,10 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   .navtoggle:checked ~ .tabbar label { color:var(--primary); }
   #toasts { bottom:calc(72px + env(safe-area-inset-bottom)); }
   .stat { grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
-  .stat a { padding:12px 14px; }
+  .stat > * { padding:12px 14px; }
+  .tasks-filter .dates { width:100%; }
+  .tasks-filter .dates label { flex:1 1 100%; }
+  .tasks-filter .dates input[type=date] { flex:1; width:auto; min-width:0; }
   .todo { padding:12px 16px; }
   .todo .w, .todo > .btn { display:none; }
   /* 桌面上标签不折行，免得窄列里一行一个字；手机上卡片够宽，长标签允许折行，不撑出横向滚动。 */
@@ -426,7 +431,7 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 
   /* 触控尺寸；输入框字号不小于 16px，否则 iOS 点进去会自动放大页面。 */
   .btn { height:44px; } .btn.sm { height:40px; }
-  input[type=text], input[type=password], select { height:44px; font-size:16px; }
+  input[type=text], input[type=password], input[type=date], select { height:44px; font-size:16px; }
   textarea { font-size:16px !important; }
   textarea.code { font-size:13px; min-height:360px; padding:12px 16px; }
   input[type=checkbox] { width:20px; height:20px; }
@@ -504,19 +509,15 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
     <label for="navtoggle" class="burger"><svg class="ico" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>菜单</label>
   </div>
   <nav class="nav">
-    <div class="nav-group">日常</div>
-    <a href="/" class="{{if (eq .Page "home")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/></svg><span>概览</span></a>
-    <a href="/tasks" class="{{if or (eq .Page "tasks") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>任务</span>{{with .Badges.Tasks}}<span class="badge">{{.}}</span>{{end}}</a>
+    <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/></svg><span>概览</span>{{with .Badges.Tasks}}<span class="badge">{{.}}</span>{{end}}</a>
     <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg><span>记忆</span>{{with .Badges.Memory}}<span class="badge">{{.}}</span>{{end}}</a>
     <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg><span>文件</span></a>
-    <div class="nav-group">助手能力</div>
     <a href="/models" class="{{if eq .Page "models"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 3.5V7M14 3.5V7M10 17v3.5M14 17v3.5M3.5 10H7M3.5 14H7M17 10h3.5M17 14h3.5"/></svg><span>模型</span></a>
     <a href="/channels" class="{{if or (eq .Page "channels") (eq .Page "weixin")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-4.5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/></svg><span>消息源</span></a>
     <a href="/connectors" class="{{if eq .Page "connectors"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.5 12.5 5a4.6 4.6 0 0 1 6.5 6.5L17.5 13"/><path d="M13 17.5 11.5 19A4.6 4.6 0 0 1 5 12.5L6.5 11"/></svg><span>连接器</span></a>
     <a href="/mcp" class="{{if eq .Page "mcp"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M9 3.5v4M15 3.5v4"/><path d="M6.5 7.5h11v4a5.5 5.5 0 0 1-11 0Z"/><path d="M12 17v3.5"/></svg><span>MCP</span></a>
     <a href="/skills" class="{{if eq .Page "skills"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M6 4.5h9l3 3v12H6Z"/><path d="M9 10h6M9 13.5h6M9 17h3.5"/></svg><span>Skill</span></a>
     <a href="/prompts" class="{{if eq .Page "prompts"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4.5 5.5h15v10h-8l-4 3.5v-3.5h-3Z"/><path d="M8.5 9.5h7M8.5 12.5h4"/></svg><span>系统提示词</span></a>
-    <div class="nav-group">系统</div>
     <a href="/vault" class="{{if eq .Page "vault"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.5v2"/></svg><span>环境变量</span>{{with .Badges.Vault}}<span class="badge">{{.}}</span>{{end}}</a>
     <a href="/security" class="{{if or (eq .Page "security") (eq .Page "password")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3.5 5 6v5.5c0 4.2 2.9 7.4 7 9 4.1-1.6 7-4.8 7-9V6Z"/><path d="m9.3 12 2 2 3.5-4"/></svg><span>登录与安全</span></a>
     <a href="/config" class="{{if or (eq .Page "config") (eq .Page "restarting")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></svg><span>配置文件</span></a>
@@ -529,11 +530,10 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   </div>
 </aside>
 <nav class="tabbar" aria-label="常用页面">
-  <a href="/" class="{{if eq .Page "home"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/></svg><span>概览</span>{{with .Badges.Total}}<span class="badge">{{.}}</span>{{end}}</a>
-  <a href="/tasks" class="{{if or (eq .Page "tasks") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>任务</span></a>
+  <a href="/" class="{{if or (eq .Page "home") (eq .Page "task")}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9.5h11V10"/><path d="M10 19.5v-5h4v5"/></svg><span>概览</span>{{with .Badges.Total}}<span class="badge">{{.}}</span>{{end}}</a>
   <a href="/memory" class="{{if eq .Page "memory"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3a7 7 0 0 0-4 12.7V18h8v-2.3A7 7 0 0 0 12 3Z"/><path d="M9.5 21h5"/><path d="M12 11v4"/><circle cx="12" cy="9" r="1"/></svg><span>记忆</span></a>
   <a href="/files" class="{{if eq .Page "files"}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg><span>文件</span></a>
-  <label for="navtoggle" class="{{if not (or (eq .Page "home") (eq .Page "tasks") (eq .Page "task") (eq .Page "memory") (eq .Page "files"))}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg><span>更多</span></label>
+  <label for="navtoggle" class="{{if not (or (eq .Page "home") (eq .Page "task") (eq .Page "memory") (eq .Page "files"))}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg><span>更多</span></label>
 </nav>
 <main class="main"><div class="wrap">
   {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：

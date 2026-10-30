@@ -29,6 +29,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -210,6 +211,9 @@ func New(opts Options) (*Server, error) {
 		"join":       strings.Join,
 		"size":       humanSize,
 		"add":        func(a, b int) int { return a + b },
+		"tokens":     fmtTokens,
+		"yuan":       func(micros int64) string { return fmt.Sprintf("¥%.2f", float64(micros)/1e6) },
+		"taskTabs":   func() any { return taskTabs },
 		"pct":        func(f float64) int { return int(f*100 + 0.5) },
 		// 配置里的类别是字符串，记录里的是 team.Category，两种都接。
 		"catName":  func(c any) string { return team.CategoryName(team.Category(fmt.Sprint(c))) },
@@ -420,7 +424,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /logout", auth(s.logout))
 	mux.HandleFunc("GET /{$}", auth(s.home))
 	mux.HandleFunc("POST /tasks", auth(s.createTask))
-	mux.HandleFunc("POST /tasks/delete", auth(s.deleteTasks))
+	mux.HandleFunc("POST /tasks/batch", auth(s.batchTasks))
 	mux.HandleFunc("GET /tasks", auth(s.tasksPage))
 	mux.HandleFunc("GET /tasks/{id}", auth(s.taskPage))
 	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
@@ -687,7 +691,7 @@ func (s *Server) logOperation(r *http.Request, o *outcome) {
 
 // opNames 是后台各个改动给人看的叫法，按地址前缀认，长的在前。
 var opNames = []struct{ prefix, name string }{
-	{"/tasks/delete", "删除已结束的任务"}, {"/tasks/", "处理任务"}, {"/tasks", "创建任务"},
+	{"/tasks/batch", "批量处理任务"}, {"/tasks/", "处理任务"}, {"/tasks", "创建任务"},
 	{"/models/provider/delete", "删除模型服务"}, {"/models/provider", "保存模型服务"}, {"/models/main", "设置主 AI"},
 	{"/models/agent/delete", "删除协作模型"}, {"/models/agent", "保存协作模型"}, {"/models/test", "测试模型连接"},
 	{"/models/budget", "保存任务预算"},
@@ -750,38 +754,69 @@ func back(w http.ResponseWriter, r *http.Request, to, notice string, err error) 
 		_ = json.NewEncoder(w).Encode(out)
 		return
 	}
-	q := "?ok=" + template.URLQueryEscaper(notice)
+	sep := "?"
+	if strings.Contains(to, "?") {
+		sep = "&"
+	}
+	q := sep + "ok=" + template.URLQueryEscaper(notice)
 	if err != nil {
-		q = "?e=" + template.URLQueryEscaper(err.Error())
+		q = sep + "e=" + template.URLQueryEscaper(err.Error())
 	}
 	http.Redirect(w, r, to+q, http.StatusSeeOther)
 }
 
 // ---- 任务 ----
 
-type homeData struct {
-	Waiting []*core.Task
-	Active  []*core.Task
-	Recent  []*core.Task
-}
-
-// overviewData 是「概览」页：需要用户处理的事、正在办的事、最近办完的事，以及还没配好的几项。
+// overviewData 是「概览」页：任务和 token 的数字、创建任务的输入框、可筛选的任务列表。
 type overviewData struct {
-	homeData
+	// Active 是正在进行的任务数，Waiting 是等用户处理的任务数。
+	Active, Waiting int
+	// Today、Yesterday 是今天、昨天全部模型调用的用量。
+	Today, Yesterday pg.DayUsage
 	// VaultRequests 与 MemoryPending 是助手登记的待填环境变量、待核实的记忆的数量。
 	VaultRequests, MemoryPending int
 	// Setup 是开始使用前要配好的几项，全部配好时为空。
 	Setup []setupItem
+	List  taskList
 }
+
+// taskList 是概览页下方的任务列表：一种筛法下的一页任务。
+type taskList struct {
+	Tab      string
+	From, To string
+	Tasks    []*core.Task
+	Total    int
+	Page     int
+	Pages    int
+	// Query 是不含页码的筛选条件，翻页和批量操作后回到同一个列表时用。已经编码过，直接拼进地址。
+	Query template.URL
+}
+
+// fmtTokens 把 token 数写成好读的样子：一万以下照写，以上按万、亿。
+func fmtTokens(n int64) string {
+	switch {
+	case n >= 100_000_000:
+		return fmt.Sprintf("%.2f 亿", float64(n)/1e8)
+	case n >= 10_000:
+		return fmt.Sprintf("%.1f 万", float64(n)/1e4)
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+// taskTabs 是任务列表顶上的标签，按显示顺序。
+var taskTabs = []struct{ ID, Name string }{
+	{"today", "今日"}, {"yesterday", "昨日"}, {"week", "近 7 日"},
+	{"ended", "已结束"}, {"active", "进行中"}, {"all", "全部"}, {"archived", "已归档"},
+}
+
+// tasksPerPage 是任务列表每页的条数。
+const tasksPerPage = 50
 
 // setupItem 是开始使用前要配好的一项。
 type setupItem struct {
 	Title, Hint, Href, Action string
 	Done                      bool
 }
-
-// recentOnOverview 是概览页上列出的最近办完的任务的条数，其余的在「任务」页。
-const recentOnOverview = 5
 
 // setupItems 检查开始使用前要配好的几项。读不出配置的那一项按没配好算。
 func (s *Server) setupItems(r *http.Request) []setupItem {
@@ -824,60 +859,129 @@ func (s *Server) setupItems(r *http.Request) []setupItem {
 	return nil
 }
 
-// tasksOf 把任务分成要用户处理的、进行中的、已结束的三组。
-func tasksOf(tasks []*core.Task) homeData {
-	var d homeData
-	for _, t := range tasks {
-		switch {
-		case needsUser(t):
-			d.Waiting = append(d.Waiting, t)
-		case !t.State.Terminal():
-			d.Active = append(d.Active, t)
-		default:
-			d.Recent = append(d.Recent, t)
-		}
-	}
-	return d
-}
-
 func needsUser(t *core.Task) bool {
 	return t.State == core.StateSuspended ||
 		(t.State == core.StateWaiting && t.Wake != nil && (t.Wake.Kind == core.WakeApproval ||
 			(t.Wake.Kind == core.WakeEvent && strings.Contains(t.Wake.Expr, `"user.message"`))))
 }
 
-// home 是「概览」页：打开后台先看到要你处理的事。
+// home 是「概览」页：任务和 token 的数字，创建任务，以及可以筛选、批量处理的任务列表。
 func (s *Server) home(w http.ResponseWriter, r *http.Request, v *view) {
-	tasks, err := s.opts.Store.ListTasks(r.Context(), false, 60)
-	if err != nil {
+	ctx := r.Context()
+	d := overviewData{Setup: s.setupItems(r)}
+	if active, err := s.opts.Store.ListTasks(ctx, true, 1000); err == nil {
+		for _, t := range active {
+			if needsUser(t) {
+				d.Waiting++
+			} else {
+				d.Active++
+			}
+		}
+	} else {
 		v.Error = err.Error()
 	}
-	d := overviewData{homeData: tasksOf(tasks), Setup: s.setupItems(r)}
-	if len(d.Recent) > recentOnOverview {
-		d.Recent = d.Recent[:recentOnOverview]
+	now := time.Now()
+	var err error
+	if d.Today, err = s.opts.Store.UsageOn(ctx, now); err != nil {
+		v.Error = err.Error()
 	}
-	if reqs, err := s.requests().List(r.Context()); err == nil {
+	if d.Yesterday, err = s.opts.Store.UsageOn(ctx, now.AddDate(0, 0, -1)); err != nil {
+		v.Error = err.Error()
+	}
+	if reqs, err := s.requests().List(ctx); err == nil {
 		d.VaultRequests = len(reqs)
 	} else {
 		v.Error = err.Error()
 	}
-	if pending, err := s.opts.Store.Memories().ListPending(r.Context(), ""); err == nil {
+	if pending, err := s.opts.Store.Memories().ListPending(ctx, ""); err == nil {
 		d.MemoryPending = len(pending)
 	} else {
 		v.Error = err.Error()
 	}
-	v.Data = d
-	s.renderCtx(r.Context(), w, "home", v)
-}
-
-// tasksPage 是「任务」页：全部任务，已结束的可以删除。
-func (s *Server) tasksPage(w http.ResponseWriter, r *http.Request, v *view) {
-	tasks, err := s.opts.Store.ListTasks(r.Context(), false, 60)
+	list, err := s.taskList(ctx, r.URL.Query(), now)
 	if err != nil {
 		v.Error = err.Error()
 	}
-	v.Data = tasksOf(tasks)
-	s.renderCtx(r.Context(), w, "tasks", v)
+	d.List = list
+	v.Data = d
+	s.renderCtx(ctx, w, "home", v)
+}
+
+// taskList 按地址里的条件查出一页任务：tab 是标签，from、to 是创建日期（含当天），p 是页码。
+func (s *Server) taskList(ctx context.Context, q url.Values, now time.Time) (taskList, error) {
+	l := taskList{Tab: q.Get("tab"), From: q.Get("from"), To: q.Get("to"), Page: 1}
+	known := false
+	for _, t := range taskTabs {
+		known = known || t.ID == l.Tab
+	}
+	if !known {
+		l.Tab = "all"
+	}
+	if p, err := strconv.Atoi(q.Get("p")); err == nil && p > 1 {
+		l.Page = p
+	}
+	query := pg.TaskQuery{Status: pg.TaskStatusAll, Limit: tasksPerPage, Offset: (l.Page - 1) * tasksPerPage}
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	switch l.Tab {
+	case "today":
+		query.From = day
+	case "yesterday":
+		query.From, query.To = day.AddDate(0, 0, -1), day
+	case "week":
+		query.From = day.AddDate(0, 0, -6)
+	case "ended":
+		query.Status = pg.TaskStatusEnded
+	case "active":
+		query.Status = pg.TaskStatusActive
+	case "archived":
+		query.Status = pg.TaskStatusArchived
+	}
+	// 自选的日期和标签的时间范围同时生效，取两者重叠的部分。
+	var bad error
+	if l.From != "" {
+		if f, err := time.ParseInLocation(time.DateOnly, l.From, now.Location()); err == nil {
+			if f.After(query.From) {
+				query.From = f
+			}
+		} else {
+			bad = fmt.Errorf("开始日期格式不对：%s", l.From)
+			l.From = ""
+		}
+	}
+	if l.To != "" {
+		if t, err := time.ParseInLocation(time.DateOnly, l.To, now.Location()); err == nil {
+			if t = t.AddDate(0, 0, 1); query.To.IsZero() || t.Before(query.To) {
+				query.To = t
+			}
+		} else {
+			bad = fmt.Errorf("结束日期格式不对：%s", l.To)
+			l.To = ""
+		}
+	}
+	vals := url.Values{}
+	vals.Set("tab", l.Tab)
+	if l.From != "" {
+		vals.Set("from", l.From)
+	}
+	if l.To != "" {
+		vals.Set("to", l.To)
+	}
+	l.Query = template.URL(vals.Encode())
+	if !query.To.IsZero() && !query.To.After(query.From) {
+		return l, bad
+	}
+	tasks, total, err := s.opts.Store.QueryTasks(ctx, query)
+	if err != nil {
+		return l, err
+	}
+	l.Tasks, l.Total = tasks, total
+	l.Pages = (total + tasksPerPage - 1) / tasksPerPage
+	return l, bad
+}
+
+// tasksPage 是原来的「任务」页，已经并进概览页。旧的地址跳过去。
+func (s *Server) tasksPage(w http.ResponseWriter, r *http.Request, _ *view) {
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -902,26 +1006,60 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request, _ *view) {
 	http.Redirect(w, r, "/tasks/"+id, http.StatusSeeOther)
 }
 
-// deleteTasks 批量删除已经结束的任务。
+// batchTasks 对概览页任务列表里勾选的任务做同一件事：删除、归档、取消归档或取消。
 //
-// 删掉的是任务自己的记录。任务办完时提炼出的记忆、流程和评分早已另外存下，不受影响——
-// 每个任务办完就把该留的东西落了盘，之后任务本身留不留都无所谓。
-func (s *Server) deleteTasks(w http.ResponseWriter, r *http.Request, _ *view) {
+// 删除和归档只对已结束的任务生效，取消只对还没结束的生效；不合适的那些跳过，结果里说明做了几个。
+func (s *Server) batchTasks(w http.ResponseWriter, r *http.Request, _ *view) {
 	ids := r.PostForm["id"]
-	all := r.PostFormValue("all") != ""
-	n, err := 0, error(nil)
-	switch {
-	case all:
-		n, err = s.opts.Store.DeleteFinishedTasks(r.Context(), nil)
-	case len(ids) == 0:
-		err = errors.New("请先勾选要删除的任务")
+	to := "/"
+	// 回到操作前的那个列表。back 只是查询条件，带斜杠、冒号的不认，防止被拿去跳到别处。
+	if q := r.PostFormValue("back"); q != "" && !strings.ContainsAny(q, `/\:`) {
+		to = "/?" + q
+	}
+	if len(ids) == 0 {
+		back(w, r, to, "", errors.New("请先勾选任务"))
+		return
+	}
+	ctx := r.Context()
+	action := r.PostFormValue("action")
+	var n int
+	var err error
+	var msg string
+	switch action {
+	case "delete":
+		n, err = s.opts.Store.DeleteFinishedTasks(ctx, ids)
+		msg = fmt.Sprintf("已删除 %d 个已结束的任务。由这些任务提炼的记忆与评分记录不受影响。", n)
+	case "archive":
+		n, err = s.opts.Store.ArchiveTasks(ctx, ids, true)
+		msg = fmt.Sprintf("已归档 %d 个已结束的任务，可在「已归档」中查看。", n)
+	case "unarchive":
+		n, err = s.opts.Store.ArchiveTasks(ctx, ids, false)
+		msg = fmt.Sprintf("已取消归档 %d 个任务。", n)
+	case "cancel":
+		for _, id := range ids {
+			_, e := kernel.Cancel(ctx, s.opts.Store, id, "用户在后台批量取消")
+			switch {
+			case e == nil:
+				n++
+			case errors.Is(e, kernel.ErrAlreadyEnded):
+			default:
+				err = e
+			}
+			if err != nil {
+				break
+			}
+		}
+		msg = fmt.Sprintf("已取消 %d 个任务。", n)
 	default:
-		n, err = s.opts.Store.DeleteFinishedTasks(r.Context(), ids)
+		err = fmt.Errorf("未知的操作 %q", action)
+	}
+	if skipped := len(ids) - n; err == nil && skipped > 0 {
+		msg += fmt.Sprintf(" %d 个不适用，已跳过。", skipped)
 	}
 	if err == nil {
-		s.opts.Log.Info("已结束的任务已在后台删除", "数量", n, "全部", all, "来自", r.RemoteAddr)
+		s.opts.Log.Info("后台批量处理任务", "操作", action, "勾选", len(ids), "生效", n, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/tasks", fmt.Sprintf("已删除 %d 个已结束的任务。由这些任务提炼的记忆与评分记录不受影响。", n), err)
+	back(w, r, to, msg, err)
 }
 
 type stepView struct {

@@ -138,7 +138,7 @@ func (s *Store) ResetForTest(ctx context.Context) error {
 			memory_pending, memory_revisions, memories,
 			event_subscriptions, events, vault_items, schedules, skills, mcp_installs,
 			style_samples, style_profiles, channel_chats, channel_notices, team_work,
-			seal_state, settings, task_images, op_logs, session_messages, session_summaries, share_links, schema_migrations CASCADE`)
+			seal_state, settings, task_images, op_logs, session_messages, session_summaries, share_links, llm_usage, schema_migrations CASCADE`)
 	if err != nil {
 		return fmt.Errorf("pg: 重置数据库失败: %w", err)
 	}
