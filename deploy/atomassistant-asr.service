@@ -10,6 +10,8 @@ WorkingDirectory=/opt/atomassistant-asr/app
 Environment=PYTHONPATH=/opt/atomassistant-asr/app
 Environment=PYTHONIOENCODING=utf-8
 Environment=ASR_MODELS=/opt/atomassistant-asr/app/models/unpacked_v6
+# 解码好的权重缓存，由 deploy/asr.sh 生成并校验过。有它就不用每次启动都解码，常驻内存也小得多。
+Environment=ASR_WEIGHT_CACHE=/opt/atomassistant-asr/app/wcache
 # BLAS 线程数，由 deploy/asr.sh 按服务器的核数填（至多 8，再多反而慢）。
 Environment=ASR_BLAS_THREADS=@THREADS@
 # 只听本机：语音只在这台机器上转，不出去。

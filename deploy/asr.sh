@@ -14,11 +14,12 @@ PORT=8765
 # 服务器在国内，PyPI 官方源慢且不稳，用腾讯云的镜像。
 INDEX=${ASR_PIP_INDEX:-https://mirrors.tencentyun.com/pypi/simple}
 
-# 模型解码后常驻约 2.9 GB。内存不够也照装，但先说清楚。
+# 安装时的自检要现场解码一遍模型，峰值约 2.4 GB。装好之后服务用解码好的缓存（见 rt/wcache.py）：
+# 必须常驻的约 0.6 GB；编码器那 1.2 GB 是映射的缓存文件，内存紧张时系统可以回收。
 avail_mb=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
-echo "==> 服务器当前可用内存 ${avail_mb} MB（识别服务常驻约 2900 MB）"
-if [ "$avail_mb" -lt 3200 ]; then
-  echo "!! 可用内存不足 3.2 GB，识别服务可能被系统杀掉，或者挤占助手本身的内存" >&2
+echo "==> 服务器当前可用内存 ${avail_mb} MB（安装自检峰值约 2400 MB，之后常驻约 600 MB）"
+if [ "$avail_mb" -lt 2600 ]; then
+  echo "!! 可用内存不足 2.6 GB，安装时的自检可能被系统杀掉，或者挤占助手本身的内存" >&2
 fi
 
 echo "==> 安装 Python 虚拟环境支持"
@@ -53,6 +54,25 @@ if ! (cd "$DIR/app.new" && PYTHONPATH="$DIR/app.new" PYTHONIOENCODING=utf-8 ASR_
   [ -d "$DIR/app" ] && systemctl start atomassistant-asr || true
   exit 1
 fi
+
+# 解码好的权重存成缓存，服务启动时直接映射进来，不用再解码。
+# 缓存必须和现场解码逐位一致：两边各跑一遍自检音频，比对每个权重、编码器输出、识别出的每个 token。
+echo "==> 生成解码后权重的缓存，并与现场解码逐位比对"
+app_py() {
+  (cd "$DIR/app.new" && PYTHONPATH="$DIR/app.new" PYTHONIOENCODING=utf-8 ASR_BLAS_THREADS="$THREADS"     ASR_MODELS="$DIR/app.new/models/unpacked_v6" ASR_WEIGHT_CACHE="$DIR/app.new/wcache" "$DIR/venv/bin/python3" "$@")
+}
+CHK=$(mktemp -d)
+if ! app_py -m rt.wcache build ||
+  ! ASR_WEIGHT_CACHE_OFF=1 app_py -m rt.wcache digest "$CHK/fresh.json" ||
+  ! app_py -m rt.wcache digest "$CHK/cached.json" ||
+  ! app_py -m rt.wcache compare "$CHK/fresh.json" "$CHK/cached.json"; then
+  rm -rf "$CHK"
+  echo "!! 缓存与现场解码不一致，新版本不装，旧的照常运行" >&2
+  [ -d "$DIR/app" ] && systemctl start atomassistant-asr || true
+  exit 1
+fi
+rm -rf "$CHK"
+chmod -R go-w,go+rX "$DIR/app.new/wcache"
 
 rm -rf "$DIR/app.old"
 [ -d "$DIR/app" ] && mv "$DIR/app" "$DIR/app.old"
