@@ -374,6 +374,10 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 .tasks-filter .dates label { display:flex; align-items:center; gap:8px; margin:0; font-weight:400; color:var(--text-2); font-size:13px; white-space:nowrap; }
 .tasks-filter .dates input[type=date] { width:150px; }
 .pager { align-items:center; }
+/* 通行密钥：一把一行，名称在上、域名与时间在下，删除按钮在右。 */
+.rows.passkeys > div { padding:12px 20px; }
+.passkeys .pk { flex:1; min-width:0; }
+.passkeys .pk .note { margin-top:2px; overflow-wrap:anywhere; }
 
 
 /* 后台提交后的提示：浮在页面下方，几秒后自行消失，不挪动页面内容。 */

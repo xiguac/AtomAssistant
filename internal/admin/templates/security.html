@@ -74,17 +74,15 @@
 <div>
   <div class="card">
     <div class="band"><b>通行密钥</b><span class="count">{{len .Passkeys}}</span></div>
-    {{if .Passkeys}}<table>
-      <thead><tr><th>名称</th><th>登记时的访问地址</th><th>登记时间</th><th>最近使用</th><th class="r">操作</th></tr></thead>
-      <tbody>{{range .Passkeys}}<tr>
-        <td><b style="font-weight:500">{{.Name}}</b></td>
-        <td><span class="mono">{{.RPID}}</span>{{if not .Here}}<div class="note" style="color:var(--warn)">当前访问地址下不可用</div>{{end}}</td>
-        <td class="time">{{when .CreatedAt}}</td>
-        <td class="time">{{when .LastUsedAt}}</td>
-        <td class="r"><form method="post" action="/security/passkey/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}">
-          <input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">删除</button></form></td>
-      </tr>{{end}}</tbody>
-    </table>{{else}}<div class="empty">尚未登记通行密钥。</div>{{end}}
+    {{if .Passkeys}}<div class="rows passkeys">{{range .Passkeys}}<div>
+      <div class="pk">
+        <b>{{.Name}}</b>
+        <div class="note muted">绑定域名 <span class="mono">{{.RPID}}</span> · 登记于 {{when .CreatedAt}} · 最近使用 {{when .LastUsedAt}}</div>
+        {{if not .Here}}<div class="note" style="color:var(--warn)">当前访问地址下不可用</div>{{end}}
+      </div>
+      <form method="post" action="/security/passkey/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">删除</button></form>
+    </div>{{end}}</div>{{else}}<div class="empty">尚未登记通行密钥。</div>{{end}}
     <form class="band foot" autocomplete="off">
       <input type="hidden" name="csrf" value="{{$.CSRF}}">
       <input class="grow" type="text" name="name" maxlength="40" placeholder="名称，例如：办公室电脑、YubiKey"{{if .PasskeyBlocked}} disabled{{end}}>
