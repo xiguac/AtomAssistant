@@ -370,9 +370,9 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 .notices { margin-bottom:20px; }
 .quick { margin-bottom:8px; }
 .tasks-filter { align-items:center; justify-content:space-between; }
-.tasks-filter .dates { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-.tasks-filter .dates label { display:flex; align-items:center; gap:8px; margin:0; font-weight:400; color:var(--text-2); font-size:13px; white-space:nowrap; }
-.tasks-filter .dates input[type=date] { width:150px; }
+.dates { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.dates label { display:flex; align-items:center; gap:8px; margin:0; font-weight:400; color:var(--text-2); font-size:13px; white-space:nowrap; }
+.dates input[type=date] { width:150px; }
 .pager { align-items:center; }
 /* 通行密钥：一把一行，名称在上、域名与时间在下，删除按钮在右。 */
 .rows.passkeys > div, .rows.accounts > div { padding:12px 20px; }
@@ -417,9 +417,9 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   #toasts { bottom:calc(72px + env(safe-area-inset-bottom)); }
   .stat { grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
   .stat > * { padding:12px 14px; }
-  .tasks-filter .dates { width:100%; }
-  .tasks-filter .dates label { flex:1 1 100%; }
-  .tasks-filter .dates input[type=date] { flex:1; width:auto; min-width:0; }
+  .dates { width:100%; }
+  .dates label { flex:1 1 100%; }
+  .dates input[type=date] { flex:1; width:auto; min-width:0; }
   .todo { padding:12px 16px; }
   .todo .w, .todo > .btn { display:none; }
   /* 桌面上标签不折行，免得窄列里一行一个字；手机上卡片够宽，长标签允许折行，不撑出横向滚动。 */

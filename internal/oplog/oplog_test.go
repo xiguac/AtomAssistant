@@ -28,7 +28,7 @@ func (m *memStore) AppendLogs(_ context.Context, es []Entry) error {
 	return nil
 }
 
-func (m *memStore) PruneLogs(_ context.Context, before time.Time) (int64, error) {
+func (m *memStore) PruneLogs(_ context.Context, before, _ time.Time) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pruned = before

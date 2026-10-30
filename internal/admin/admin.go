@@ -500,6 +500,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /models/test", auth(s.modelTest))
 	mux.HandleFunc("POST /tasks/{id}/rate", auth(s.rateWork))
 	mux.HandleFunc("GET /logs", auth(s.logsPage))
+	mux.HandleFunc("POST /logs/delete", auth(s.deleteLogs))
 	mux.HandleFunc("GET /files", auth(s.filesPage))
 	mux.HandleFunc("POST /files", auth(s.filesUpload))
 	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
@@ -694,7 +695,7 @@ var opNames = []struct{ prefix, name string }{
 	{"/models/budget", "保存任务预算"},
 	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
 	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
-	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"},
+	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/logs/delete", "删除日志"},
 	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
 	{"/connectors/disable", "停用数据源"}, {"/connectors/test", "测试数据源"}, {"/connectors/", "保存数据源"},
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
@@ -1770,4 +1771,35 @@ func (s *Server) logsPage(w http.ResponseWriter, r *http.Request, v *view) {
 	}
 	v.Data = d
 	s.renderCtx(r.Context(), w, "logs", v)
+}
+
+// deleteLogs 删掉一段日期内（含首尾两天）、当前所选类别的日志。
+// 后台操作类的只是不再显示，服务器上留满 oplog.AdminRetention 才删，见 pg.DeleteLogs。
+func (s *Server) deleteLogs(w http.ResponseWriter, r *http.Request, _ *view) {
+	cat := oplog.Category(r.PostFormValue("cat"))
+	if !cat.Valid() {
+		cat = ""
+	}
+	to := "/logs?cat=" + url.QueryEscape(string(cat))
+	now := time.Now()
+	from, err1 := time.ParseInLocation(time.DateOnly, r.PostFormValue("from"), now.Location())
+	until, err2 := time.ParseInLocation(time.DateOnly, r.PostFormValue("to"), now.Location())
+	switch {
+	case err1 != nil || err2 != nil:
+		back(w, r, to, "", errors.New("请选择要删除的起止日期"))
+		return
+	case until.Before(from):
+		back(w, r, to, "", errors.New("结束日期不能早于开始日期"))
+		return
+	}
+	deleted, hidden, err := s.opts.Store.DeleteLogs(r.Context(), cat, from, until.AddDate(0, 0, 1))
+	if err != nil {
+		back(w, r, to, "", err)
+		return
+	}
+	msg := fmt.Sprintf("已删除 %d 条日志。", deleted+hidden)
+	if hidden > 0 {
+		msg += fmt.Sprintf("其中 %d 条后台操作日志不再显示，服务器上仍保留至满 %d 天。", hidden, int(oplog.AdminRetention.Hours()/24))
+	}
+	back(w, r, to, msg, nil)
 }

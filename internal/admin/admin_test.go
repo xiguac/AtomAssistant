@@ -1452,4 +1452,25 @@ func TestAdmin_每次改动记进日志并能分类查看(t *testing.T) {
 	if _, body = e.get("/logs"); !strings.Contains(body, `<span class="pill plain warn">警告</span>`) || !strings.Contains(body, "后台操作") {
 		t.Fatal("日志页应列出全部日志并标出级别")
 	}
+
+	// 按日期删除：任务类真删；后台操作类只是不再显示，库里还在。
+	today := time.Now().Format(time.DateOnly)
+	if _, loc := e.post("/logs/delete", url.Values{"csrf": {e.csrf}, "cat": {"task"}, "from": {today}, "to": {"2000-01-01"}}); !strings.Contains(loc, "不能早于") {
+		t.Fatalf("结束早于开始应被拒绝: %s", loc)
+	}
+	if _, loc := e.post("/logs/delete", url.Values{"csrf": {e.csrf}, "cat": {"task"}, "from": {today}, "to": {today}}); !strings.Contains(loc, "已删除 1 条") {
+		t.Fatalf("删除任务日志失败: %s", loc)
+	}
+	if _, body = e.get("/logs?cat=task"); strings.Contains(body, "已批准") {
+		t.Fatal("删掉的任务日志不应再显示")
+	}
+	if _, loc := e.post("/logs/delete", url.Values{"csrf": {e.csrf}, "cat": {"admin"}, "from": {today}, "to": {today}}); !strings.Contains(loc, "仍保留") {
+		t.Fatalf("后台操作日志应说明仍保留在服务器上: %s", loc)
+	}
+	if _, body = e.get("/logs?cat=admin"); strings.Contains(body, "设置主 AI") {
+		t.Fatal("删除后后台操作日志不应再显示")
+	}
+	if n, err := e.store.PruneLogs(context.Background(), time.Time{}, time.Now().Add(time.Hour)); err != nil || n < 2 {
+		t.Fatalf("后台操作日志应仍在库里: %d %v", n, err)
+	}
 }

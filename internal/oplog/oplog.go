@@ -87,11 +87,14 @@ type Query struct {
 // Store 存取日志，由 *pg.Store 提供。
 type Store interface {
 	AppendLogs(ctx context.Context, entries []Entry) error
-	PruneLogs(ctx context.Context, before time.Time) (int64, error)
+	PruneLogs(ctx context.Context, before, adminBefore time.Time) (int64, error)
 }
 
 // Retention 是日志留多久。
 const Retention = 90 * 24 * time.Hour
+
+// AdminRetention 是后台操作类日志留多久。它涉及安全，在后台删除了也只是不再显示，留满这么久才真正删掉。
+const AdminRetention = 300 * 24 * time.Hour
 
 const (
 	// queueSize 是还没写进库的日志最多攒多少条，满了新的丢掉。
@@ -242,7 +245,7 @@ func (h *Handler) Start(ctx context.Context, st Store) <-chan struct{} {
 		}
 	}
 	prune := func() {
-		if n, err := st.PruneLogs(ctx, time.Now().Add(-Retention)); err != nil {
+		if n, err := st.PruneLogs(ctx, time.Now().Add(-Retention), time.Now().Add(-AdminRetention)); err != nil {
 			next.Error("清理过期的操作日志失败", "err", err)
 		} else if n > 0 {
 			next.Info("已清理过期的操作日志", "条数", n)

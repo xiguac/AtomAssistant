@@ -1,6 +1,6 @@
 {{define "content"}}
 <div class="pagehead"><h1>日志</h1></div>
-<div class="sub">后台里的每一次改动、任务的进展与审批、工具与模型的调用、消息的收发，以及系统事件，都记在这里，新的在前。日志加密存放，保留 90 天。</div>
+<div class="sub">后台里的每一次改动、任务的进展与审批、工具与模型的调用、消息的收发，以及系统事件，都记在这里，新的在前。日志加密存放，保留 90 天；后台操作日志涉及安全，保留 300 天，在此删除后不再显示，但服务器上仍保留至期满。</div>
 
 {{with .Data}}
 <div class="filters">
@@ -28,5 +28,17 @@
   {{if .Next}}<div class="band foot"><span class="note muted">每页 100 条。</span>
     <a class="btn sec sm" href="/logs?cat={{.Category}}&level={{.Level}}&before={{.Next}}">更早的</a></div>{{end}}
 </div>
+
+<h2>删除日志</h2>
+<form method="post" action="/logs/delete" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="cat" value="{{.Category}}">
+  <div class="pad dates">
+    <label><span>日期</span><input type="date" name="from" required aria-label="开始日期"></label>
+    <span class="muted">至</span>
+    <input type="date" name="to" required aria-label="结束日期">
+  </div>
+  <div class="band foot"><span class="note muted">删除范围：{{if .Category}}「{{.Category.Name}}」类{{else}}全部类别{{end}}，含首尾两天。后台操作日志只会隐藏，满 300 天后由系统清除。</span><button class="btn danger sm">删除</button></div>
+</form>
 {{end}}
 {{end}}

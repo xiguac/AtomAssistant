@@ -47,7 +47,7 @@ func (s *Store) ListLogs(ctx context.Context, q oplog.Query) ([]oplog.Entry, err
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, at, level, category, message, attrs FROM op_logs
-		 WHERE at < $1 AND level >= $2 AND ($3 = '' OR category = $3)
+		 WHERE NOT hidden AND at < $1 AND level >= $2 AND ($3 = '' OR category = $3)
 		 ORDER BY at DESC, id DESC LIMIT $4`, before, int16(q.MinLevel), string(q.Category), q.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("pg: 读取操作日志失败: %w", err)
@@ -73,13 +73,42 @@ func (s *Store) ListLogs(ctx context.Context, q oplog.Query) ([]oplog.Entry, err
 	return out, rows.Err()
 }
 
-// PruneLogs 删掉 before 之前的操作日志，返回删了几条。
-func (s *Store) PruneLogs(ctx context.Context, before time.Time) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM op_logs WHERE at < $1`, before)
+// PruneLogs 删掉过期的操作日志，返回删了几条：后台操作类的删 adminBefore 之前的，其余的删 before 之前的。
+func (s *Store) PruneLogs(ctx context.Context, before, adminBefore time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM op_logs WHERE CASE WHEN category = $3 THEN at < $2 ELSE at < $1 END`,
+		before, adminBefore, string(oplog.Admin))
 	if err != nil {
 		return 0, fmt.Errorf("pg: 清理操作日志失败: %w", err)
 	}
 	return tag.RowsAffected(), nil
+}
+
+// DeleteLogs 删掉 [from, to) 之间、类别为 category（为空表示全部类别）的操作日志。
+// 后台操作类的只标记为不显示，不真正删除，留到期满由 PruneLogs 清掉。返回删掉的和隐藏的条数。
+func (s *Store) DeleteLogs(ctx context.Context, category oplog.Category, from, to time.Time) (deleted, hidden int64, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("pg: 开启事务失败: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `UPDATE op_logs SET hidden = true
+		 WHERE NOT hidden AND category = $3 AND at >= $1 AND at < $2 AND ($4 = '' OR category = $4)`,
+		from, to, string(oplog.Admin), string(category))
+	if err != nil {
+		return 0, 0, fmt.Errorf("pg: 删除操作日志失败: %w", err)
+	}
+	hidden = tag.RowsAffected()
+	tag, err = tx.Exec(ctx, `DELETE FROM op_logs
+		 WHERE category <> $3 AND at >= $1 AND at < $2 AND ($4 = '' OR category = $4)`,
+		from, to, string(oplog.Admin), string(category))
+	if err != nil {
+		return 0, 0, fmt.Errorf("pg: 删除操作日志失败: %w", err)
+	}
+	deleted = tag.RowsAffected()
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("pg: 删除操作日志失败: %w", err)
+	}
+	return deleted, hidden, nil
 }
 
 // auditNames 是审计动作给人看的叫法。

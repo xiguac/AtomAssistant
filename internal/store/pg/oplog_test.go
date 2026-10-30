@@ -81,8 +81,29 @@ func TestOpLogs(t *testing.T) {
 		t.Fatalf("审计没有记进操作日志: %+v %+v", tools, tasks)
 	}
 
-	// 过期的删掉。
-	if n, err := s.PruneLogs(ctx, base.Add(3*time.Minute)); err != nil || n != 3 {
-		t.Fatalf("应删掉 3 条过期的: %d %v", n, err)
+	// 过期的删掉：后台操作类按自己的期限算。
+	if n, err := s.PruneLogs(ctx, base.Add(time.Hour), base.Add(3*time.Minute)); err != nil || n != 4 {
+		t.Fatalf("应删掉 3 条过期的后台操作和 1 条过期的消息: %d %v", n, err)
+	}
+
+	// 按范围删除：后台操作类只是不再显示，其余的真删掉。
+	if err := s.AppendLogs(ctx, []oplog.Entry{{At: base.Add(5 * time.Minute), Level: slog.LevelInfo, Category: oplog.Message, Message: "收到消息"}}); err != nil {
+		t.Fatal(err)
+	}
+	if d, h, err := s.DeleteLogs(ctx, oplog.Message, base, base.Add(11*time.Minute)); err != nil || d != 1 || h != 0 {
+		t.Fatalf("只删消息类: %d %d %v", d, h, err)
+	}
+	if d, h, err := s.DeleteLogs(ctx, "", base, base.Add(11*time.Minute)); err != nil || d != 0 || h != 2 {
+		t.Fatalf("后台操作类应只隐藏: %d %d %v", d, h, err)
+	}
+	if got, _ := s.ListLogs(ctx, oplog.Query{Category: oplog.Admin}); len(got) != 0 {
+		t.Fatalf("隐藏的不应再列出: %+v", got)
+	}
+	if got, _ := s.ListLogs(ctx, oplog.Query{}); len(got) != 2 {
+		t.Fatalf("范围外的不受影响: %+v", got)
+	}
+	// 隐藏的仍在库里，期满才删。
+	if n, err := s.PruneLogs(ctx, base, base.Add(6*time.Minute)); err != nil || n != 2 {
+		t.Fatalf("隐藏的后台操作应留到期满再删: %d %v", n, err)
 	}
 }
