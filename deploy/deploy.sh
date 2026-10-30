@@ -11,7 +11,6 @@
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
 #   deploy/deploy.sh status    看服务状态和最近的日志
 #   deploy/deploy.sh rollback  退回上一个版本
-#   deploy/deploy.sh migrate-name  程序改名后的一次性迁移：服务器上的服务、账号、目录、数据库换成新名字，旧密文换成新密文
 #
 # 服务器地址和密钥写在 deploy/deploy.env 里（不进版本库），格式见 deploy/deploy.env.example。
 set -euo pipefail
@@ -175,32 +174,6 @@ case "${1:-release}" in
     "${SCP[@]}" deploy/asr.sh deploy/atomassistant-asr.service "$PKG/asr.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-asr/"
     remote "sudo bash /tmp/atomassistant-asr/asr.sh && rm -rf /tmp/atomassistant-asr && sudo systemctl restart atomassistant"
     ;;
-  migrate-name)
-    # 程序改名之后的一次性迁移，迁移完成后删掉。先在服务器上把服务、账号、目录、数据库改成新名字，
-    # 再装新名字的服务、放上新程序，以服务账号把旧密文换成新密文，最后启动。
-    # 起不来时不自动退回：上一个版本是改名之前的程序，认不得新的目录和密钥。
-    echo "==> 上传改名脚本"
-    remote "rm -rf /tmp/atomassistant-rename && mkdir -p /tmp/atomassistant-rename"
-    "${SCP[@]}" deploy/migrate-name.sh deploy/install.sh deploy/atomassistant.service deploy/config.initial.yaml "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-rename/"
-    remote "sudo bash /tmp/atomassistant-rename/migrate-name.sh && sudo bash /tmp/atomassistant-rename/install.sh && rm -rf /tmp/atomassistant-rename"
-    NO_START=1 release
-    echo "==> 重新加密数据"
-    remote "set -e
-      cd /
-      sudo -u atomassistant bash -c 'set -a; . /etc/atomassistant/env; set +a; /opt/atomassistant/current/atomctl rekey-legacy'
-      sudo truncate -s 0 /opt/atomassistant/previous"
-    remote "sudo systemctl restart atomassistant"
-    echo "==> 检查"
-    if result=$(healthy); then
-      echo "    后台应答: $result"
-      echo "改名迁移完成。确认一切正常后，删掉服务器上的备份：sudo rm -rf /var/backups/atomassistant-rename"
-    else
-      echo "!! 新版本没有起来，没有自动退回。最近的日志：" >&2
-      remote "sudo journalctl -u atomassistant -n 30 --no-pager" >&2 || true
-      echo "改名前的数据库、密钥文件、env 和配置在服务器的 /var/backups/atomassistant-rename 里。" >&2
-      exit 1
-    fi
-    ;;
   release) release ;;
   rollback) rollback ;;
   passwd)
@@ -236,7 +209,7 @@ case "${1:-release}" in
     remote "systemctl status atomassistant --no-pager -n 0; echo; readlink /opt/atomassistant/current; echo; sudo journalctl -u atomassistant -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / asr / scanner / sandbox / release / passwd / tunnel / status / rollback / migrate-name）" >&2
+    echo "未知的子命令 $1（可用：setup / asr / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
     exit 2
     ;;
 esac

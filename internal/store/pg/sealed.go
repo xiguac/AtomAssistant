@@ -211,7 +211,7 @@ func (s *Store) ensureSealed(ctx context.Context) error {
 }
 
 // rewriteTable 把一张表的每一行交给 fn 就地改写内容列，再写回去。
-// 用在 ensureSealed 里给整库还是明文的旧数据补加密，以及改名迁移时换密文。
+// 用在 ensureSealed 里给整库还是明文的旧数据补加密。
 func (s *Store) rewriteTable(ctx context.Context, tx pgx.Tx, table string, fn func(map[string]json.RawMessage) error) error {
 	cols := sortedColumns(table)
 	// 独占这张表：补加密期间不能有别的写入混进来。

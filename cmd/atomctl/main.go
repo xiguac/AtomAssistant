@@ -104,7 +104,6 @@ const usage = `用法:
   atomctl key backup <文件>      把数据密钥备份成一个用口令加密的文件。数据密钥与这台机器绑定，
                                  机器的硬件标识意外变了，就靠这份备份找回数据
   atomctl key restore <文件>     用备份在这台机器上重建密钥文件（已有密钥文件时不会覆盖）
-  atomctl rekey-legacy          程序改名迁移专用：把旧名字下加密的密钥文件、数据库和工作区文件换成新密文
 
 环境变量: ATOM_DSN（必填）；用到保险库的命令还要 ATOM_VAULT_KEY，connector 还要 ATOM_CONFIG；
           数据密钥文件默认与配置文件同目录，可用 ATOM_KEY_FILE 指定
@@ -141,8 +140,6 @@ func run(args []string) error {
 		return vaultCmd(ctx, nil, cfg.VaultKey, args[1:])
 	case args[0] == "key":
 		return keyCmd(cfg, args[1:])
-	case args[0] == "rekey-legacy":
-		return rekeyLegacy(cfg)
 	}
 
 	// 密钥文件只由常驻服务生成：这里常常是以 root 身份运行的，由它生成的文件服务账号读不到。
