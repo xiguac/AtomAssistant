@@ -89,10 +89,13 @@ func run(migrateOnly, checkOnly bool) error {
 	}
 	log.Info("数据库迁移完成")
 	// 操作日志：从这里开始写进数据库（之前攒下的一并写进去），后台的「日志」页按类别查看。
+	// 退出时先停日志、等剩下的写完，再关库（defer 后进先出，这一条排在 st.Close 之前执行）。
 	logCtx, stopLogs := context.WithCancel(context.Background())
-	defer stopLogs()
 	if !migrateOnly {
-		logs.Start(logCtx, st)
+		logsDone := logs.Start(logCtx, st)
+		defer func() { stopLogs(); <-logsDone }()
+	} else {
+		defer stopLogs()
 	}
 	if migrateOnly {
 		return nil

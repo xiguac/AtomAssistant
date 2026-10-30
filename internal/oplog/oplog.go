@@ -220,8 +220,10 @@ func (s *sink) take() ([]Entry, int) {
 }
 
 // Start 开始把攒着的日志写进库，并定期清掉过期的，直到 ctx 结束（结束前把剩下的写完）。
+// 返回的通道在剩下的写完后关闭：关库之前要等它，不然最后一批写进的是已关掉的连接池。
 // 写库失败只打到标准输出，不再进队列：否则一次失败会滚出一串失败。
-func (h *Handler) Start(ctx context.Context, st Store) {
+func (h *Handler) Start(ctx context.Context, st Store) <-chan struct{} {
+	done := make(chan struct{})
 	next := slog.New(h.next)
 	flush := func(c context.Context) {
 		for {
@@ -247,6 +249,7 @@ func (h *Handler) Start(ctx context.Context, st Store) {
 		}
 	}
 	go func() {
+		defer close(done)
 		tick := time.NewTicker(flushEvery)
 		defer tick.Stop()
 		lastPrune := time.Time{}
@@ -267,4 +270,5 @@ func (h *Handler) Start(ctx context.Context, st Store) {
 			}
 		}
 	}()
+	return done
 }
