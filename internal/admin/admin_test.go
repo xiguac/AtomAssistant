@@ -807,6 +807,20 @@ func TestAdmin_数据源页配置日历邮件与节假日(t *testing.T) {
 		!strings.Contains(body, `value="me@example.com"`) || !strings.Contains(body, `value="abcxyz.qweatherapi.com"`) || strings.Count(body, "已配置") < 4 {
 		t.Fatal("数据源页应显示账号与状态，不显示密码")
 	}
+	// 配好的密码以掩码显示：和真实的值无关，连长度都一样。
+	if strings.Count(body, `value="`+maskedSecret+`"`) != 3 {
+		t.Fatal("日历、邮件、天气配好的密码应以掩码显示")
+	}
+	// 掩码原样交回来：沿用原密码，不会把掩码当成新密码存进去。
+	if loc := post("/connectors/calendar", url.Values{"url": {"https://caldav.example.com"}, "username": {"me@example.com"}, "password": {maskedSecret}, "default_calendar": {"个人"}}); !strings.Contains(loc, "已保存") {
+		t.Fatalf("带着掩码保存日历失败: %s", loc)
+	}
+	file, _ = config.LoadFile(e.cfg)
+	if cal, _ = file.Calendar(e.vault); cal == nil {
+		t.Fatal("日历应仍然配置着")
+	} else if got, err := cal.Secret(ctx); err != nil || got != "cal pass word" {
+		t.Fatalf("交回掩码应沿用原密码: %q %v", got, err)
+	}
 
 	// 修改时留空密码：沿用原密码。
 	if loc := post("/connectors/calendar", url.Values{"url": {"https://caldav2.example.com"}, "username": {"me@example.com"}}); !strings.Contains(loc, "已保存") {

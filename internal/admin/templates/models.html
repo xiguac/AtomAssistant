@@ -60,7 +60,7 @@
       <td>{{range .UsedBy}}<span class="chip">{{.}}</span>{{else}}<span class="muted">未使用</span>{{end}}</td>
       <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:nowrap">
         <button type="button" class="btn sec sm" data-dialog="dlg-provider" data-title="修改模型服务" data-lock="name"
-          data-v-name="{{.Name}}" data-v-base_url="{{.BaseURL}}" data-v-protocol="{{if eq .Protocol "anthropic"}}anthropic{{else}}openai{{end}}">编辑</button>
+          data-v-name="{{.Name}}" data-v-base_url="{{.BaseURL}}" data-v-protocol="{{if eq .Protocol "anthropic"}}anthropic{{else}}openai{{end}}" data-v-key="{{if .KeyOK}}{{masked}}{{end}}">编辑</button>
         <form method="post" action="/models/provider/delete">
           <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
           <button class="btn danger sm">删除</button></form></div></td>

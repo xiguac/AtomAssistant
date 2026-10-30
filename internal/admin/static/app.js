@@ -27,6 +27,14 @@
     box.textContent = text;
   }
 
+  // 已保存的密码、密钥以掩码显示。点进去就整段选中，输入的新值直接替换掩码，不会接在它后面。
+  document.addEventListener("focusin", function (ev) {
+    var f = ev.target;
+    if (f && f.type === "password" && f.value === "••••••••") {
+      f.select();
+    }
+  });
+
   // 「全选」：带 data-check-all 的勾选框控制它所在表单里的全部勾选框。
   document.addEventListener("change", function (ev) {
     var all = ev.target;

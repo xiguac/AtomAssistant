@@ -20,7 +20,7 @@
       {{if eq .Type "weixin"}}<button type="button" class="btn sec sm" data-dialog="dlg-channel" data-title="重新扫码连接微信" data-lock="name"
         data-v-name="{{.Name}}" data-v-type="weixin">重新扫码</button>
       {{else}}<button type="button" class="btn sec sm" data-dialog="dlg-channel" data-title="修改消息源" data-lock="name"
-        data-v-name="{{.Name}}" data-v-type="{{.Type}}" data-v-app_id="{{.AppID}}" data-v-sandbox="{{if .Sandbox}}1{{end}}">编辑</button>{{end}}
+        data-v-name="{{.Name}}" data-v-type="{{.Type}}" data-v-app_id="{{.AppID}}" data-v-sandbox="{{if .Sandbox}}1{{end}}" data-v-secret="{{if .SecretOK}}{{masked}}{{end}}">编辑</button>{{end}}
       <form method="post" action="/channels/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}">
         <input type="hidden" name="name" value="{{.Name}}"><button class="btn danger sm">删除</button></form>
     </div>

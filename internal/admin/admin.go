@@ -211,6 +211,7 @@ func New(opts Options) (*Server, error) {
 		"size":       humanSize,
 		"add":        func(a, b int) int { return a + b },
 		"tokens":     fmtTokens,
+		"masked":     func() string { return maskedSecret },
 		"yuan":       func(micros int64) string { return fmt.Sprintf("¥%.2f", float64(micros)/1e6) },
 		"taskTabs":   func() any { return taskTabs },
 		"pct":        func(f float64) int { return int(f*100 + 0.5) },
@@ -639,6 +640,7 @@ func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.
 				http.Error(w, "请求已失效，请回到页面刷新后重试。", http.StatusForbidden)
 				return
 			}
+			unmask(r)
 			// 表单里的文字必须是合法的 UTF-8：不是的话数据库不收，与其让它在深处报一个看不懂的错，不如在门口说清楚。
 			for _, values := range r.PostForm {
 				for _, value := range values {
@@ -783,6 +785,32 @@ type taskList struct {
 	Pages    int
 	// Query 是不含页码的筛选条件，翻页和批量操作后回到同一个列表时用。已经编码过，直接拼进地址。
 	Query template.URL
+}
+
+// maskedSecret 是已保存的密码、密钥在输入框里显示的样子。它和真实的值毫无关系，连长度都不透露；
+// 原样交回来就表示"不改"，见 unmask。
+const maskedSecret = "••••••••"
+
+// unmask 把表单里原样交回来的掩码当作没填：各处的保存与测试连接都是"留空沿用原值"。
+func unmask(r *http.Request) {
+	for _, form := range []url.Values{r.PostForm, r.Form} {
+		for _, vs := range form {
+			for i, v := range vs {
+				if v == maskedSecret {
+					vs[i] = ""
+				}
+			}
+		}
+	}
+	if r.MultipartForm != nil {
+		for _, vs := range r.MultipartForm.Value {
+			for i, v := range vs {
+				if v == maskedSecret {
+					vs[i] = ""
+				}
+			}
+		}
+	}
 }
 
 // fmtTokens 把 token 数写成好读的样子：一万以下照写，以上按万、亿。
