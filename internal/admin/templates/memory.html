@@ -3,6 +3,36 @@
 <div class="sub">用户明确陈述的信息直接保存。模型推断的信息以较低权重保存，经后续任务交叉验证后提高权重，也可在此确认或删除。待确认的推断达到一定数量后，主模型会定期合并内容相同或互补的条目；合并后的条目仍需确认。</div>
 
 {{with .Data}}
+<form method="post" action="/memory/ask" class="card quick" style="margin-bottom:16px">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="band"><b>用对话修改记忆</b></div>
+  <div class="pad" style="padding-bottom:8px">
+    <textarea class="bare" name="ask" maxlength="500" aria-label="修改说明" placeholder="例如：删除关于前公司的内容；我的生日改为 5 月 3 日">{{with .Proposal}}{{.Ask}}{{end}}</textarea>
+  </div>
+  <div class="band foot"><span class="note muted">助手对照已保存的记忆列出拟修改的条目，经你确认后才会生效。</span><button class="btn">提交</button></div>
+</form>
+
+{{with .Proposal}}
+<h2 style="margin-top:0">待确认的修改 <span class="count">{{len .Changes}}</span></h2>
+{{if .Changes}}<form method="post" action="/memory/apply" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="rows">
+  {{range $i, $c := .Changes}}<div>
+    <input type="checkbox" name="pick" value="{{$i}}" checked aria-label="采纳此项修改">
+    <input type="hidden" name="op_{{$i}}" value="{{$c.Op}}"><input type="hidden" name="id_{{$i}}" value="{{$c.ID}}">
+    <div class="pick" style="display:block">
+      {{if eq $c.Op "delete"}}<span class="pill bad plain">删除</span>{{else}}<span class="pill warn plain">修改</span>{{end}}
+      <div style="white-space:pre-wrap;word-break:break-word;margin-top:6px{{if eq $c.Op "delete"}};text-decoration:line-through;color:var(--text-2){{end}}">{{short $c.Old 400}}</div>
+      {{if eq $c.Op "update"}}<label for="mv-{{$i}}" style="margin-top:8px">修改为</label><textarea id="mv-{{$i}}" name="value_{{$i}}">{{$c.Value}}</textarea>{{end}}
+      {{if $c.Reason}}<div class="note muted" style="margin-top:6px">{{$c.Reason}}</div>{{end}}
+    </div>
+  </div>{{end}}
+  </div>
+  <div class="band foot"><span class="note muted">{{if .Note}}{{.Note}} {{end}}仅勾选的条目会被修改；删除的记忆不再被使用，修改前的内容保留在历史中。</span>
+    <div class="actions"><a class="btn sec sm" href="/memory">放弃</a><button class="btn sm">确认修改</button></div></div>
+</form>{{else}}<div class="card empty">{{if .Note}}{{.Note}}{{else}}没有找到需要修改的记忆。{{end}}</div>{{end}}
+{{end}}
+
 <div class="cols">
 <div>
 <h2>已保存 <span class="count">{{len .Memories}}</span></h2>

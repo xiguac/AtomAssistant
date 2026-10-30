@@ -445,6 +445,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /memory/dismiss", auth(s.memoryDismiss))
 	mux.HandleFunc("POST /memory/affirm", auth(s.memoryAffirm))
 	mux.HandleFunc("POST /memory/forget", auth(s.memoryForget))
+	mux.HandleFunc("POST /memory/ask", auth(s.memoryAsk))
+	mux.HandleFunc("POST /memory/apply", auth(s.memoryApply))
 	mux.HandleFunc("GET /channels", auth(s.channelsPage))
 	mux.HandleFunc("POST /channels", auth(s.channelSave))
 	mux.HandleFunc("POST /channels/delete", auth(s.channelDelete))
@@ -697,7 +699,7 @@ var opNames = []struct{ prefix, name string }{
 	{"/models/budget", "保存任务预算"},
 	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
 	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
-	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/logs/delete", "删除日志"}, {"/files/share/listen", "开关下载入口"},
+	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/memory/ask", "请助手修改记忆"}, {"/memory/apply", "确认修改记忆"}, {"/logs/delete", "删除日志"}, {"/files/share/listen", "开关下载入口"},
 	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
 	{"/connectors/disable", "停用数据源"}, {"/connectors/test", "测试数据源"}, {"/connectors/", "保存数据源"},
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
@@ -1459,20 +1461,28 @@ func (s *Server) vaultDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 type memoryData struct {
 	Pending  []memory.Pending
 	Memories []*memory.Memory
+	// Proposal 非空时是助手按用户的一句话提议的改动，等用户确认。
+	Proposal *memoryProposal
 }
 
 func (s *Server) memoryPage(w http.ResponseWriter, r *http.Request, v *view) {
-	store := s.opts.Store.Memories()
-	pending, err := store.ListPending(r.Context(), "")
+	d, err := s.loadMemory(r.Context())
 	if err != nil {
 		v.Error = err.Error()
 	}
-	list, err := store.List(r.Context(), memory.Query{})
-	if err != nil {
-		v.Error = err.Error()
-	}
-	v.Data = memoryData{Pending: pending, Memories: list}
+	v.Data = d
 	s.render(w, "memory", v)
+}
+
+// loadMemory 读出「记忆」页要列的待核实与已保存的记忆。读失败时返回已读到的部分和错误。
+func (s *Server) loadMemory(ctx context.Context) (memoryData, error) {
+	store := s.opts.Store.Memories()
+	pending, err := store.ListPending(ctx, "")
+	list, err2 := store.List(ctx, memory.Query{})
+	if err == nil {
+		err = err2
+	}
+	return memoryData{Pending: pending, Memories: list}, err
 }
 
 func (s *Server) memoryConfirm(w http.ResponseWriter, r *http.Request, _ *view) {

@@ -308,6 +308,20 @@ func (p *Pipeline) Affirm(ctx context.Context, memoryID string) error {
 	return p.store.Put(ctx, m)
 }
 
+// Revise 是用户把一条已经记下的记忆改成 value。旧的内容留在历史里，新的内容算用户亲口说的。
+func (p *Pipeline) Revise(ctx context.Context, memoryID, value string) error {
+	m, err := p.store.Get(ctx, memoryID)
+	if err != nil {
+		return err
+	}
+	now := p.now()
+	src := Source{Kind: SourceUser, Ref: m.Current.Source.Ref, Trust: core.TrustUser}
+	m.Supersede(Revision{ID: core.NewID(), Value: value, Source: src, Confidence: initialConfidence(src), CreatedAt: now},
+		OverrideUserExplicit, now)
+	m.Status = StatusActive
+	return p.store.Put(ctx, m)
+}
+
 // Forget 是用户对一条已经记下的记忆说"不对，忘掉"。
 // 记忆退出检索但不物理删除：之后能回溯助手当时为什么那样判断。
 func (p *Pipeline) Forget(ctx context.Context, memoryID string) error {
