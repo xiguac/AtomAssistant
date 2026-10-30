@@ -46,6 +46,14 @@ func (s *Store) RekeyFrom(ctx context.Context, old *seal.Box) (changed bool, err
 	}
 	sort.Strings(tables)
 	for _, table := range tables {
+		// 旧版本的库里还没有后来才加的表：它们没有数据，Migrate 会建出来，跳过。
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			return false, fmt.Errorf("pg: 检查表 %s 失败: %w", table, err)
+		}
+		if !exists {
+			continue
+		}
 		reseal := func(row map[string]json.RawMessage) error {
 			if err := from.openRow(table, row); err != nil {
 				return err
