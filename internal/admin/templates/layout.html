@@ -376,6 +376,10 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 .pager { align-items:center; }
 /* 通行密钥：一把一行，名称在上、域名与时间在下，删除按钮在右。 */
 .rows.passkeys > div, .rows.accounts > div { padding:12px 20px; }
+.rows.changes > div { padding:12px 20px; align-items:flex-start; }
+.rows.changes input[type=checkbox] { margin-top:4px; flex:none; }
+.rows.changes .change { flex:1; min-width:0; }
+.rows.changes textarea { width:100%; }
 .passkeys .pk, .accounts .acct { flex:1; min-width:0; }
 .passkeys .pk .note, .accounts .acct .note { margin-top:2px; overflow-wrap:anywhere; }
 /* 数据源：一个账号一行，名称、标签、状态在上，账号与服务器在下，操作在右。 */

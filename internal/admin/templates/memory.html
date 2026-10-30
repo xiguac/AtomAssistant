@@ -16,11 +16,11 @@
 <h2 style="margin-top:0">待确认的修改 <span class="count">{{len .Changes}}</span></h2>
 {{if .Changes}}<form method="post" action="/memory/apply" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="rows">
+  <div class="rows changes">
   {{range $i, $c := .Changes}}<div>
     <input type="checkbox" name="pick" value="{{$i}}" checked aria-label="采纳此项修改">
     <input type="hidden" name="op_{{$i}}" value="{{$c.Op}}"><input type="hidden" name="id_{{$i}}" value="{{$c.ID}}">
-    <div class="pick" style="display:block">
+    <div class="change">
       {{if eq $c.Op "delete"}}<span class="pill bad plain">删除</span>{{else}}<span class="pill warn plain">修改</span>{{end}}
       <div style="white-space:pre-wrap;word-break:break-word;margin-top:6px{{if eq $c.Op "delete"}};text-decoration:line-through;color:var(--text-2){{end}}">{{short $c.Old 400}}</div>
       {{if eq $c.Op "update"}}<label for="mv-{{$i}}" style="margin-top:8px">修改为</label><textarea id="mv-{{$i}}" name="value_{{$i}}">{{$c.Value}}</textarea>{{end}}
