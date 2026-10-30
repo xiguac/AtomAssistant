@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/oplog"
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/store"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/oplog"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/store"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // TestOpLogs 需要真实数据库，设置 ATOM_TEST_DSN 后运行。

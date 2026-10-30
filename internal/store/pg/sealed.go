@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 // 落库即加密，出库即解密。
@@ -196,7 +196,8 @@ func (s *Store) ensureSealed(ctx context.Context) error {
 	}
 	sort.Strings(tables)
 	for _, table := range tables {
-		if err := s.sealTable(ctx, tx, table); err != nil {
+		sealRow := func(row map[string]json.RawMessage) error { return s.z.sealRow(table, row) }
+		if err := s.rewriteTable(ctx, tx, table, sealRow); err != nil {
 			return err
 		}
 	}
@@ -209,8 +210,9 @@ func (s *Store) ensureSealed(ctx context.Context) error {
 	return nil
 }
 
-// sealTable 把一张表里的明文全部加密。只在 ensureSealed 里、整库都还是明文时调用。
-func (s *Store) sealTable(ctx context.Context, tx pgx.Tx, table string) error {
+// rewriteTable 把一张表的每一行交给 fn 就地改写内容列，再写回去。
+// 用在 ensureSealed 里给整库还是明文的旧数据补加密，以及改名迁移时换密文。
+func (s *Store) rewriteTable(ctx context.Context, tx pgx.Tx, table string, fn func(map[string]json.RawMessage) error) error {
 	cols := sortedColumns(table)
 	// 独占这张表：补加密期间不能有别的写入混进来。
 	if _, err := tx.Exec(ctx, `LOCK TABLE `+table+` IN ACCESS EXCLUSIVE MODE`); err != nil {
@@ -245,7 +247,7 @@ func (s *Store) sealTable(ctx context.Context, tx pgx.Tx, table string) error {
 	}
 
 	for _, p := range all {
-		if err := s.z.sealRow(table, p.row); err != nil {
+		if err := fn(p.row); err != nil {
 			return err
 		}
 		patch := make(map[string]json.RawMessage, len(cols))

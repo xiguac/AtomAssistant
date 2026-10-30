@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomassistant/internal/channel"
 )
 
 // memKV 是 KV 的内存实现。
@@ -158,7 +158,7 @@ func TestBot_长轮询收消息并用上下文令牌回话(t *testing.T) {
 	msg := sent["msg"].(map[string]any)
 	item := msg["item_list"].([]any)[0].(map[string]any)
 	if msg["to_user_id"] != "user-1@im.wechat" || msg["context_token"] != "ctx-abc" || msg["message_type"] != float64(2) ||
-		item["text_item"].(map[string]any)["text"] != "好的" || !strings.HasPrefix(msg["client_id"].(string), "atomhelper-") {
+		item["text_item"].(map[string]any)["text"] != "好的" || !strings.HasPrefix(msg["client_id"].(string), "atomassistant-") {
 		t.Fatalf("发出去的消息不对: %v", msg)
 	}
 	if info := sent["base_info"].(map[string]any); info["bot_agent"] != botAgent || info["channel_version"] != protocolVersion {

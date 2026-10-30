@@ -11,11 +11,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // memoryCmd 处理 atomctl memory 的子命令。

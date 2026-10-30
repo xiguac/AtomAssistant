@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store"
 )
 
 // Factory 返回一个干净的存储实例。

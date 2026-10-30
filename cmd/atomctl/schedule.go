@@ -7,8 +7,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/schedule"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/schedule"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // list 列出任务，最近创建的在前。

@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/connector/holiday"
-	"github.com/xiguac/atomhelper/internal/connector/weather"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomassistant/internal/connector/holiday"
+	"github.com/xiguac/atomassistant/internal/connector/weather"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/policy"
 )
 
 // fakeHistory 按任务给出走过的步骤。

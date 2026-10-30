@@ -1,19 +1,19 @@
 [Unit]
-Description=AtomHelper 语音识别（离线，把聊天里的语音消息转成文字）
+Description=AtomAssistant 语音识别（离线，把聊天里的语音消息转成文字）
 After=network.target
 
 [Service]
 Type=simple
 # 不需要固定账号：只读程序和模型，不写任何东西。
 DynamicUser=yes
-WorkingDirectory=/opt/atomhelper-asr/app
-Environment=PYTHONPATH=/opt/atomhelper-asr/app
+WorkingDirectory=/opt/atomassistant-asr/app
+Environment=PYTHONPATH=/opt/atomassistant-asr/app
 Environment=PYTHONIOENCODING=utf-8
-Environment=ASR_MODELS=/opt/atomhelper-asr/app/models/unpacked_v6
+Environment=ASR_MODELS=/opt/atomassistant-asr/app/models/unpacked_v6
 # BLAS 线程数，由 deploy/asr.sh 按服务器的核数填（至多 8，再多反而慢）。
 Environment=ASR_BLAS_THREADS=@THREADS@
 # 只听本机：语音只在这台机器上转，不出去。
-ExecStart=/opt/atomhelper-asr/venv/bin/python3 -m rt.webdemo --host 127.0.0.1 --port 8765
+ExecStart=/opt/atomassistant-asr/venv/bin/python3 -m rt.webdemo --host 127.0.0.1 --port 8765
 Restart=always
 RestartSec=5
 

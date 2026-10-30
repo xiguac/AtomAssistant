@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/style"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/style"
 )
 
 const epilogueSystemPrompt = `Your job, after a task has finished, is to distill what is worth remembering long-term about the user. The goal is for the assistant to understand this user better with every use.

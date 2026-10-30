@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 // 导出导入用于迁移服务器：在旧机器上按板块导出成文件，到新机器上导入。
@@ -62,7 +62,7 @@ func ParseSection(name string) (Section, error) {
 	return Section(name), nil
 }
 
-const exportFormat = "atomhelper-export"
+const exportFormat = "atomassistant-export"
 
 // exportFile 是导出文件的结构。
 type exportFile struct {

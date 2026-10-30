@@ -31,11 +31,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/media"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/session"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/media"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/session"
 )
 
 // Message 是从渠道进来的一条消息。

@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
 )
 
 // 工具按需加载。

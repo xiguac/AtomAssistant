@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store/memory"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store/memory"
 )
 
 // steppingClock 每被读一次就前进固定时长，用来让"执行耗时"可预测。

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/files"
+	"github.com/xiguac/atomassistant/internal/files"
 )
 
 // memStore 是测试用的链接存储。

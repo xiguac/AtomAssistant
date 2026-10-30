@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/connector/holiday"
-	"github.com/xiguac/atomhelper/internal/connector/mail"
-	"github.com/xiguac/atomhelper/internal/store/pg"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/connector/holiday"
+	"github.com/xiguac/atomassistant/internal/connector/mail"
+	"github.com/xiguac/atomassistant/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // connectorCmd 处理 atomctl connector 的子命令。

@@ -3,13 +3,13 @@
 #
 # 由 deploy/deploy.sh asr 调用，以 root 身份在服务器上运行。同目录里要有：
 #   asr.tar.gz               识别程序（rt/）、模型（models/）、自检音频（samples/）和 selfcheck.py
-#   atomhelper-asr.service   服务的 systemd 配置
-# 程序和模型装在 /opt/atomhelper-asr，root 所有，服务只读。服务只听 127.0.0.1:8765。
+#   atomassistant-asr.service   服务的 systemd 配置
+# 程序和模型装在 /opt/atomassistant-asr，root 所有，服务只读。服务只听 127.0.0.1:8765。
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-DIR=/opt/atomhelper-asr
-CONFIG=/var/lib/atomhelper/config/config.yaml
+DIR=/opt/atomassistant-asr
+CONFIG=/var/lib/atomassistant/config/config.yaml
 PORT=8765
 # 服务器在国内，PyPI 官方源慢且不稳，用腾讯云的镜像。
 INDEX=${ASR_PIP_INDEX:-https://mirrors.tencentyun.com/pypi/simple}
@@ -45,12 +45,12 @@ THREADS=$(nproc)
 
 # 自检要再起一份识别程序：先停掉在跑的那份，4G 内存的机器放不下两份（同时跑会把机器拖进 swap 卡死）。
 # 停的这一会儿发来的语音会被告知没转成；自检不过就把旧的重新起来。
-systemctl stop atomhelper-asr 2>/dev/null || true
+systemctl stop atomassistant-asr 2>/dev/null || true
 echo "==> 自检：跑自带的 12 条音频（载入加预热要十几秒）"
 if ! (cd "$DIR/app.new" && PYTHONPATH="$DIR/app.new" PYTHONIOENCODING=utf-8 ASR_BLAS_THREADS="$THREADS" \
   ASR_MODELS="$DIR/app.new/models/unpacked_v6" "$DIR/venv/bin/python3" selfcheck.py); then
   echo "!! 自检没通过，新版本不装，旧的照常运行" >&2
-  [ -d "$DIR/app" ] && systemctl start atomhelper-asr || true
+  [ -d "$DIR/app" ] && systemctl start atomassistant-asr || true
   exit 1
 fi
 
@@ -59,10 +59,10 @@ rm -rf "$DIR/app.old"
 mv "$DIR/app.new" "$DIR/app"
 
 echo "==> 安装并启动服务"
-sed "s/@THREADS@/$THREADS/" "$HERE/atomhelper-asr.service" > /etc/systemd/system/atomhelper-asr.service
+sed "s/@THREADS@/$THREADS/" "$HERE/atomassistant-asr.service" > /etc/systemd/system/atomassistant-asr.service
 systemctl daemon-reload
-systemctl enable -q atomhelper-asr
-systemctl restart atomhelper-asr
+systemctl enable -q atomassistant-asr
+systemctl restart atomassistant-asr
 ready=""
 for _ in $(seq 1 60); do
   if curl -fsS -m 3 "http://127.0.0.1:$PORT/api/status" 2>/dev/null | grep -q '"ready"'; then
@@ -73,7 +73,7 @@ for _ in $(seq 1 60); do
 done
 if [ -z "$ready" ]; then
   echo "!! 识别服务一分钟内没有就绪。最近的日志：" >&2
-  journalctl -u atomhelper-asr -n 30 --no-pager >&2 || true
+  journalctl -u atomassistant-asr -n 30 --no-pager >&2 || true
   exit 1
 fi
 rm -rf "$DIR/app.old"

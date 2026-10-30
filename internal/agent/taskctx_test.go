@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
 )
 
 // prefix 把一次请求的消息拼成一整段，用来比较两次请求的开头。

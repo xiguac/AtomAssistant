@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store/memory"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store/memory"
 )
 
 // slowPlanner 第一次决策耗时远超租约时长，之后直接结束任务。

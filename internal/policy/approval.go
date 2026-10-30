@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // Outcome 是一次审批判定的结果。

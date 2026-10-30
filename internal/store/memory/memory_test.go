@@ -3,9 +3,9 @@ package memory_test
 import (
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/store"
-	"github.com/xiguac/atomhelper/internal/store/memory"
-	"github.com/xiguac/atomhelper/internal/store/storetest"
+	"github.com/xiguac/atomassistant/internal/store"
+	"github.com/xiguac/atomassistant/internal/store/memory"
+	"github.com/xiguac/atomassistant/internal/store/storetest"
 )
 
 func TestMemoryStore契约(t *testing.T) {

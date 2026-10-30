@@ -29,8 +29,8 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/media"
 	"path"
 )
 

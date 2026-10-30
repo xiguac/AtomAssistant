@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // cancelTasks 取消任务：给出 ID 就取消那一个，写 all 就取消全部还没结束的。

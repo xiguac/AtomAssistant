@@ -27,24 +27,24 @@ func (m *memWorkspace) WriteFile(rel string, data []byte) (string, error) {
 }
 
 func TestArgs_断网只读看不到服务的密钥(t *testing.T) {
-	r := &Runner{Python: "/opt/atomhelper-sandbox/bin/python3", Timeout: time.Minute, MemoryMB: 512}
-	args := strings.Join(r.args("/var/lib/atomhelper/files", "/tmp/x/out", "/tmp/x/main.py"), " ")
+	r := &Runner{Python: "/opt/atomassistant-sandbox/bin/python3", Timeout: time.Minute, MemoryMB: 512}
+	args := strings.Join(r.args("/var/lib/atomassistant/files", "/tmp/x/out", "/tmp/x/main.py"), " ")
 	for _, want := range []string{
 		"--unshare-all", "--die-with-parent", "--clearenv",
-		"--ro-bind /var/lib/atomhelper/files /work", "--bind /tmp/x/out /out",
-		"--ro-bind /opt/atomhelper-sandbox /opt/atomhelper-sandbox",
+		"--ro-bind /var/lib/atomassistant/files /work", "--bind /tmp/x/out /out",
+		"--ro-bind /opt/atomassistant-sandbox /opt/atomassistant-sandbox",
 		"--as=536870912", "-I /sandbox/main.py",
 	} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("参数里应有 %q:\n%s", want, args)
 		}
 	}
-	// /etc 只给运行需要的几个文件：服务的密钥文件在 /etc/atomhelper，不能挂进去。
-	if strings.Contains(args, "--ro-bind /etc /etc") || strings.Contains(args, "/etc/atomhelper") || strings.Contains(args, "--share-net") {
+	// /etc 只给运行需要的几个文件：服务的密钥文件在 /etc/atomassistant，不能挂进去。
+	if strings.Contains(args, "--ro-bind /etc /etc") || strings.Contains(args, "/etc/atomassistant") || strings.Contains(args, "--share-net") {
 		t.Fatalf("不应把整个 /etc 或网络交给沙箱:\n%s", args)
 	}
 	// 工作区只读：/work 不能是可写挂载。
-	if strings.Contains(args, "--bind /var/lib/atomhelper/files") {
+	if strings.Contains(args, "--bind /var/lib/atomassistant/files") {
 		t.Fatalf("工作区应只读挂载:\n%s", args)
 	}
 }

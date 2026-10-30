@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store"
 )
 
 // SchedulerConfig 是调度器的运行参数。

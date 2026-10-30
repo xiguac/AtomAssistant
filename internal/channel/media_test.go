@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/media"
 )
 
 func TestRoute_视频交给支持它的模型(t *testing.T) {

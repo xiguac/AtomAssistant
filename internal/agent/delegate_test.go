@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/style"
-	"github.com/xiguac/atomhelper/internal/team"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/style"
+	"github.com/xiguac/atomassistant/internal/team"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // scriptedWorkers 模拟任务模型：按顺序给出事先写好的回答，记下是谁被叫到、看到了什么。

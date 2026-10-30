@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store"
 )
 
 // 这个文件是用户对任务的裁决入口：批准、拒绝、确认不可逆操作是否生效。

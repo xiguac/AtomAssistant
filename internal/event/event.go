@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // 内置事件主题。用点号分层，支持前缀通配。

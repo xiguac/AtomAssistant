@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
-	"github.com/xiguac/atomhelper/internal/memory"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/memory"
 )
 
 // MemoryProvider 提供上下文装配与按需展开。

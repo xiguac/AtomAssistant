@@ -17,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/oplog"
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/oplog"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/store"
 	"log/slog"
 )
 

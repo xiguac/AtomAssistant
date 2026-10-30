@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/channel/weixin"
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/channel/weixin"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // 微信渠道的扫码连接。

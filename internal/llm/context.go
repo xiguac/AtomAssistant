@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // Segment 是上下文里的一段内容，带来源与信任等级。

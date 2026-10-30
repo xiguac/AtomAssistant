@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/session"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/session"
 )
 
 // 会话与任务分开：话记在每天的会话里，事记在任务里。见 internal/session。

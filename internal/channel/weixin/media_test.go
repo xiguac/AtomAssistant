@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/media"
 )
 
 func TestConvert_语音和视频按文件的办法取(t *testing.T) {

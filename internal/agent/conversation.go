@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
 )
 
 // 会话的上下文：用户在聊天软件里一句接一句地说，每一句若都是一个从零开始的任务，

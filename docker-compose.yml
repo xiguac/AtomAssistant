@@ -1,18 +1,20 @@
 # 自部署形态：单机 docker-compose 起来即可，不依赖 K8s 等重组件。
+# 项目名写死：不写的话按所在目录的名字来，卷名会跟着目录名变。
+name: atomassistant
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: atomhelper-pg
+    container_name: atomassistant-pg
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-atom}
-      POSTGRES_DB: atomhelper
+      POSTGRES_DB: atomassistant
     ports:
       # 只绑定回环地址：数据库不对外暴露。
       - "127.0.0.1:55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d atomhelper"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d atomassistant"]
       interval: 5s
       timeout: 3s
       retries: 10

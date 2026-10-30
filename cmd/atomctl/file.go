@@ -5,8 +5,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 // fileCmd 处理 atomctl file 的子命令：往助手的工作区里放文件、看里面有什么。

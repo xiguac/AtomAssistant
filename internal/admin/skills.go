@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/skill"
+	"github.com/xiguac/atomassistant/internal/skill"
 )
 
 // 「Skill」页：查看、安装、移除 Skill。

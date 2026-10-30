@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xiguac/atomhelper/internal/share"
+	"github.com/xiguac/atomassistant/internal/share"
 )
 
 var _ share.Store = (*Store)(nil)

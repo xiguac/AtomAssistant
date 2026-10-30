@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/skillscan"
+	"github.com/xiguac/atomassistant/internal/skillscan"
 )
 
 const reception = `id: reception.standard

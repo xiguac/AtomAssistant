@@ -10,15 +10,15 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/event"
-	"github.com/xiguac/atomhelper/internal/files"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
-	"github.com/xiguac/atomhelper/internal/session"
-	"github.com/xiguac/atomhelper/internal/skill"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/event"
+	"github.com/xiguac/atomassistant/internal/files"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/session"
+	"github.com/xiguac/atomassistant/internal/skill"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // ToolCatalog 提供可用工具列表。

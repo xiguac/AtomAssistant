@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/connector/mail"
-	"github.com/xiguac/atomhelper/internal/store/pg"
-	"github.com/xiguac/atomhelper/internal/style"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/connector/mail"
+	"github.com/xiguac/atomassistant/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/style"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // styleCmd 处理 atomctl style 的子命令。

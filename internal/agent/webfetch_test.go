@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/connector/deepseek"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomassistant/internal/connector/deepseek"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/policy"
 )
 
 // fakeWebTools 是 WebTools 的测试替身。

@@ -6,7 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xiguac/atomhelper/internal/team"
+	"github.com/xiguac/atomassistant/internal/team"
 )
 
 // TeamStore 是 team.Store 的 Postgres 实现。

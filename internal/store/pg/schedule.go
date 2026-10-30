@@ -7,9 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/schedule"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/schedule"
+	"github.com/xiguac/atomassistant/internal/store"
 )
 
 // ScheduleStore 是 schedule.Store 的 Postgres 实现，与任务存储共用连接池。

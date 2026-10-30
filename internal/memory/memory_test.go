@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/memory/memstore"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/memory/memstore"
 )
 
 func ctx() context.Context { return context.Background() }

@@ -9,7 +9,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 var (

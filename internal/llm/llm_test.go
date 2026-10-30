@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // ---- 上下文装配（安全相关，最重要）----

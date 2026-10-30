@@ -15,8 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"encoding/base64"
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/media"
 )
 
 // fakeQQ 模拟 QQ 开放平台：凭证接口、网关地址接口、WebSocket 网关、发消息接口。

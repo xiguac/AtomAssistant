@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/event"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/style"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/event"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/style"
 )
 
 type fakeVoice struct {

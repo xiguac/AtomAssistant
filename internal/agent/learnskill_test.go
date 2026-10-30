@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/memory/memstore"
-	"github.com/xiguac/atomhelper/internal/skill"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/memory/memstore"
+	"github.com/xiguac/atomassistant/internal/skill"
 )
 
 // skillShelf 是 SkillWriter 的内存实现。

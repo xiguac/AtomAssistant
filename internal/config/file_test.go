@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 func writeConfig(t *testing.T, body string) string {

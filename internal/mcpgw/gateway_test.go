@@ -9,8 +9,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/policy"
 )
 
 type cityArgs struct {
@@ -250,7 +250,7 @@ func TestCall_幂等键通过meta透传(t *testing.T) {
 	if len(cap.meta) != 1 {
 		t.Fatalf("未捕获 meta: %+v", cap.meta)
 	}
-	got, _ := cap.meta[0]["atomhelper/idempotency-key"].(string)
+	got, _ := cap.meta[0]["atomassistant/idempotency-key"].(string)
 	if got != key {
 		t.Fatalf("幂等键未透传，期望 %s 实际 %q", key, got)
 	}

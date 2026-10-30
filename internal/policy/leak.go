@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // 出站过滤：凡是网址或内容由模型拼出来的 HTTP 请求，发出去之前都要过这一层。

@@ -151,7 +151,7 @@ func (c *Codec) run(ctx context.Context, in []byte, outExt string, args ...strin
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "atomhelper-media-")
+	dir, err := os.MkdirTemp("", "atomassistant-media-")
 	if err != nil {
 		return nil, fmt.Errorf("media: 建临时目录失败: %w", err)
 	}

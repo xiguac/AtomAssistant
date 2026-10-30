@@ -8,8 +8,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/xiguac/atomhelper/internal/store/pg"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // vaultCmd 处理 atomctl vault 的子命令。

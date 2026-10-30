@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/agent"
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/agent"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // 「系统提示词」页：逐段查看、改写系统提示，并决定每一段是否加载。

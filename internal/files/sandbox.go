@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 // 沙箱要用到的几样：见 internal/sandbox。

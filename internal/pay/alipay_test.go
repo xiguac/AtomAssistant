@@ -46,7 +46,7 @@ func fakeBot(args []string) {
 }
 
 func bot() Alipay {
-	return Alipay{Command: os.Args[0], AgentName: "AtomHelper", Timeout: 20 * time.Second}
+	return Alipay{Command: os.Args[0], AgentName: "AtomAssistant", Timeout: 20 * time.Second}
 }
 
 func argsOf(t *testing.T, out string) []string {
@@ -121,7 +121,7 @@ func TestAlipay_查询与钱包命令(t *testing.T) {
 	out, err = bot().WalletStatus(ctx)
 	check("钱包状态", out, err, "check-wallet")
 	out, err = bot().WalletApply(ctx, "")
-	check("申请开通", out, err, "apply-wallet", "--agent-name", "AtomHelper")
+	check("申请开通", out, err, "apply-wallet", "--agent-name", "AtomAssistant")
 	// 开通口令与验证码是两个阶段的两个命令，不能互换。
 	out, err = bot().WalletApply(ctx, "ENROLL-123")
 	check("提交开通口令", out, err, "apply-wallet", "-c", "ENROLL-123")

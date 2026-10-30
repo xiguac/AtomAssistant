@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/connector/calendar"
-	"github.com/xiguac/atomhelper/internal/connector/holiday"
-	"github.com/xiguac/atomhelper/internal/connector/mail"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/connector/calendar"
+	"github.com/xiguac/atomassistant/internal/connector/holiday"
+	"github.com/xiguac/atomassistant/internal/connector/mail"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
 )
 
 // 日历和邮件是内建连接器：直连开放协议（CalDAV、IMAP/SMTP），不经过 MCP。

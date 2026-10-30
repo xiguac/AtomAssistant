@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/admin"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/admin"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // adminCmd 处理 atomctl admin 里要动数据库的子命令。

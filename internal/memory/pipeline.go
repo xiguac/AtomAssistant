@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // Query 是记忆检索条件。

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/share"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/share"
 )
 
 // Config 是 atomd 的运行配置。

@@ -7,4 +7,4 @@ deploy/deploy.env
 bin/
 
 # 数据密钥：与本机硬件绑定，任何时候都不该进版本库
-atomhelper.key
+atomassistant.key

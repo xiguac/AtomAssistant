@@ -3,8 +3,8 @@ package channel
 import (
 	"context"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/session"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/session"
 )
 
 // 会话记录：用户说的每一句、助手回的每一句都记进当天的会话，见 internal/session。

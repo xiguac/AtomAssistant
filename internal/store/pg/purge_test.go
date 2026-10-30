@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/store"
-	"github.com/xiguac/atomhelper/internal/store/pg"
-	"github.com/xiguac/atomhelper/internal/style"
-	"github.com/xiguac/atomhelper/internal/team"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/store"
+	"github.com/xiguac/atomassistant/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/style"
+	"github.com/xiguac/atomassistant/internal/team"
 )
 
 // TestPurge 需要真实数据库，设置 ATOM_TEST_DSN 后运行。

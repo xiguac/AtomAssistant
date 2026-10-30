@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
 )
 
 // Planner 是一个固定流程的假规划器：

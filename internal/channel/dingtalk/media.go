@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/media"
 )
 
 // 发图片、语音、视频和文件。钉钉的单聊消息只引用上传过的媒体文件，而上传只有旧版接口（oapi）。

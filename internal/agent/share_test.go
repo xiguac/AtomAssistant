@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/share"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/share"
 )
 
 // fakeShares 记下收到的调用。

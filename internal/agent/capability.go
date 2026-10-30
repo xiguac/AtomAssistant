@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/market"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/skill"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/market"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/skill"
 )
 
 // 缺少能力时助手自己去找：公开 Skill 库里的 Skill，登记处里的 MCP server。

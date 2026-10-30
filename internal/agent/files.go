@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/files"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
-	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/files"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/policy"
 )
 
 // 文件工具让助手能读写工作区里的办公文件。全部在本机完成，见 internal/files。

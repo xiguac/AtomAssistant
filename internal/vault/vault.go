@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // HandlePrefix 是句柄的前缀。工具参数里某个字符串值恰好是 vault://名字，

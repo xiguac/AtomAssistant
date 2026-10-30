@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/skillscan"
+	"github.com/xiguac/atomassistant/internal/skillscan"
 )
 
 // ManifestName 是 Skill 目录里清单文件的名字。

@@ -31,7 +31,10 @@ import (
 // 意外情况靠事先用 BackupKey 留下的备份，用 RestoreKey 在新环境里恢复。
 
 // KeyFileName 是密钥文件的默认名字，与配置文件放在同一个目录。
-const KeyFileName = "atomhelper.key"
+const KeyFileName = "atomassistant.key"
+
+// wrapLabel 是派生"包数据密钥的那把密钥"时用的标签。
+const wrapLabel = "atomassistant key wrap v1"
 
 // ErrKeyMissing 表示密钥文件不存在。
 var ErrKeyMissing = errors.New("seal: 密钥文件不存在")
@@ -54,7 +57,7 @@ type keyFile struct {
 }
 
 // wrapKey 派生出包数据密钥用的那把密钥。
-func wrapKey(seed []byte, bound []string) (cipher.AEAD, error) {
+func wrapKey(label string, seed []byte, bound []string) (cipher.AEAD, error) {
 	parts, err := machineParts()
 	if err != nil {
 		return nil, err
@@ -68,7 +71,7 @@ func wrapKey(seed []byte, bound []string) (cipher.AEAD, error) {
 		fmt.Fprintf(&sb, "%s=%s\n", name, v)
 	}
 	salt := sha256.Sum256([]byte(sb.String()))
-	k, err := hkdf.Key(sha256.New, seed, salt[:], "atomhelper key wrap v1", KeySize)
+	k, err := hkdf.Key(sha256.New, seed, salt[:], label, KeySize)
 	if err != nil {
 		return nil, fmt.Errorf("seal: 派生密钥失败: %w", err)
 	}
@@ -80,7 +83,7 @@ func wrapKey(seed []byte, bound []string) (cipher.AEAD, error) {
 }
 
 // readKey 读出密钥文件里的数据密钥。
-func readKey(path string) ([]byte, error) {
+func readKey(path, label string) ([]byte, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("%w: %s", ErrKeyMissing, path)
@@ -97,7 +100,7 @@ func readKey(path string) ([]byte, error) {
 	if err1 != nil || err2 != nil || len(seed) != KeySize || len(kf.Bound) == 0 {
 		return nil, fmt.Errorf("seal: 密钥文件 %s 的内容无法识别", path)
 	}
-	aead, err := wrapKey(seed, kf.Bound)
+	aead, err := wrapKey(label, seed, kf.Bound)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +115,7 @@ func readKey(path string) ([]byte, error) {
 }
 
 // writeKey 把一把数据密钥包起来写进密钥文件。文件已经存在时拒绝覆盖。
-func writeKey(path string, key []byte) error {
+func writeKey(path, label string, key []byte) error {
 	parts, err := machineParts()
 	if err != nil {
 		return err
@@ -129,7 +132,7 @@ func writeKey(path string, key []byte) error {
 	sort.Strings(bound)
 	seed := make([]byte, KeySize)
 	_, _ = rand.Read(seed)
-	aead, err := wrapKey(seed, bound)
+	aead, err := wrapKey(label, seed, bound)
 	if err != nil {
 		return err
 	}
@@ -169,11 +172,11 @@ func writeKey(path string, key []byte) error {
 // 只有常驻服务（atomd）应该传 create=true：运维命令常常是以 root 身份跑的，
 // 由它生成的密钥文件服务账号读不到。created 为真表示这次新生成了密钥。
 func LoadKey(path string, create bool) (box *Box, created bool, err error) {
-	key, err := readKey(path)
+	key, err := readKey(path, wrapLabel)
 	if errors.Is(err, ErrKeyMissing) && create {
 		key = make([]byte, KeySize)
 		_, _ = rand.Read(key)
-		if err := writeKey(path, key); err != nil {
+		if err := writeKey(path, wrapLabel, key); err != nil {
 			return nil, false, err
 		}
 		created = true
@@ -187,7 +190,7 @@ func LoadKey(path string, create bool) (box *Box, created bool, err error) {
 // BackupKey 把数据密钥用口令加密后交出来，供用户另存。
 // 机器的硬件标识意外变化时，靠它和 RestoreKey 找回数据。
 func BackupKey(path, passphrase string) ([]byte, error) {
-	key, err := readKey(path)
+	key, err := readKey(path, wrapLabel)
 	if err != nil {
 		return nil, err
 	}
@@ -203,5 +206,5 @@ func RestoreKey(path, passphrase string, backup []byte) error {
 	if len(key) != KeySize {
 		return fmt.Errorf("seal: 这份备份里不是数据密钥")
 	}
-	return writeKey(path, key)
+	return writeKey(path, wrapLabel, key)
 }

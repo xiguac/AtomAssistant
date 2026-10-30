@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store"
-	"github.com/xiguac/atomhelper/internal/store/memory"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store"
+	"github.com/xiguac/atomassistant/internal/store/memory"
 )
 
 // scriptedPlanner 按预设脚本逐个返回决策，用完后返回 finish。

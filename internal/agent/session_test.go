@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/session"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/session"
 )
 
 // memSessions 是放在内存里的会话记录。

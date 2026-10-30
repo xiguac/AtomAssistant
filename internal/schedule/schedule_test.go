@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store"
 )
 
 func TestNextAfter_停机后不补跑只回到节拍上(t *testing.T) {

@@ -29,8 +29,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/media"
 	"path"
 )
 
@@ -427,7 +427,7 @@ func (b *Bot) connect(ctx context.Context, sess *session, seen *recent, handle f
 	} else {
 		err = write(opIdentify, map[string]any{
 			"token": "QQBot " + token, "intents": intentGroupAndC2C, "shard": []int{0, 1},
-			"properties": map[string]string{"$os": "linux", "$browser": "atomhelper", "$device": "atomhelper"},
+			"properties": map[string]string{"$os": "linux", "$browser": "atomassistant", "$device": "atomassistant"},
 		})
 	}
 	if err != nil {

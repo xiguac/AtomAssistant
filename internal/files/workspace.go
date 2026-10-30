@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 var (

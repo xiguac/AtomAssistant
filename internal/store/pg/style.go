@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xiguac/atomhelper/internal/style"
+	"github.com/xiguac/atomassistant/internal/style"
 )
 
 // StyleStore 是 style.Store 的 Postgres 实现。

@@ -20,17 +20,17 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/event"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/oplog"
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/store"
-	"github.com/xiguac/atomhelper/internal/store/pg"
-	"github.com/xiguac/atomhelper/internal/team"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/event"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/oplog"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/store"
+	"github.com/xiguac/atomassistant/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/team"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 func TestCheckAddr_不是本机就必须有TLS(t *testing.T) {

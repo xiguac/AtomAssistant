@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/connector/deepseek"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomassistant/internal/connector/deepseek"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/llm"
 )
 
 // 联网搜索用的是模型服务自带的搜索能力：把问题交给一个能联网的模型，它搜完把查到的东西写回来。

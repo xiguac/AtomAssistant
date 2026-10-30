@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/files"
-	"github.com/xiguac/atomhelper/internal/share"
+	"github.com/xiguac/atomassistant/internal/files"
+	"github.com/xiguac/atomassistant/internal/share"
 )
 
 func TestAdmin_下载链接(t *testing.T) {

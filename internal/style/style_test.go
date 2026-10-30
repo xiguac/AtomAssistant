@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomassistant/internal/llm"
 )
 
 // fakeModel 记录收到的请求并按顺序给出回答。

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // ConflictKind 是冲突的类型。分类型处置，因为它们该有不同的默认结果。

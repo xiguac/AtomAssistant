@@ -12,24 +12,24 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/channel/dingtalk"
-	"github.com/xiguac/atomhelper/internal/channel/feishu"
-	"github.com/xiguac/atomhelper/internal/channel/qq"
-	"github.com/xiguac/atomhelper/internal/channel/weixin"
-	"github.com/xiguac/atomhelper/internal/connector/calendar"
-	"github.com/xiguac/atomhelper/internal/connector/holiday"
-	"github.com/xiguac/atomhelper/internal/connector/mail"
-	"github.com/xiguac/atomhelper/internal/connector/weather"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/files"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/mcpgw"
-	"github.com/xiguac/atomhelper/internal/media"
-	"github.com/xiguac/atomhelper/internal/pay"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/sandbox"
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/channel/dingtalk"
+	"github.com/xiguac/atomassistant/internal/channel/feishu"
+	"github.com/xiguac/atomassistant/internal/channel/qq"
+	"github.com/xiguac/atomassistant/internal/channel/weixin"
+	"github.com/xiguac/atomassistant/internal/connector/calendar"
+	"github.com/xiguac/atomassistant/internal/connector/holiday"
+	"github.com/xiguac/atomassistant/internal/connector/mail"
+	"github.com/xiguac/atomassistant/internal/connector/weather"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/files"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/mcpgw"
+	"github.com/xiguac/atomassistant/internal/media"
+	"github.com/xiguac/atomassistant/internal/pay"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/sandbox"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 // File 是 atomd 的 YAML 配置。
@@ -80,7 +80,7 @@ func (f *File) SpeechRecognizer() *media.ASR {
 
 // SandboxConfig 是代码沙箱的配置。
 type SandboxConfig struct {
-	// Python 是沙箱里用的解释器的绝对路径，由 deploy/deploy.sh sandbox 装好，默认 /opt/atomhelper-sandbox/bin/python3。
+	// Python 是沙箱里用的解释器的绝对路径，由 deploy/deploy.sh sandbox 装好，默认 /opt/atomassistant-sandbox/bin/python3。
 	Python string `yaml:"python,omitempty"`
 	// TimeoutSeconds 是一次运行的时间上限，不写按 60 秒。
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
@@ -89,7 +89,7 @@ type SandboxConfig struct {
 }
 
 // DefaultSandboxPython 是沙箱解释器的默认位置。
-const DefaultSandboxPython = "/opt/atomhelper-sandbox/bin/python3"
+const DefaultSandboxPython = "/opt/atomassistant-sandbox/bin/python3"
 
 // SandboxRunner 按配置构造沙箱。没有配置时返回 nil。ws 是文件工作区，没有启用文件处理时报错。
 func (f *File) SandboxRunner(ws *files.Workspace) (*sandbox.Runner, error) {

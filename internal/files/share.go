@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 // 对外分享：助手可以给工作区里的一个文件或一个目录建临时下载链接（见 internal/share）。

@@ -12,9 +12,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomassistant/internal/policy"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // keyedServer 起一个要在网址里带 key 的远程 MCP server，像高德那样。

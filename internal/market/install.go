@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/skill"
-	"github.com/xiguac/atomhelper/internal/skillscan"
+	"github.com/xiguac/atomassistant/internal/skill"
+	"github.com/xiguac/atomassistant/internal/skillscan"
 )
 
 // Server 是助手自己装上的一个远程 MCP server。

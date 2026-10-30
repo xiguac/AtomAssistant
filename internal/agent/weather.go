@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/connector/weather"
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/connector/weather"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // WeatherService 提供天气数据，由 *weather.Client 提供。

@@ -2,12 +2,12 @@
 # 在服务器上安装代码沙箱：一个独立的 Python 环境，装好处理文件常用的库，并让服务用上它。
 #
 # 由 deploy/deploy.sh sandbox 调用，以 root 身份在服务器上运行。
-# 环境装在 /opt/atomhelper-sandbox：root 所有，服务账号只读——沙箱里的代码改不了它。
+# 环境装在 /opt/atomassistant-sandbox：root 所有，服务账号只读——沙箱里的代码改不了它。
 # 隔离靠 bubblewrap，跑起来的代码断网、只读看到工作区，见 internal/sandbox。
 set -euo pipefail
 
-DIR=/opt/atomhelper-sandbox
-CONFIG=/var/lib/atomhelper/config/config.yaml
+DIR=/opt/atomassistant-sandbox
+CONFIG=/var/lib/atomassistant/config/config.yaml
 # 服务器在国内，PyPI 官方源慢且不稳，用腾讯云的镜像。
 INDEX=${SANDBOX_PIP_INDEX:-https://mirrors.tencentyun.com/pypi/simple}
 
@@ -27,7 +27,7 @@ chmod -R go-w "$DIR"
 
 echo "==> 以服务账号、按服务的限制试跑一次"
 # 服务的 /tmp 是私有的，测试目录放在服务的数据目录下，和真实运行时一样能被看到。
-T=$(mktemp -d -p /var/lib/atomhelper)
+T=$(mktemp -d -p /var/lib/atomassistant)
 mkdir -p "$T/work" "$T/out"
 echo "hello" > "$T/work/a.txt"
 cat > "$T/main.py" <<'PY'
@@ -40,11 +40,11 @@ try:
     print("NETWORK REACHABLE")
 except OSError:
     print("no network")
-print("etc atomhelper visible" if os.path.exists("/etc/atomhelper") else "etc atomhelper hidden")
+print("etc atomassistant visible" if os.path.exists("/etc/atomassistant") else "etc atomassistant hidden")
 open("/out/result.txt", "w").write("done")
 PY
-chown -R atomhelper:atomhelper "$T"
-systemd-run --wait --pipe --quiet -p User=atomhelper -p NoNewPrivileges=true -p ProtectSystem=strict \
+chown -R atomassistant:atomassistant "$T"
+systemd-run --wait --pipe --quiet -p User=atomassistant -p NoNewPrivileges=true -p ProtectSystem=strict \
   -p ProtectHome=true -p PrivateTmp=true -p PrivateDevices=true -p RestrictSUIDSGID=true -p ReadWritePaths="$T" \
   bwrap --die-with-parent --new-session --unshare-all \
     --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin \

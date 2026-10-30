@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomassistant/internal/channel"
 )
 
 // ErrInvalid 表示配置或参数不合法。
@@ -50,7 +50,7 @@ const (
 	// appID 是官方客户端在请求头里带的应用标识，对所有使用者都是这个固定值。
 	appID = "bot"
 	// botAgent 说明发请求的是谁，只用于服务端的观测，不参与鉴权。
-	botAgent = "AtomHelper/1.0"
+	botAgent = "AtomAssistant/1.0"
 
 	// chatPrefix 是单聊会话标识的前缀，后面跟对方的 iLink 用户标识。
 	chatPrefix = "u:"
@@ -599,7 +599,7 @@ func (b *Bot) sendItem(ctx context.Context, token, user string, item map[string]
 	}
 	msg := map[string]any{
 		"from_user_id": "", "to_user_id": user,
-		"client_id":    "atomhelper-" + hex.EncodeToString(id[:]),
+		"client_id":    "atomassistant-" + hex.EncodeToString(id[:]),
 		"message_type": messageFromBot, "message_state": stateFinished,
 		"item_list": []map[string]any{item},
 	}

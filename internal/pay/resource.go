@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/policy"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/policy"
 )
 
 // 付费资源走的是 HTTP 402 协议：请求一个要收费的接口，对方回 402 并在
@@ -43,7 +43,7 @@ const maxResourceBody = 256 << 10
 type Resources struct {
 	// Domains 是允许请求的域名。写 example.com 同时允许它的子域名。空表示一个都不允许。
 	Domains []string
-	// Dir 是存放账单文件的目录，空值按系统临时目录下的 atomhelper-402。
+	// Dir 是存放账单文件的目录，空值按系统临时目录下的 atomassistant-402。
 	Dir string
 	// Client 为空时使用带超时、不跟随跳转的默认客户端。
 	Client *http.Client
@@ -90,7 +90,7 @@ func (r Resources) Check(raw string) (string, error) {
 func (r Resources) challengeFile(taskID, resourceURL string) string {
 	dir := r.Dir
 	if dir == "" {
-		dir = filepath.Join(os.TempDir(), "atomhelper-402")
+		dir = filepath.Join(os.TempDir(), "atomassistant-402")
 	}
 	sum := sha256.Sum256([]byte(taskID + "\x00" + resourceURL))
 	return filepath.Join(dir, hex.EncodeToString(sum[:16])+".txt")

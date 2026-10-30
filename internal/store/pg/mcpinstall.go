@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/xiguac/atomhelper/internal/market"
+	"github.com/xiguac/atomassistant/internal/market"
 )
 
 // MCPInstallStore 是 market.ServerStore 的 Postgres 实现。

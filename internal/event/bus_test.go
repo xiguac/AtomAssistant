@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/event"
-	"github.com/xiguac/atomhelper/internal/event/memstore"
-	"github.com/xiguac/atomhelper/internal/store/memory"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/event"
+	"github.com/xiguac/atomassistant/internal/event/memstore"
+	"github.com/xiguac/atomassistant/internal/store/memory"
 )
 
 // waitingTask 建一个等待事件的任务，并通过总线登记订阅。

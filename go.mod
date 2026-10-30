@@ -1,4 +1,4 @@
-module github.com/xiguac/atomhelper
+module github.com/xiguac/atomassistant
 
 go 1.24.4
 

@@ -26,7 +26,7 @@ import (
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
 
-	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomassistant/internal/channel"
 )
 
 // ErrInvalid 表示配置或参数不合法。

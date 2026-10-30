@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // purgeCmd 处理 atomctl purge：把一件事在库里的痕迹彻底清掉。

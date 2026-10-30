@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/event"
+	"github.com/xiguac/atomassistant/internal/event"
 )
 
 // Store 是并发安全的内存实现。

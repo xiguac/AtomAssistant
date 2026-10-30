@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/agent"
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/llm"
-	"github.com/xiguac/atomhelper/internal/team"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/agent"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/team"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // 「模型」页：主 AI 用哪个接口、哪把密钥、哪个模型，有哪些协作模型，它们各自的成绩。

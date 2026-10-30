@@ -6,7 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // mcpCmd 处理 atomctl mcp 的子命令：查看、移除助手自己装上的 MCP server。

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/seal"
+	"github.com/xiguac/atomassistant/internal/seal"
 )
 
 func TestShareable_只有助手生成的文件能分享(t *testing.T) {

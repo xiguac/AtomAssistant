@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/channel"
-	"github.com/xiguac/atomhelper/internal/media"
+	"github.com/xiguac/atomassistant/internal/channel"
+	"github.com/xiguac/atomassistant/internal/media"
 )
 
 // 发图片、视频和文件。做法照官方客户端（@tencent-weixin/openclaw-weixin 2.4.10 的 cdn/upload.js、

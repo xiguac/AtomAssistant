@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/store"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/store"
 )
 
 // DecisionKind 是 Planner 给出的下一步动作类型。

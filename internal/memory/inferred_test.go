@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/memory/memstore"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/memory/memstore"
 )
 
 // inferred 是助手在某个任务里自己推断出来的一条候选。

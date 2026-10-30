@@ -24,9 +24,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 var (
@@ -183,7 +183,7 @@ func New(opts Options) (*Gateway, error) {
 		registry:      opts.Registry,
 		audit:         opts.Audit,
 		secrets:       opts.Secrets,
-		clientName:    "atomhelper",
+		clientName:    "atomassistant",
 		clientVersion: v,
 	}, nil
 }
@@ -371,7 +371,7 @@ func (g *Gateway) Probe(ctx context.Context, spec ServerSpec) ([]ProbedTool, err
 
 // Probe 与 Gateway.Probe 做的是同一件事，供手里没有网关的地方用（管理后台的连接测试）。
 func Probe(ctx context.Context, spec ServerSpec) ([]ProbedTool, error) {
-	return probe(ctx, spec, "atomhelper", "dev")
+	return probe(ctx, spec, "atomassistant", "dev")
 }
 
 func probe(ctx context.Context, spec ServerSpec, clientName, clientVersion string) ([]ProbedTool, error) {
@@ -518,7 +518,7 @@ func (g *Gateway) Call(ctx context.Context, req CallRequest) (CallResult, error)
 	params := &mcp.CallToolParams{Name: info.RawName, Arguments: args}
 	if req.IdempotencyKey != "" {
 		// 幂等键走 _meta，不混进业务参数——否则会污染工具的入参 schema 校验。
-		params.Meta = mcp.Meta{"atomhelper/idempotency-key": req.IdempotencyKey}
+		params.Meta = mcp.Meta{"atomassistant/idempotency-key": req.IdempotencyKey}
 	}
 
 	res, err := s.cs.CallTool(ctx, params)

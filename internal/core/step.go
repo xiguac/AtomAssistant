@@ -105,7 +105,7 @@ var ErrInvalidStep = errors.New("core: 步骤字段不合法")
 // 用哈希而不是直接拼接，是为了不把内部任务 ID 泄露给第三方工具——
 // 幂等键会随请求发给外部服务，见 docs/安全模型.md §4.2 最小化裁剪。
 func IdempotencyKeyFor(taskID string, seq int) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("atomhelper/idem/%s/%d", taskID, seq)))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("atomassistant/idem/%s/%d", taskID, seq)))
 	return hex.EncodeToString(sum[:16])
 }
 

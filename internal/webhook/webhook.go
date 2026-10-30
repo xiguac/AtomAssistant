@@ -24,8 +24,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/event"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/event"
 )
 
 // MinTokenLen 是令牌的最短长度。短令牌能被暴力猜出来。

@@ -11,6 +11,7 @@
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
 #   deploy/deploy.sh status    看服务状态和最近的日志
 #   deploy/deploy.sh rollback  退回上一个版本
+#   deploy/deploy.sh migrate-name  程序改名后的一次性迁移：服务器上的服务、账号、目录、数据库换成新名字，旧密文换成新密文
 #
 # 服务器地址和密钥写在 deploy/deploy.env 里（不进版本库），格式见 deploy/deploy.env.example。
 set -euo pipefail
@@ -47,7 +48,7 @@ build() {
 
 # ffmpeg 随程序一起发布：语音、视频在各聊天软件与模型之间转换格式要用它。
 # 用 BtbN 编好的 Linux 版（带 opus、amr 编码器，只依赖系统自带的基础库），在本机下载一次缓存起来。
-# 服务器上按内容摘要存一份（/opt/atomhelper/tools/ffmpeg-摘要），只在没有时上传；
+# 服务器上按内容摘要存一份（/opt/atomassistant/tools/ffmpeg-摘要），只在没有时上传；
 # 每个版本目录里放一个指向它的链接，退回旧版本时 ffmpeg 跟着一起退。
 FFMPEG_ASSET=ffmpeg-n8.1-latest-linux64-gpl-8.1
 FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_ASSET.tar.xz
@@ -64,17 +65,17 @@ ffmpeg_local() {
 }
 
 ffmpeg_remote() {
-  local target="/opt/atomhelper/tools/ffmpeg-$FFMPEG_SUM"
+  local target="/opt/atomassistant/tools/ffmpeg-$FFMPEG_SUM"
   if remote "test -x $target"; then
     return 0
   fi
   echo "==> 上传 ffmpeg（只在它变了的时候）"
   gzip -c "$FFMPEG_BIN" > "bin/ffmpeg/ffmpeg.gz"
-  "${SCP[@]}" "bin/ffmpeg/ffmpeg.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-ffmpeg.gz"
+  "${SCP[@]}" "bin/ffmpeg/ffmpeg.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-ffmpeg.gz"
   remote "set -e
-    sudo install -d -o root -g root -m 755 /opt/atomhelper/tools
-    gunzip -c /tmp/atomhelper-ffmpeg.gz | sudo tee $target.part >/dev/null
-    rm -f /tmp/atomhelper-ffmpeg.gz
+    sudo install -d -o root -g root -m 755 /opt/atomassistant/tools
+    gunzip -c /tmp/atomassistant-ffmpeg.gz | sudo tee $target.part >/dev/null
+    rm -f /tmp/atomassistant-ffmpeg.gz
     sudo chmod 755 $target.part
     sudo mv $target.part $target
     $target -hide_banner -version | head -1"
@@ -90,36 +91,36 @@ release() {
   ffmpeg_local
   ffmpeg_remote
   echo "==> 上传"
-  remote "rm -rf /tmp/atomhelper-upload && mkdir -p /tmp/atomhelper-upload"
-  "${SCP[@]}" "$OUT/atomd" "$OUT/atomctl" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-upload/"
+  remote "rm -rf /tmp/atomassistant-upload && mkdir -p /tmp/atomassistant-upload"
+  "${SCP[@]}" "$OUT/atomd" "$OUT/atomctl" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-upload/"
   echo "==> 切换到新版本"
   remote "set -e
-    PREV=\$(readlink /opt/atomhelper/current 2>/dev/null || true)
-    sudo install -d -o root -g root -m 755 /opt/atomhelper/releases/$VERSION
-    sudo install -o root -g root -m 755 /tmp/atomhelper-upload/atomd /tmp/atomhelper-upload/atomctl /opt/atomhelper/releases/$VERSION/
-    sudo ln -sfn /opt/atomhelper/tools/ffmpeg-$FFMPEG_SUM /opt/atomhelper/releases/$VERSION/ffmpeg
-    rm -rf /tmp/atomhelper-upload
-    echo \"\$PREV\" | sudo tee /opt/atomhelper/previous >/dev/null
-    sudo ln -sfn /opt/atomhelper/releases/$VERSION /opt/atomhelper/current"
+    PREV=\$(readlink /opt/atomassistant/current 2>/dev/null || true)
+    sudo install -d -o root -g root -m 755 /opt/atomassistant/releases/$VERSION
+    sudo install -o root -g root -m 755 /tmp/atomassistant-upload/atomd /tmp/atomassistant-upload/atomctl /opt/atomassistant/releases/$VERSION/
+    sudo ln -sfn /opt/atomassistant/tools/ffmpeg-$FFMPEG_SUM /opt/atomassistant/releases/$VERSION/ffmpeg
+    rm -rf /tmp/atomassistant-upload
+    echo \"\$PREV\" | sudo tee /opt/atomassistant/previous >/dev/null
+    sudo ln -sfn /opt/atomassistant/releases/$VERSION /opt/atomassistant/current"
   # 第一次安装时后台口令还没设，服务起不来；先把程序放好，设完口令再启动。
   if [ "${NO_START:-}" = "1" ]; then
     echo "==> 程序已就位（尚未启动）"
     return 0
   fi
-  remote "sudo systemctl restart atomhelper"
+  remote "sudo systemctl restart atomassistant"
   echo "==> 检查"
   if result=$(healthy); then
     echo "    后台应答: $result"
     # 只留最近的几个版本，旧的删掉；正在用的和上一个永远留着。
-    remote "cd /opt/atomhelper/releases && ls -1t | tail -n +$((KEEP + 1)) | while read -r old; do
-      [ \"/opt/atomhelper/releases/\$old\" = \"\$(readlink /opt/atomhelper/current)\" ] && continue
-      [ \"/opt/atomhelper/releases/\$old\" = \"\$(cat /opt/atomhelper/previous 2>/dev/null)\" ] && continue
-      sudo rm -rf \"/opt/atomhelper/releases/\$old\"
+    remote "cd /opt/atomassistant/releases && ls -1t | tail -n +$((KEEP + 1)) | while read -r old; do
+      [ \"/opt/atomassistant/releases/\$old\" = \"\$(readlink /opt/atomassistant/current)\" ] && continue
+      [ \"/opt/atomassistant/releases/\$old\" = \"\$(cat /opt/atomassistant/previous 2>/dev/null)\" ] && continue
+      sudo rm -rf \"/opt/atomassistant/releases/\$old\"
     done"
     echo "==> 已部署 $VERSION"
   else
     echo "!! 新版本没有起来，退回上一版。最近的日志：" >&2
-    remote "sudo journalctl -u atomhelper -n 30 --no-pager" >&2 || true
+    remote "sudo journalctl -u atomassistant -n 30 --no-pager" >&2 || true
     rollback
     exit 1
   fi
@@ -127,19 +128,19 @@ release() {
 
 rollback() {
   remote "set -e
-    PREV=\$(cat /opt/atomhelper/previous 2>/dev/null || true)
+    PREV=\$(cat /opt/atomassistant/previous 2>/dev/null || true)
     if [ -z \"\$PREV\" ] || [ ! -d \"\$PREV\" ]; then echo '没有可以退回的版本' >&2; exit 1; fi
-    sudo ln -sfn \"\$PREV\" /opt/atomhelper/current
-    sudo systemctl restart atomhelper
+    sudo ln -sfn \"\$PREV\" /opt/atomassistant/current
+    sudo systemctl restart atomassistant
     echo \"已退回 \$PREV\""
 }
 
 case "${1:-release}" in
   setup)
     echo "==> 上传安装脚本"
-    remote "rm -rf /tmp/atomhelper-setup && mkdir -p /tmp/atomhelper-setup"
-    "${SCP[@]}" deploy/install.sh deploy/atomhelper.service deploy/config.initial.yaml "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-setup/"
-    remote "sudo bash /tmp/atomhelper-setup/install.sh && rm -rf /tmp/atomhelper-setup"
+    remote "rm -rf /tmp/atomassistant-setup && mkdir -p /tmp/atomassistant-setup"
+    "${SCP[@]}" deploy/install.sh deploy/atomassistant.service deploy/config.initial.yaml "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-setup/"
+    remote "sudo bash /tmp/atomassistant-setup/install.sh && rm -rf /tmp/atomassistant-setup"
     NO_START=1 release
     echo
     echo "程序和数据库都装好了。还差一步，设置后台的登录口令并启动："
@@ -147,19 +148,19 @@ case "${1:-release}" in
     ;;
   scanner)
     echo "==> 上传扫描器的安装脚本"
-    remote "rm -rf /tmp/atomhelper-scanner && mkdir -p /tmp/atomhelper-scanner"
+    remote "rm -rf /tmp/atomassistant-scanner && mkdir -p /tmp/atomassistant-scanner"
     # 源码在本机下好再传上去：服务器直接连 GitHub 不一定连得上。
     SRC="$(mktemp -d)"
     trap 'rm -rf "$SRC"' EXIT
     curl -fsSL -m 300 -o "$SRC/skillspector.tar.gz" https://codeload.github.com/NVIDIA/skillspector/tar.gz/HEAD
-    "${SCP[@]}" deploy/scanner.sh "$SRC/skillspector.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-scanner/"
-    remote "sudo bash /tmp/atomhelper-scanner/scanner.sh && rm -rf /tmp/atomhelper-scanner"
+    "${SCP[@]}" deploy/scanner.sh "$SRC/skillspector.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-scanner/"
+    remote "sudo bash /tmp/atomassistant-scanner/scanner.sh && rm -rf /tmp/atomassistant-scanner"
     ;;
   sandbox)
     echo "==> 上传沙箱的安装脚本"
-    remote "rm -rf /tmp/atomhelper-sandbox && mkdir -p /tmp/atomhelper-sandbox"
-    "${SCP[@]}" deploy/sandbox.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-sandbox/"
-    remote "sudo bash /tmp/atomhelper-sandbox/sandbox.sh && rm -rf /tmp/atomhelper-sandbox && sudo systemctl restart atomhelper"
+    remote "rm -rf /tmp/atomassistant-sandbox && mkdir -p /tmp/atomassistant-sandbox"
+    "${SCP[@]}" deploy/sandbox.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-sandbox/"
+    remote "sudo bash /tmp/atomassistant-sandbox/sandbox.sh && rm -rf /tmp/atomassistant-sandbox && sudo systemctl restart atomassistant"
     ;;
   asr)
     # 只传识别程序、模型和自检用的音频；asr-1.0 里自带的 python/ 是 Windows 版，服务器上另建环境。
@@ -170,9 +171,35 @@ case "${1:-release}" in
     trap 'rm -rf "$PKG"' EXIT
     tar -czf "$PKG/asr.tar.gz" --exclude=__pycache__ -C "$ASR_DIR" rt models samples selfcheck.py
     echo "==> 上传（约 150 MB）"
-    remote "rm -rf /tmp/atomhelper-asr && mkdir -p /tmp/atomhelper-asr"
-    "${SCP[@]}" deploy/asr.sh deploy/atomhelper-asr.service "$PKG/asr.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomhelper-asr/"
-    remote "sudo bash /tmp/atomhelper-asr/asr.sh && rm -rf /tmp/atomhelper-asr && sudo systemctl restart atomhelper"
+    remote "rm -rf /tmp/atomassistant-asr && mkdir -p /tmp/atomassistant-asr"
+    "${SCP[@]}" deploy/asr.sh deploy/atomassistant-asr.service "$PKG/asr.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-asr/"
+    remote "sudo bash /tmp/atomassistant-asr/asr.sh && rm -rf /tmp/atomassistant-asr && sudo systemctl restart atomassistant"
+    ;;
+  migrate-name)
+    # 程序改名之后的一次性迁移，迁移完成后删掉。先在服务器上把服务、账号、目录、数据库改成新名字，
+    # 再装新名字的服务、放上新程序，以服务账号把旧密文换成新密文，最后启动。
+    # 起不来时不自动退回：上一个版本是改名之前的程序，认不得新的目录和密钥。
+    echo "==> 上传改名脚本"
+    remote "rm -rf /tmp/atomassistant-rename && mkdir -p /tmp/atomassistant-rename"
+    "${SCP[@]}" deploy/migrate-name.sh deploy/install.sh deploy/atomassistant.service deploy/config.initial.yaml "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-rename/"
+    remote "sudo bash /tmp/atomassistant-rename/migrate-name.sh && sudo bash /tmp/atomassistant-rename/install.sh && rm -rf /tmp/atomassistant-rename"
+    NO_START=1 release
+    echo "==> 重新加密数据"
+    remote "set -e
+      cd /
+      sudo -u atomassistant bash -c 'set -a; . /etc/atomassistant/env; set +a; /opt/atomassistant/current/atomctl rekey-legacy'
+      sudo truncate -s 0 /opt/atomassistant/previous"
+    remote "sudo systemctl restart atomassistant"
+    echo "==> 检查"
+    if result=$(healthy); then
+      echo "    后台应答: $result"
+      echo "改名迁移完成。确认一切正常后，删掉服务器上的备份：sudo rm -rf /var/backups/atomassistant-rename"
+    else
+      echo "!! 新版本没有起来，没有自动退回。最近的日志：" >&2
+      remote "sudo journalctl -u atomassistant -n 30 --no-pager" >&2 || true
+      echo "改名前的数据库、密钥文件、env 和配置在服务器的 /var/backups/atomassistant-rename 里。" >&2
+      exit 1
+    fi
     ;;
   release) release ;;
   rollback) rollback ;;
@@ -183,20 +210,20 @@ case "${1:-release}" in
     read -r -s -p "再输一遍: " PW2; echo
     [ "$PW" = "$PW2" ] || { echo "两次输入不一样" >&2; exit 1; }
     printf '%s\n' "$PW" | remote "set -e
-      HASH=\$(sudo bash -c 'set -a; . /etc/atomhelper/env; set +a; /opt/atomhelper/current/atomctl admin passwd 2>/dev/null')
+      HASH=\$(sudo bash -c 'set -a; . /etc/atomassistant/env; set +a; /opt/atomassistant/current/atomctl admin passwd 2>/dev/null')
       [ -n \"\$HASH\" ] || { echo '生成摘要失败（口令太短？）' >&2; exit 1; }
-      sudo sed -i '/^ATOM_ADMIN_PASSWORD_HASH=/d' /etc/atomhelper/env
+      sudo sed -i '/^ATOM_ADMIN_PASSWORD_HASH=/d' /etc/atomassistant/env
       # 在后台页面里改过的密码存在这个文件里并且优先生效；这里重设时把它删掉，新设的才算数。
-      sudo rm -f /var/lib/atomhelper/config/admin-password.hash
-      printf 'ATOM_ADMIN_PASSWORD_HASH=%s\n' \"\$HASH\" | sudo tee -a /etc/atomhelper/env >/dev/null
-      sudo systemctl restart atomhelper"
+      sudo rm -f /var/lib/atomassistant/config/admin-password.hash
+      printf 'ATOM_ADMIN_PASSWORD_HASH=%s\n' \"\$HASH\" | sudo tee -a /etc/atomassistant/env >/dev/null
+      sudo systemctl restart atomassistant"
     unset PW PW2
     if result=$(healthy); then
       echo "口令已设置，服务已启动（$result）。"
       echo "用 deploy/deploy.sh tunnel 打开隧道，然后在浏览器里访问 http://localhost:$ADMIN_PORT"
     else
       echo "!! 口令已写入，但服务没有起来。最近的日志：" >&2
-      remote "sudo journalctl -u atomhelper -n 30 --no-pager" >&2 || true
+      remote "sudo journalctl -u atomassistant -n 30 --no-pager" >&2 || true
       exit 1
     fi
     ;;
@@ -206,10 +233,10 @@ case "${1:-release}" in
     ssh -i "$DEPLOY_KEY" -N -L "$ADMIN_PORT:127.0.0.1:$ADMIN_PORT" "$DEPLOY_USER@$DEPLOY_HOST"
     ;;
   status)
-    remote "systemctl status atomhelper --no-pager -n 0; echo; readlink /opt/atomhelper/current; echo; sudo journalctl -u atomhelper -n 25 --no-pager"
+    remote "systemctl status atomassistant --no-pager -n 0; echo; readlink /opt/atomassistant/current; echo; sudo journalctl -u atomassistant -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / asr / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
+    echo "未知的子命令 $1（可用：setup / asr / scanner / sandbox / release / passwd / tunnel / status / rollback / migrate-name）" >&2
     exit 2
     ;;
 esac

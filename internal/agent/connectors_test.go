@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/connector/calendar"
-	"github.com/xiguac/atomhelper/internal/connector/mail"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/kernel"
-	"github.com/xiguac/atomhelper/internal/policy"
-	"github.com/xiguac/atomhelper/internal/skill"
+	"github.com/xiguac/atomassistant/internal/connector/calendar"
+	"github.com/xiguac/atomassistant/internal/connector/mail"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/policy"
+	"github.com/xiguac/atomassistant/internal/skill"
 )
 
 type fakeCalendar struct {

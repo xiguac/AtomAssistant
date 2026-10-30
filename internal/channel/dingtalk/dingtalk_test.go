@@ -12,7 +12,7 @@ import (
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 
-	"github.com/xiguac/atomhelper/internal/channel"
+	"github.com/xiguac/atomassistant/internal/channel"
 )
 
 func TestConvert_只收企业成员在单聊里发来的消息(t *testing.T) {

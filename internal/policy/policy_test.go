@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 func TestClassifyField_字段名优先于值(t *testing.T) {

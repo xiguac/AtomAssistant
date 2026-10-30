@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 // 「渠道」页：接入聊天软件里的机器人，并指定谁是主人。

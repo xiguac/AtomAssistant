@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // MinEvery 是最短的重复间隔。更密的触发基本都是配置写错了，

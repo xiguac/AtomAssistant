@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/skill"
-	"github.com/xiguac/atomhelper/internal/skillscan"
+	"github.com/xiguac/atomassistant/internal/skill"
+	"github.com/xiguac/atomassistant/internal/skillscan"
 )
 
 type entry struct {

@@ -10,12 +10,12 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/config"
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/market"
-	"github.com/xiguac/atomhelper/internal/skill"
-	"github.com/xiguac/atomhelper/internal/skillscan"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/config"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/market"
+	"github.com/xiguac/atomassistant/internal/skill"
+	"github.com/xiguac/atomassistant/internal/skillscan"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // skillCmd 处理 atomctl skill 的子命令。

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/core"
-	"github.com/xiguac/atomhelper/internal/memory"
-	"github.com/xiguac/atomhelper/internal/memory/memstore"
+	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/memory/memstore"
 )
 
 // 从读过外部内容的任务里提炼出来的候选：分不清是助手的推断还是别人想让它记住的话，只能等用户确认。

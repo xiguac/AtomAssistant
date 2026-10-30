@@ -33,7 +33,7 @@ import (
 	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/caldav"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 var (
@@ -508,7 +508,7 @@ func (c *Client) Create(ctx context.Context, d Draft, key string) (Event, error)
 	}
 	now := time.Now().UTC()
 	event := ical.NewEvent()
-	event.Props.SetText(ical.PropUID, uid+"@atomhelper")
+	event.Props.SetText(ical.PropUID, uid+"@atomassistant")
 	event.Props.SetDateTime(ical.PropDateTimeStamp, now)
 	event.Props.SetDateTime(ical.PropCreated, now)
 	event.Props.SetText(ical.PropSummary, strings.TrimSpace(d.Title))
@@ -523,7 +523,7 @@ func (c *Client) Create(ctx context.Context, d Draft, key string) (Event, error)
 
 	data := ical.NewCalendar()
 	data.Props.SetText(ical.PropVersion, "2.0")
-	data.Props.SetText(ical.PropProductID, "-//AtomHelper//CalDAV//ZH")
+	data.Props.SetText(ical.PropProductID, "-//AtomAssistant//CalDAV//ZH")
 	data.Children = append(data.Children, event.Component)
 
 	id := strings.TrimSuffix(cal.Path, "/") + "/" + uid + ".ics"

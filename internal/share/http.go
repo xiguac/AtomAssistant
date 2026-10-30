@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/files"
+	"github.com/xiguac/atomassistant/internal/files"
 )
 
 // maxConcurrent 是同时进行的下载数。文件整个读进内存再发出去，不限的话几个大文件就能把内存吃光。

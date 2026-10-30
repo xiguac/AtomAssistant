@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/share"
+	"github.com/xiguac/atomassistant/internal/share"
 )
 
 // 「文件」页里的「下载链接」一节：助手给工作区文件建的临时下载链接。

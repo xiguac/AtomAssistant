@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/files"
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/share"
-	"github.com/xiguac/atomhelper/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/files"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/share"
+	"github.com/xiguac/atomassistant/internal/store/pg"
 )
 
 // TestShareStore 需要真实数据库，设置 ATOM_TEST_DSN 后运行。

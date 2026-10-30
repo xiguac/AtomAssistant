@@ -1,4 +1,4 @@
-# AtomHelper 原子助手
+# AtomAssistant 原子助手
 
 7×24 常驻云端、事件驱动、带持久化记忆的个人智能体运行时。用户自部署在自己的服务器上。
 
@@ -364,10 +364,10 @@ Anthropic 协议没有这个开关，只能靠提示词约束。
 部署到服务器（程序和数据分开放，更新程序不动数据）：
 
 ```
-/opt/atomhelper/releases/<版本>/   程序的各个版本，current 链接指向正在用的
-/var/lib/atomhelper/               数据：config/ 配置，files/ 文件工作区
-/etc/atomhelper/env                密钥：数据库连接串、保险库密钥、后台口令摘要
-/var/lib/atomhelper/config/atomhelper.key   数据密钥：首次启动时生成，与这台机器的硬件绑定
+/opt/atomassistant/releases/<版本>/   程序的各个版本，current 链接指向正在用的
+/var/lib/atomassistant/               数据：config/ 配置，files/ 文件工作区
+/etc/atomassistant/env                密钥：数据库连接串、保险库密钥、后台口令摘要
+/var/lib/atomassistant/config/atomassistant.key   数据密钥：首次启动时生成，与这台机器的硬件绑定
 ```
 
 ```bash
@@ -673,7 +673,7 @@ atomctl mcp list | rm <名称>    # 助手装上的 MCP server
 ```bash
 docker compose up -d
 
-export ATOM_DSN='postgres://postgres:atom@127.0.0.1:55432/atomhelper'
+export ATOM_DSN='postgres://postgres:atom@127.0.0.1:55432/atomassistant'
 go run ./cmd/atomd -migrate-only     # 建表
 go run ./cmd/atomd                   # 启动调度器（demo 模式）
 
@@ -787,7 +787,7 @@ go run ./cmd/atomd
 | `ATOM_LOG_LEVEL` | `info` | debug / info / warn / error |
 | `ATOM_CONFIG` | 空 | YAML 配置路径。不设置则跑 demo 模式 |
 | `ATOM_VAULT_KEY` | 空 | 保险库密钥。不设置则保险库锁定：能列名字，不能存也不能用 |
-| `ATOM_KEY_FILE` | 配置文件所在目录下的 `atomhelper.key` | 数据密钥文件。首次启动时生成，与本机硬件绑定 |
+| `ATOM_KEY_FILE` | 配置文件所在目录下的 `atomassistant.key` | 数据密钥文件。首次启动时生成，与本机硬件绑定 |
 | `ATOM_WEBHOOK_ADDR` | 空 | Webhook 监听地址。不设置则不开 |
 | `ATOM_WEBHOOK_TOKEN` | 空 | Webhook 令牌，至少 24 个字符。开了入口就必须设置 |
 | `ATOM_SHARE_ADDR` | 空 | 文件下载入口的监听地址。不设置则不开，助手也没有分享文件的工具 |
@@ -805,7 +805,7 @@ Postgres 契约测试默认跳过，需要真实数据库：
 
 ```bash
 docker compose up -d
-ATOM_TEST_DSN='postgres://postgres:atom@127.0.0.1:55432/atomhelper_test' go test -p 1 ./...
+ATOM_TEST_DSN='postgres://postgres:atom@127.0.0.1:55432/atomassistant_test' go test -p 1 ./...
 ```
 
 注意该测试会清空目标库，**不要指向生产数据库**。用到数据库的几个包共用这一个库，所以要加 `-p 1` 让它们一个一个跑。

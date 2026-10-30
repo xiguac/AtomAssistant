@@ -23,7 +23,7 @@ reply:
 
 # ---- 文件处理 ----
 files:
-  dir: /var/lib/atomhelper/files
+  dir: /var/lib/atomassistant/files
 
 # ---- 节假日（公开订阅，不需要账号） ----
 connectors:

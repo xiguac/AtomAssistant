@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiguac/atomhelper/internal/vault"
+	"github.com/xiguac/atomassistant/internal/vault"
 )
 
 const homeAddress = "杭州市西湖区某某路 88 号 3 幢 502"

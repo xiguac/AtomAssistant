@@ -6,8 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/connector/deepseek"
-	"github.com/xiguac/atomhelper/internal/llm"
+	"github.com/xiguac/atomassistant/internal/connector/deepseek"
+	"github.com/xiguac/atomassistant/internal/llm"
 )
 
 // 联网搜索用的是模型服务自带的搜索能力。配置了 DeepSeek（模型服务或连接器里的搜索密钥）时另有它的搜索、抓取接口（见 WebTools），

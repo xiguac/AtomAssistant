@@ -6,19 +6,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/seal"
-	"github.com/xiguac/atomhelper/internal/store"
-	"github.com/xiguac/atomhelper/internal/store/pg"
-	"github.com/xiguac/atomhelper/internal/store/storetest"
+	"github.com/xiguac/atomassistant/internal/seal"
+	"github.com/xiguac/atomassistant/internal/store"
+	"github.com/xiguac/atomassistant/internal/store/pg"
+	"github.com/xiguac/atomassistant/internal/store/storetest"
 )
 
 // TestPostgresStore契约 需要一个真实数据库。
 //
 // 设置 ATOM_TEST_DSN 后运行，例如：
 //
-//	docker run -d --name atomhelper-pg -e POSTGRES_PASSWORD=atom \
-//	  -e POSTGRES_DB=atomhelper -p 55432:5432 postgres:16-alpine
-//	ATOM_TEST_DSN='postgres://postgres:atom@localhost:55432/atomhelper' go test ./...
+//	docker run -d --name atomassistant-pg -e POSTGRES_PASSWORD=atom \
+//	  -e POSTGRES_DB=atomassistant -p 55432:5432 postgres:16-alpine
+//	ATOM_TEST_DSN='postgres://postgres:atom@localhost:55432/atomassistant' go test ./...
 //
 // 每个子用例用独立 schema，互不干扰。
 func TestPostgresStore契约(t *testing.T) {

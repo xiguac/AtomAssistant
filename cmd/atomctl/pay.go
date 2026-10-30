@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xiguac/atomhelper/internal/config"
+	"github.com/xiguac/atomassistant/internal/config"
 )
 
 // payCmd 处理 atomctl pay 的子命令。

@@ -54,12 +54,17 @@ type Box struct {
 // NewBox 用一把 32 字节的数据密钥构造 Box。
 //
 // 实际干活的三把子密钥都是从它派生的，各管各的用途：一把密钥不同时用在两种算法上。
-func NewBox(key []byte) (*Box, error) {
+func NewBox(key []byte) (*Box, error) { return newBox(key, sealLabel) }
+
+// sealLabel 是派生子密钥时用的标签前缀。
+const sealLabel = "atomassistant seal v1 "
+
+func newBox(key []byte, label string) (*Box, error) {
 	if len(key) != KeySize {
 		return nil, fmt.Errorf("seal: 数据密钥必须是 %d 字节", KeySize)
 	}
 	derive := func(info string) ([]byte, error) {
-		return hkdf.Key(sha256.New, key, nil, "atomhelper seal v1 "+info, KeySize)
+		return hkdf.Key(sha256.New, key, nil, label+info, KeySize)
 	}
 	aead := func(info string) (cipher.AEAD, error) {
 		k, err := derive(info)
@@ -182,7 +187,7 @@ func (b *Box) OpenFile(data []byte) ([]byte, error) {
 // TestBox 返回一把固定密钥的 Box。**仅供测试使用**：密钥就写在源码里。
 // 放在非 _test.go 文件里，是因为别的包的测试也要用它打开数据库。
 func TestBox() *Box {
-	b, err := NewBox([]byte("atomhelper-test-key-0123456789ab"))
+	b, err := NewBox([]byte("atomassistant-test-key-012345678"))
 	if err != nil {
 		panic(err)
 	}

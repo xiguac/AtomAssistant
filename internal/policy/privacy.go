@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xiguac/atomhelper/internal/core"
+	"github.com/xiguac/atomassistant/internal/core"
 )
 
 // 字段名匹配优先于值匹配：字段叫 password 时，不管值长什么样都是 L3。

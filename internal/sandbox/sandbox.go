@@ -50,7 +50,7 @@ type Workspace interface {
 
 // Runner 在沙箱里跑代码。
 type Runner struct {
-	// Python 是沙箱里用的解释器，要在一个只读挂进去的独立环境里（如 /opt/atomhelper-sandbox/bin/python3）。
+	// Python 是沙箱里用的解释器，要在一个只读挂进去的独立环境里（如 /opt/atomassistant-sandbox/bin/python3）。
 	Python string
 	// Bwrap 是 bubblewrap 的路径，不写按 PATH 里的 bwrap。
 	Bwrap string
@@ -121,7 +121,7 @@ func (r *Runner) args(work, out, script string) []string {
 		"--ro-bind", "/usr", "/usr",
 		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
 		"--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
-		// /etc 只给运行需要的几样；服务的密钥文件（/etc/atomhelper）不在其中。
+		// /etc 只给运行需要的几样；服务的密钥文件（/etc/atomassistant）不在其中。
 		"--ro-bind-try", "/etc/ld.so.cache", "/etc/ld.so.cache",
 		"--ro-bind-try", "/etc/localtime", "/etc/localtime",
 		"--ro-bind-try", "/etc/fonts", "/etc/fonts",

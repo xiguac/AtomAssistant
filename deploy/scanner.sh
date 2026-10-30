@@ -3,7 +3,7 @@
 # 由 deploy.sh scanner 上传并以 root 身份运行；可以重复运行。
 #
 # 装在 /opt/skillspector 的独立环境里：root 所有，服务账号只读。
-# 默认只做静态扫描（--no-llm）；要它连模型做语义分析，自己在 /etc/atomhelper/env 里改参数并提供密钥。
+# 默认只做静态扫描（--no-llm）；要它连模型做语义分析，自己在 /etc/atomassistant/env 里改参数并提供密钥。
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -12,7 +12,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 DIR=/opt/skillspector
-ENV_FILE=/etc/atomhelper/env
+ENV_FILE=/etc/atomassistant/env
 BIN=$DIR/bin/skillspector
 
 echo "==> 安装 Python 的虚拟环境支持、git 与编译工具（已安装则跳过）"
@@ -56,13 +56,13 @@ trap 'rm -rf "$T"' EXIT
 mkdir "$T/sample"
 printf -- '---\nname: sample\ndescription: 试扫用\n---\n\n# 示例\n\n先列出要点，再整理成文。\n' > "$T/sample/SKILL.md"
 chmod -R a+rX "$T"
-# 与 atomhelper.service 里的限制一致：只读的系统目录、看不到 /home。
+# 与 atomassistant.service 里的限制一致：只读的系统目录、看不到 /home。
 systemd-run --quiet --wait --pipe --collect \
-  -p User=atomhelper -p Group=atomhelper \
+  -p User=atomassistant -p Group=atomassistant \
   -p ProtectSystem=strict -p ProtectHome=true -p NoNewPrivileges=true \
-  -p ReadWritePaths=/var/lib/atomhelper -p WorkingDirectory=/var/lib/atomhelper \
+  -p ReadWritePaths=/var/lib/atomassistant -p WorkingDirectory=/var/lib/atomassistant \
   -p BindReadOnlyPaths="$T" \
-  env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/var/lib/atomhelper \
+  env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/var/lib/atomassistant \
   "$BIN" scan "$T/sample" --no-llm >/dev/null
 echo "    试扫通过"
-echo "==> 扫描器已就绪。重启服务后生效：systemctl restart atomhelper"
+echo "==> 扫描器已就绪。重启服务后生效：systemctl restart atomassistant"
