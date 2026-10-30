@@ -19,29 +19,29 @@
       <td class="r"><form method="post" action="/skills/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
         <button class="btn danger sm">移除</button></form></td>
     </tr>{{end}}</tbody>
-  </table>{{else}}<div class="empty">暂无 Skill。可点击右上角「安装 Skill」，助手在任务中缺少能力时也可自行查找并安装通过扫描的 Skill。</div>{{end}}
+  </table>{{else}}<div class="empty">暂无 Skill。可点击「安装 Skill」用一句话说明需求，由助手查找安装；助手在任务中缺少能力时也可自行查找并安装通过扫描的 Skill。</div>{{end}}
   <div class="band foot"><span class="note muted">流程清单须由任务指定后生效（atomctl run）；参考文档由助手按需读取，其内容按外部内容处理。</span></div>
 </div>
 
 <dialog class="modal" id="dlg-skill">
-<form method="post" action="/skills">
+<form method="post" action="/skills/ask">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="band"><b class="modal-title">安装 Skill</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad">
-    <label for="sk-manifest">清单内容（skill.yaml）</label>
-    <textarea id="sk-manifest" name="manifest" style="min-height:320px;font:12px/18px var(--mono)" spellcheck="false" placeholder="id: reception.standard
-name: 客户接待标准流程
-version: &quot;1.0&quot;
-goal: 完成一次客户接待的全流程安排
-required_tools:
-  - amap.maps_text_search
-steps:
-  - 确认接待时间与人数
-  - 选择餐厅并规划路线"></textarea>
-    <div class="help">字段仅限 id、name、version、goal、required_tools、steps、author，出现其他字段将被拒绝。同 ID 的 Skill 将被替换</div>
+    <label for="sk-want">需求描述</label>
+    <textarea id="sk-want" name="want" maxlength="500" placeholder="例如：需要一个规划出行路线、查询沿途天气的 Skill"></textarea>
+    <div class="help">提交后将创建一个任务，由助手在公开的 Skill 库中查找、扫描并安装，可在任务详情中查看进展。存在外传风险的 Skill 须经你批准方可安装。</div>
   </div>
-  <div class="band foot"><span class="note muted">安装前须通过 SkillSpector 扫描，耗时可能达数分钟。扫描未通过或未能执行时不予安装。</span><button class="btn">扫描并安装</button></div>
+  <div class="band foot"><span class="note muted">安装前须通过 SkillSpector 扫描，未通过的不予安装。</span><button class="btn">交给助手</button></div>
 </form>
+<details class="pad" style="border-top:1px solid var(--line)"><summary>已有清单文件时直接粘贴（skill.yaml）</summary>
+<form method="post" action="/skills" style="margin-top:10px">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <textarea id="sk-manifest" name="manifest" aria-label="清单内容" style="min-height:220px;font:12px/18px var(--mono)" spellcheck="false"></textarea>
+  <div class="help">字段仅限 id、name、version、goal、required_tools、steps、author。同 ID 的 Skill 将被替换。扫描耗时可能达数分钟。</div>
+  <div class="actions" style="margin-top:8px;justify-content:flex-end"><button class="btn sec sm">扫描并安装</button></div>
+</form>
+</details>
 </dialog>
 {{end}}
 {{end}}

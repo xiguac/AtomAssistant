@@ -417,6 +417,19 @@ func TestAdmin_Skill页安装要过扫描(t *testing.T) {
 	if _, err := e.store.Skills().GetSkill(ctx, "trip.plan"); err == nil {
 		t.Fatal("移除后不应还在")
 	}
+
+	// 一句话交给助手：建一个用户等级的任务，让它查找、扫描并安装。
+	if loc := post("/skills/ask", url.Values{"want": {"  "}}); !strings.Contains(loc, "e=") {
+		t.Fatalf("没写需求应被拒绝: %s", loc)
+	}
+	loc := post("/skills/ask", url.Values{"want": {"需要一个规划出行路线的 Skill"}})
+	if !strings.HasPrefix(loc, "/tasks/") {
+		t.Fatalf("应跳到新建的任务: %s", loc)
+	}
+	task, err := e.store.GetTask(ctx, strings.TrimPrefix(loc, "/tasks/"))
+	if err != nil || task.Origin != core.TrustUser || !strings.Contains(task.Goal, "规划出行路线") || !strings.Contains(task.Goal, "capability.install") {
+		t.Fatalf("交给助手的任务不对: %+v %v", task, err)
+	}
 }
 
 func TestAdmin_系统提示词页逐段改写停用与恢复默认(t *testing.T) {

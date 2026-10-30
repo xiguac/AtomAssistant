@@ -473,6 +473,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /mcp/installed/delete", auth(s.mcpInstalledDelete))
 	mux.HandleFunc("GET /skills", auth(s.skillsPage))
 	mux.HandleFunc("POST /skills", auth(s.skillInstall))
+	mux.HandleFunc("POST /skills/ask", auth(s.skillAsk))
 	mux.HandleFunc("POST /skills/delete", auth(s.skillDelete))
 	mux.HandleFunc("GET /prompts", auth(s.promptsPage))
 	mux.HandleFunc("POST /prompts", auth(s.promptSave))
@@ -702,7 +703,7 @@ var opNames = []struct{ prefix, name string }{
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
 	{"/mcp/test", "测试 MCP 连接"}, {"/mcp/sync", "读取 MCP 工具"}, {"/mcp/tools", "保存 MCP 工具授权"},
 	{"/mcp/installed/delete", "移除助手安装的 MCP server"}, {"/mcp/", "接入预置的 MCP server"},
-	{"/skills/delete", "移除 Skill"}, {"/skills", "安装 Skill"},
+	{"/skills/delete", "移除 Skill"}, {"/skills/ask", "请助手安装 Skill"}, {"/skills", "安装 Skill"},
 	{"/prompts/extra/delete", "删除自定义提示词"}, {"/prompts/extra/toggle", "切换自定义提示词"}, {"/prompts/extra", "保存自定义提示词"},
 	{"/prompts/toggle", "切换提示词段落"}, {"/prompts", "修改提示词"},
 	{"/security/", "修改登录方式"}, {"/password", "修改登录密码"}, {"/logout", "退出登录"},

@@ -30,6 +30,34 @@ func (s *Server) skillsPage(w http.ResponseWriter, r *http.Request, v *view) {
 	s.render(w, "skills", v)
 }
 
+// skillAsk 把用户一句话说的需求交给助手：建一个任务，由助手查找、扫描并安装合适的 Skill。
+// 查找、扫描、高风险时请用户批准，都和助手在任务中自己缺能力时走同一套流程（见 agent 的 capability.*）。
+func (s *Server) skillAsk(w http.ResponseWriter, r *http.Request, _ *view) {
+	want := strings.TrimSpace(r.PostFormValue("want"))
+	if want == "" {
+		back(w, r, "/skills", "", errors.New("请说明需要什么样的 Skill"))
+		return
+	}
+	if rs := []rune(want); len(rs) > 500 {
+		back(w, r, "/skills", "", errors.New("需求描述请控制在 500 字以内"))
+		return
+	}
+	title := "安装 Skill：" + want
+	if rs := []rune(title); len(rs) > 24 {
+		title = string(rs[:24]) + "…"
+	}
+	goal := "用户在管理后台要求安装 Skill，需求原话：" + want + "\n\n" +
+		"请用 capability.search（kind 填 skill）查找合适的 Skill，选出最符合需求的一个，用 capability.install 安装。" +
+		"安装前的安全扫描不通过就换一个或如实告诉用户；返回 needs_approval 时说明风险点，由用户决定。" +
+		"装好后告诉用户装了哪个 Skill、它能做什么。找不到合适的就直说，不要自己编写。"
+	id, err := s.opts.Tasks.Create(r.Context(), title, goal, nil)
+	if err != nil {
+		back(w, r, "/skills", "", err)
+		return
+	}
+	http.Redirect(w, r, "/tasks/"+id, http.StatusSeeOther)
+}
+
 // skillInstall 扫描并安装页面上贴进来的一份清单。
 func (s *Server) skillInstall(w http.ResponseWriter, r *http.Request, _ *view) {
 	text := strings.ReplaceAll(r.PostFormValue("manifest"), "\r\n", "\n")
