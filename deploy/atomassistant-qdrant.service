@@ -1,0 +1,35 @@
+[Unit]
+Description=AtomAssistant 向量库 Qdrant（存记忆的向量，只听本机，要 API key）
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+# 数据放在 /var/lib/atomassistant-qdrant，由 systemd 建好并交给这个服务。
+StateDirectory=atomassistant-qdrant
+WorkingDirectory=/var/lib/atomassistant-qdrant
+# API key 由 deploy/vector.sh 生成。
+EnvironmentFile=/etc/atomassistant/qdrant.env
+Environment=QDRANT__SERVICE__HOST=127.0.0.1
+Environment=QDRANT__SERVICE__HTTP_PORT=6333
+Environment=QDRANT__SERVICE__GRPC_PORT=6334
+Environment=QDRANT__STORAGE__STORAGE_PATH=/var/lib/atomassistant-qdrant/storage
+Environment=QDRANT__STORAGE__SNAPSHOTS_PATH=/var/lib/atomassistant-qdrant/snapshots
+Environment=QDRANT__TELEMETRY_DISABLED=true
+ExecStart=/opt/atomassistant-qdrant/qdrant
+Restart=always
+RestartSec=5
+MemoryMax=400M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

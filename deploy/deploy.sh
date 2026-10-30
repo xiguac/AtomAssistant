@@ -6,6 +6,7 @@
 #   deploy/deploy.sh           之后每次更新：编译、上传、切换、检查，起不来就自动退回上一版
 #   deploy/deploy.sh sandbox   安装代码沙箱：独立的 Python 环境与常用库，用 bubblewrap 隔离
 #   deploy/deploy.sh asr       安装语音识别服务（聊天里的语音消息转成文字；识别程序在 ASR_DIR，默认 ../asr-1.0）
+#   deploy/deploy.sh vector    安装向量记忆用的向量服务和 Qdrant（模型在 bin/embed，Qdrant 程序在 bin/qdrant-linux.tar.gz）
 #   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
@@ -173,6 +174,24 @@ case "${1:-release}" in
     remote "rm -rf /tmp/atomassistant-asr && mkdir -p /tmp/atomassistant-asr"
     "${SCP[@]}" deploy/asr.sh deploy/atomassistant-asr.service "$PKG/asr.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-asr/"
     remote "sudo bash /tmp/atomassistant-asr/asr.sh && rm -rf /tmp/atomassistant-asr && sudo systemctl restart atomassistant"
+    ;;
+  vector)
+    MODEL_DIR=bin/embed/bge-small-zh-v1.5
+    QDRANT_PKG=bin/qdrant-linux.tar.gz
+    for f in "$MODEL_DIR/model.onnx" "$MODEL_DIR/model.safetensors" "$MODEL_DIR/tokenizer.json" "$QDRANT_PKG"; do
+      [ -f "$f" ] || { echo "缺少 $f" >&2; exit 1; }
+    done
+    echo "==> 打包向量服务和模型"
+    PKG="$(mktemp -d)"
+    trap 'rm -rf "$PKG"' EXIT
+    cp deploy/embed/embedd.py deploy/embed/check.py "$PKG/"
+    cp -r "$MODEL_DIR" "$PKG/"
+    tar -czf "$PKG/embed.tar.gz" -C "$PKG" embedd.py check.py bge-small-zh-v1.5
+    echo "==> 上传（约 200 MB）"
+    remote "rm -rf /tmp/atomassistant-vector && mkdir -p /tmp/atomassistant-vector"
+    "${SCP[@]}" deploy/vector.sh deploy/atomassistant-embed.service deploy/atomassistant-qdrant.service       "$PKG/embed.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-vector/"
+    "${SCP[@]}" "$QDRANT_PKG" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-vector/qdrant.tar.gz"
+    remote "sudo bash /tmp/atomassistant-vector/vector.sh && rm -rf /tmp/atomassistant-vector && sudo systemctl restart atomassistant"
     ;;
   release) release ;;
   rollback) rollback ;;

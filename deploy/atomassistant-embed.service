@@ -1,0 +1,29 @@
+[Unit]
+Description=AtomAssistant 向量服务（把记忆和任务的文字编码成向量，只听本机）
+After=network.target
+
+[Service]
+Type=simple
+# 不需要固定账号：只读程序和模型，不写任何东西。
+DynamicUser=yes
+WorkingDirectory=/opt/atomassistant-embed/app
+Environment=PYTHONIOENCODING=utf-8
+# 推理线程数，由 deploy/vector.sh 按服务器的核数填（至多 2，给助手和语音识别留出余量）。
+ExecStart=/opt/atomassistant-embed/venv/bin/python3 embedd.py --model /opt/atomassistant-embed/app/bge-small-zh-v1.5 --host 127.0.0.1 --port 8766 --threads @THREADS@
+Restart=always
+RestartSec=5
+# 实测常驻约 240 MB，留出余量；超了宁可被杀掉重启，也不挤占助手本身。
+MemoryMax=600M
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
