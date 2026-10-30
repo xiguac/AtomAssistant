@@ -110,7 +110,7 @@ type Options struct {
 	Status func() string
 	// ShareEnv 是服务器上 ATOM_SHARE_ADDR 设的下载入口地址。为空时下载入口在「文件」页里开关。
 	ShareEnv string
-	Log    *slog.Logger
+	Log      *slog.Logger
 }
 
 // Server 是管理后台。

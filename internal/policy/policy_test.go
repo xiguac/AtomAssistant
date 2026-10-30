@@ -185,7 +185,7 @@ func TestCheckOutbound_最小化裁剪(t *testing.T) {
 
 func TestCheckOutbound_未注册工具被拒(t *testing.T) {
 	g := newGuard(t)
-	if _, _, err := g.CheckOutbound("unknown.tool", json.RawMessage(`{}`), false);!errors.Is(err, ErrToolUnknown) {
+	if _, _, err := g.CheckOutbound("unknown.tool", json.RawMessage(`{}`), false); !errors.Is(err, ErrToolUnknown) {
 		t.Fatalf("期望 ErrToolUnknown，实际 %v", err)
 	}
 }

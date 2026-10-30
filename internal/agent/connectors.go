@@ -461,7 +461,7 @@ type mailInput struct {
 	Cc         []string `json:"cc"`
 	Body       string   `json:"body"`
 	ReplyTo    string   `json:"reply_to"`
-		Account    string   `json:"account"`
+	Account    string   `json:"account"`
 	// Attachments 是工作区里要作为附件发出的文件路径。
 	Attachments []string `json:"attachments"`
 }
