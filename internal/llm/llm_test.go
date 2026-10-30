@@ -530,3 +530,46 @@ func TestProviders_带图片的消息按多模态格式发出(t *testing.T) {
 		t.Fatalf("Anthropic 协议的图片格式不对: %v", parts)
 	}
 }
+
+// seqProvider 依次返回几个回答。
+type seqProvider struct {
+	calls []Request
+	resps []Response
+}
+
+func (p *seqProvider) Name() string { return "seq" }
+func (p *seqProvider) Complete(_ context.Context, req Request) (Response, error) {
+	p.calls = append(p.calls, req)
+	r := p.resps[min(len(p.calls), len(p.resps))-1]
+	return r, nil
+}
+
+func TestRouter_JSON模式返回空白时当场重问(t *testing.T) {
+	blank := Response{Content: "\n\n   \n  ", Usage: Usage{PromptTokens: 10, CompletionTokens: 5}}
+	good := Response{Content: `{"action":"finish"}`, Usage: Usage{PromptTokens: 10, CompletionTokens: 3}}
+	route := func(p Provider) *Router {
+		r := NewRouter()
+		mustAdd(t, r, p)
+		mustRoute(t, r, Route{Purpose: PurposePlan, Provider: p.Name(), Model: "m"})
+		return r
+	}
+	msg := []Message{{Role: RoleUser, Content: "hi"}}
+
+	// 第二次就好了：返回好的那次，用量是两次加起来的。
+	p := &seqProvider{resps: []Response{blank, good}}
+	resp, err := route(p).Complete(context.Background(), PurposePlan, Request{Messages: msg, JSONMode: true})
+	if err != nil || resp.Content != good.Content || len(p.calls) != 2 || resp.Usage.PromptTokens != 20 || resp.Usage.CompletionTokens != 8 {
+		t.Fatalf("空白后应重问一次并累计用量: %+v %v 调用 %d 次", resp, err, len(p.calls))
+	}
+	// 一直空白：共问三次，最后一次不用 JSON 模式，仍是空白就原样交回。
+	p = &seqProvider{resps: []Response{blank}}
+	resp, _ = route(p).Complete(context.Background(), PurposePlan, Request{Messages: msg, JSONMode: true})
+	if len(p.calls) != 3 || !p.calls[0].JSONMode || !p.calls[1].JSONMode || p.calls[2].JSONMode || resp.Content != blank.Content {
+		t.Fatalf("应共问三次、最后一次关掉 JSON 模式: %d 次", len(p.calls))
+	}
+	// 不是 JSON 模式的空白不重问：那可能就是模型该给的回答。
+	p = &seqProvider{resps: []Response{blank}}
+	if _, err := route(p).Complete(context.Background(), PurposePlan, Request{Messages: msg}); err != nil || len(p.calls) != 1 {
+		t.Fatalf("非 JSON 模式不应重问: %d 次", len(p.calls))
+	}
+}

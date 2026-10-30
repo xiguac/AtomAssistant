@@ -261,19 +261,39 @@ func (r *Router) run(ctx context.Context, what string, route Route, req Request)
 	if req.Thinking == ThinkingDefault {
 		req.Thinking = route.Thinking
 	}
-	start := time.Now()
-	resp, err := p.Complete(ctx, req)
-	r.logCall(what, route, req, resp, time.Since(start), err)
-	if err != nil {
-		return Response{}, fmt.Errorf("llm: %s 调用 %s/%s 失败: %w",
-			what, route.Provider, route.Model, err)
+	var spent Usage
+	var cost int64
+	for attempt := 0; ; attempt++ {
+		start := time.Now()
+		resp, err := p.Complete(ctx, req)
+		r.logCall(what, route, req, resp, time.Since(start), err)
+		if err != nil {
+			return Response{}, fmt.Errorf("llm: %s 调用 %s/%s 失败: %w",
+				what, route.Provider, route.Model, err)
+		}
+		resp.CostMicros = route.costMicros(resp.Usage)
+		if r.usage != nil {
+			r.usage(resp.Usage, resp.CostMicros)
+		}
+		spent.PromptTokens += resp.Usage.PromptTokens
+		spent.CompletionTokens += resp.Usage.CompletionTokens
+		spent.CachedTokens += resp.Usage.CachedTokens
+		cost += resp.CostMicros
+		// JSON 模式下模型偶尔只吐一串空白就结束了（DeepSeek 上实测约每十几次一次）。
+		// 当场再问，最后一次不用 JSON 模式：空白多半出在 JSON 模式上，调用方本来就会从正文里解析 JSON。
+		// 这比交回调用方失败、再由内核退避 10 秒到 1 分钟重试快得多。
+		if !req.JSONMode || strings.TrimSpace(resp.Content) != "" || attempt >= blankRetries || ctx.Err() != nil {
+			resp.Usage, resp.CostMicros = spent, cost
+			return resp, nil
+		}
+		if attempt == blankRetries-1 {
+			req.JSONMode = false
+		}
 	}
-	resp.CostMicros = route.costMicros(resp.Usage)
-	if r.usage != nil {
-		r.usage(resp.Usage, resp.CostMicros)
-	}
-	return resp, nil
 }
+
+// blankRetries 是 JSON 模式返回空白时当场重问的次数。
+const blankRetries = 2
 
 // logCall 记下一次调用花了多久、用了多少。只记数字，不记内容。
 func (r *Router) logCall(what string, route Route, req Request, resp Response, total time.Duration, err error) {
