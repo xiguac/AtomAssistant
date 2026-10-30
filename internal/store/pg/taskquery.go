@@ -58,6 +58,8 @@ func (s *Store) QueryTasks(ctx context.Context, q TaskQuery) ([]*core.Task, int,
 	if !q.To.IsZero() {
 		where = append(where, `created_at < `+arg(q.To))
 	}
+	// 列表只列顶层：聊天里交代的事挂在当天的会话下面，在会话里看。
+	where = append(where, `parent_id IS NULL`)
 	cond := ` WHERE ` + strings.Join(where, ` AND `)
 
 	var total int

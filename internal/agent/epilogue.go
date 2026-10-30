@@ -12,6 +12,7 @@ import (
 	"github.com/xiguac/atomassistant/internal/kernel"
 	"github.com/xiguac/atomassistant/internal/llm"
 	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/session"
 	"github.com/xiguac/atomassistant/internal/style"
 )
 
@@ -242,8 +243,14 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 		}
 	}
 
+	return e.distill(ctx, t, segs, userSaid, tainted, history)
+}
+
+// distill 让模型从备好的材料里提炼记忆（和值得总结的办事方法），逐条写入。
+// history 为空时不总结方法：只有真正办过事的任务才有方法可总结。
+func (e *Epilogue) distill(ctx context.Context, t *core.Task, segs []llm.Segment, userSaid []string, tainted bool, history []*core.Step) (kernel.Cost, error) {
 	system := epilogueSystemPrompt
-	learn := e.skillWorthy(history, tainted)
+	learn := len(history) > 0 && e.skillWorthy(history, tainted)
 	if learn {
 		section, err := e.skillSection(ctx, history)
 		if err != nil {
@@ -293,6 +300,40 @@ func (e *Epilogue) extract(ctx context.Context, t *core.Task, history []*core.St
 		errs = append(errs, e.saveSkills(ctx, t, out.Skills))
 	}
 	return cost, errors.Join(errs...)
+}
+
+// DayFinished 在一天的会话写成摘要之后，从那天的对话里提炼值得长期记住的事。
+//
+// 聊天里很多事不会变成任务（随口交代的偏好、提到的人和日子），任务收尾时提炼不到，在这里补上。
+// 用户的原话按用户的话对待；助手说的可能转述过邮件、网页里的内容，所以这一天里不是用户亲口说的，
+// 一律只挂为候选、等用户确认，不直接生效。
+func (e *Epilogue) DayFinished(ctx context.Context, day, summary string, msgs []session.Message) error {
+	var userSaid, assistant []string
+	for _, m := range msgs {
+		text := strings.TrimSpace(m.Text)
+		if text == "" {
+			continue
+		}
+		if m.Role == session.RoleUser {
+			userSaid = append(userSaid, text)
+		} else {
+			assistant = append(assistant, text)
+		}
+	}
+	if len(userSaid) == 0 {
+		return nil
+	}
+	t := &core.Task{ID: "session:" + day, Title: "会话 " + day, Goal: "这一天和用户的对话", Reason: summary, Origin: core.TrustUser}
+	segs := []llm.Segment{
+		{Role: llm.RoleUser, Content: "这一天对话的摘要：\n" + summary, Trust: core.TrustToolOutput, Source: "当天摘要", Pinned: true},
+		{Role: llm.RoleUser, Content: "用户原话：\n" + strings.Join(userSaid, "\n"), Trust: core.TrustUser, Source: "用户原话"},
+	}
+	if len(assistant) > 0 {
+		segs = append(segs, llm.Segment{Role: llm.RoleUser, Content: "助手说的：\n" + strings.Join(assistant, "\n"),
+			Trust: core.TrustToolOutput, Source: "助手的回复"})
+	}
+	_, err := e.distill(ctx, t, segs, userSaid, true, nil)
+	return err
 }
 
 // candidate 把模型的输出转成记忆候选，并定出它的来源资格。

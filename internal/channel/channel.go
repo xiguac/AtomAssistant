@@ -560,7 +560,8 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	if handled, err := h.answerAsk(ctx, channel, m.Chat, text, active); err != nil || handled {
 		return err
 	}
-	if len(active) == 0 {
+	// 手头没事在办时也先判断一下：道谢、寒暄这类不用办事的话直接回一句，不为它建任务。
+	if len(active) == 0 && h.triage == nil {
 		return h.create(ctx, text, tag)
 	}
 	// 有动作在等确认，而这句话就是一个"同意"：放行。这不需要判断。
@@ -596,7 +597,8 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 		return h.create(ctx, text, tag)
 	}
 	switch {
-	case verdict.New:
+	case verdict.New, len(cands) == 0 && verdict.Reply == "":
+		// 没有可归的事时，不用直接回的话就是一件新的事。
 		return h.create(ctx, text, tag)
 	case verdict.TaskID != "":
 		return pick(verdict.TaskID)

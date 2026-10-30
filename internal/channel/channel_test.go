@@ -626,10 +626,16 @@ func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t
 	say := func(text string) { h.Handle(ctx, "qq", from("OWNER", text, "m")) }
 	last := func() string { return tasks.log[len(tasks.log)-1] }
 
-	// 手头没有事在办：直接是新的事，不用问模型。
+	// 手头没有事在办：寒暄直接回一句，不建任务；要办的事是新的事，模型拿不准也不去问用户。
+	tri.reply = "早上好！"
+	say("早上好")
+	if len(tasks.log) != 0 || len(qq.sent) == 0 || qq.sent[len(qq.sent)-1].Text != "早上好！" {
+		t.Fatalf("寒暄应直接回复、不建任务: %v %v", tasks.log, qq.sent)
+	}
+	tri.reply = ""
 	say("帮我订周五去苏州的高铁")
-	if last() != "create:帮我订周五去苏州的高铁|帮我订周五去苏州的高铁" || len(tri.asked) != 0 {
-		t.Fatalf("没有进行中的任务时应直接新建: %s（问了模型 %d 次）", last(), len(tri.asked))
+	if last() != "create:帮我订周五去苏州的高铁|帮我订周五去苏州的高铁" || len(tri.asked) != 2 {
+		t.Fatalf("没有进行中的任务时应新建: %s（问了模型 %d 次）", last(), len(tri.asked))
 	}
 	trip := tasks.tasks[0]
 	trip.State = core.StateRunning

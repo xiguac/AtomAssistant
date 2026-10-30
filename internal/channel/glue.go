@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/xiguac/atomassistant/internal/core"
 	"github.com/xiguac/atomassistant/internal/event"
 	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/session"
 	"github.com/xiguac/atomassistant/internal/store"
 	"github.com/xiguac/atomassistant/internal/team"
 )
@@ -20,6 +22,11 @@ type TaskQuery interface {
 	store.TaskStore
 	TasksByTag(ctx context.Context, tag string, activeOnly bool, limit int) ([]*core.Task, error)
 	TasksChangedWithTagPrefix(ctx context.Context, prefix string, since time.Time, limit int) ([]*core.Task, error)
+	// 每天的会话任务：聊天里交代的事挂在当天的会话下面，见 sessions.go。
+	OpenSessionTask(ctx context.Context, tag, title, goal string, tags []string) (string, error)
+	ChildTasks(ctx context.Context, parent string, activeOnly bool) ([]*core.Task, error)
+	SetParent(ctx context.Context, ids []string, parent string) error
+	FinishSession(ctx context.Context, id, reason string) error
 }
 
 // Deliverer 把一条消息送进任务的收件箱，由 *event.Bus 提供。
@@ -51,6 +58,14 @@ func (k *Kernel) Create(ctx context.Context, title, goal string, tags []string) 
 	t := core.NewTask(title, goal, core.ChannelByUser.MessageTrust())
 	t.Budget = k.Budget
 	t.Tags = tags
+	// 聊天里交代的事挂在当天的会话下面：任务列表里一天只看到一个会话，点进去才是其中的各件事。
+	if slices.Contains(tags, ConversationTag) {
+		parent, err := k.openSession(ctx, session.Day(t.CreatedAt))
+		if err != nil {
+			return "", err
+		}
+		t.ParentID = parent
+	}
 	if err := k.Store.CreateTask(ctx, t); err != nil {
 		return "", err
 	}

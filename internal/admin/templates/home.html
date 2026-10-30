@@ -74,7 +74,7 @@
     <input type="checkbox" name="id" value="{{.ID}}" aria-label="选择任务「{{short .Title 30}}」">
     <a class="pick" href="/tasks/{{.ID}}">
       <span class="t">{{short .Title 30}}</span>
-      <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
+      {{if and (isSession .) (not .State.Terminal)}}<span class="pill info">会话进行中</span>{{else if isSession .}}<span class="pill plain">会话</span>{{else}}<span class="pill {{stateClass .State}}">{{stateName .State}}</span>{{end}}
       <span class="d">{{short .Reason 100}}</span>
       <span class="w">{{when .CreatedAt}}</span>
     </a>

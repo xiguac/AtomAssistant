@@ -218,6 +218,25 @@ type generation struct {
 	stop   func()
 }
 
+// rollSessionsEvery 是检查会话有没有过了一天的间隔。
+const rollSessionsEvery = 5 * time.Minute
+
+// rollSessions 每隔一段时间收尾过去的日子的会话，直到 ctx 结束。
+func rollSessions(ctx context.Context, tasks *channel.Kernel, log *slog.Logger) {
+	ticker := time.NewTicker(rollSessionsEvery)
+	defer ticker.Stop()
+	for {
+		if err := tasks.RollSessions(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			log.Error("收尾前一天的会话失败，稍后再试", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 // startGeneration 用装好的部件把助手跑起来。stop 让它们都停下、等它们退出，再释放部件。
 //
 // 调度器停下时会把在跑的任务放回队列，下一代接着跑，不必等租约过期。
@@ -254,12 +273,18 @@ func startGeneration(parent context.Context, cfg *config.Config, st *pg.Store, b
 
 	// 消息渠道：主人在聊天软件里发来的话变成任务，任务的进展推回去。
 	if len(parts.channels) > 0 {
-		hub, err := channel.NewHub(parts.channels,
-			&channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log), Images: st}, st.Channels(), log.With(oplog.Key, oplog.Message))
+		tasks := &channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log), Images: st}
+		hub, err := channel.NewHub(parts.channels, tasks, st.Channels(), log.With(oplog.Key, oplog.Message))
 		if err != nil {
 			cancel()
 			return nil, err
 		}
+		// 过了凌晨 4 点：前一天的会话收尾，没办完的事挂到新一天的会话下面。
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rollSessions(ctx, tasks, log.With(oplog.Key, oplog.Message))
+		}()
 		if parts.team {
 			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
 		}
@@ -806,7 +831,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		inputs:    &inputs,
 		asr:       file.SpeechRecognizer(),
 		triage:    agent.NewTriager(router),
-		digest:    agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)),
+		digest:    agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)).WithMemory(epilogue),
 		workspace: workspace,
 		shares:    shares,
 		channels:  channels,

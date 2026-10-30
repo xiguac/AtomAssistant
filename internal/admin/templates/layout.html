@@ -381,6 +381,13 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 /* 数据源：一个账号一行，名称、标签、状态在上，账号与服务器在下，操作在右。 */
 .accounts .acct-head { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; }
 .accounts .actions { flex-wrap:nowrap; }
+/* 会话页：一天的原话，你说的和助手说的分开着色。 */
+.chatlog { padding:8px 0; max-height:70vh; overflow-y:auto; }
+.chatlog .msg { padding:8px 20px; }
+.chatlog .msg .who { font-size:12px; color:var(--muted); }
+.chatlog .msg .text { white-space:pre-wrap; word-break:break-word; }
+.chatlog .msg.user .text { color:var(--text); }
+.chatlog .msg.assistant .text { color:var(--text-2); }
 
 
 /* 后台提交后的提示：浮在页面下方，几秒后自行消失，不挪动页面内容。 */

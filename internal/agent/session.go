@@ -117,14 +117,14 @@ func renderMessages(msgs []session.Message, limit int) string {
 // ToolRecall 查以前的会话。
 const ToolRecall = "conversation.recall"
 
-// recallMaxDays 是一次最多查多少天的摘要。
-const recallMaxDays = 62
+// recallKeepDays 是能查的天数：更早的摘要和原话不再提供查看，其中的重要内容已存进记忆。
+const recallKeepDays = 30
 
 var recallTool = builtin(ToolRecall,
 	`查你和用户以前的对话。每天的对话过完后写成了一段摘要：给 from、to 查这段日子里每天的摘要，`+
 		`可以再给 query 只要提到某个词的那几天。摘要不够细时，给 day 翻那一天的原话。`+
 		`用户提到以前说过的事、交代过的长期的事，而上下文里没有时用它，不要让用户再说一遍。`+
-		`一次最多查 62 天。`,
+		`只能查最近 30 天；更早的不再保留查看，要找当时的结论去查记忆。`,
 	`{"type":"object","properties":{"from":{"type":"string","description":"开始的日子，如 2026-10-01"},`+
 		`"to":{"type":"string","description":"结束的日子（含），如 2026-10-21；不写就是今天"},`+
 		`"query":{"type":"string","description":"可选，只要摘要里提到这个词的日子"},`+
@@ -158,9 +158,13 @@ func (a *Actuator) runRecall(ctx context.Context, s *core.Step) (json.RawMessage
 		return nil, fmt.Errorf("agent: 解析查对话的参数失败: %w", err)
 	}
 	var out recallOutput
+	oldest := session.Day(time.Now().AddDate(0, 0, -recallKeepDays))
 	if in.Day != "" {
 		if _, err := time.Parse(time.DateOnly, in.Day); err != nil {
 			return nil, fmt.Errorf("agent: day 要写成 2026-10-21 这样: %q", in.Day)
+		}
+		if in.Day < oldest {
+			return nil, fmt.Errorf("agent: 只能查最近 %d 天的对话，%s 已经太早；要找当时的结论去查记忆", recallKeepDays, in.Day)
 		}
 		msgs, err := a.sessions.Messages(ctx, in.Day, 500)
 		if err != nil {
@@ -187,10 +191,13 @@ func (a *Actuator) runRecall(ctx context.Context, s *core.Step) (json.RawMessage
 	if start.After(end) {
 		return nil, fmt.Errorf("agent: from 不能晚于 to")
 	}
-	if end.Sub(start) > recallMaxDays*24*time.Hour {
-		return nil, fmt.Errorf("agent: 一次最多查 %d 天，请缩短范围", recallMaxDays)
+	// 太早的部分不给：起点挪到能查的最早那天。
+	from := in.From
+	if from < oldest {
+		from = oldest
+		out.Note = fmt.Sprintf("只能查最近 %d 天，%s 以前的不在结果里；要找当时的结论去查记忆。", recallKeepDays, oldest)
 	}
-	sums, err := a.sessions.Summaries(ctx, in.From, to)
+	sums, err := a.sessions.Summaries(ctx, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +208,7 @@ func (a *Actuator) runRecall(ctx context.Context, s *core.Step) (json.RawMessage
 		}
 		out.Summaries = append(out.Summaries, recallSummary{Day: sum.Day, Summary: sum.Text})
 	}
-	if len(out.Summaries) == 0 {
+	if len(out.Summaries) == 0 && out.Note == "" {
 		out.Note = "这段日子里没有找到；今天的对话还没写成摘要，要看今天的用 day"
 	}
 	return json.Marshal(out)
@@ -209,10 +216,22 @@ func (a *Actuator) runRecall(ctx context.Context, s *core.Step) (json.RawMessage
 
 // Digest 在每天过完之后把那天的会话写成一段摘要。
 type Digest struct {
-	model Completer
-	store session.Store
-	log   *slog.Logger
-	now   func() time.Time
+	model  Completer
+	store  session.Store
+	memory DayMemorizer
+	log    *slog.Logger
+	now    func() time.Time
+}
+
+// DayMemorizer 从一天的对话里提炼值得长期记住的事，由 *Epilogue 提供。
+type DayMemorizer interface {
+	DayFinished(ctx context.Context, day, summary string, msgs []session.Message) error
+}
+
+// WithMemory 让每天写完摘要后，把那天对话里重要的事存进记忆；不重要的留在会话里。
+func (d *Digest) WithMemory(m DayMemorizer) *Digest {
+	d.memory = m
+	return d
 }
 
 // NewDigest 构造每日摘要。
@@ -258,6 +277,12 @@ func (d *Digest) RunOnce(ctx context.Context) error {
 			return err
 		}
 		d.log.Info("写好了会话摘要", "日子", day, "消息条数", len(msgs))
+		// 摘要已经存下；提炼记忆失败只记日志，不让这一天的摘要重写。
+		if d.memory != nil {
+			if err := d.memory.DayFinished(ctx, day, text, msgs); err != nil {
+				d.log.Error("从当天的对话提炼记忆失败", "日子", day, "err", err)
+			}
+		}
 	}
 	return nil
 }

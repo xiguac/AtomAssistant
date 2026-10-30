@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -173,12 +174,15 @@ func TestSessionSegment_新任务带上当天之前的会话和昨天的摘要(t
 
 func TestRecall_查摘要和某一天的原话(t *testing.T) {
 	store := &memSessions{}
+	now := time.Now()
+	d1, d2 := session.Day(now.AddDate(0, 0, -20)), session.Day(now.AddDate(0, 0, -10))
+	old := session.Day(now.AddDate(0, 0, -45))
 	store.sums = []session.Summary{
-		{Day: "2026-10-01", Text: "订了国庆去杭州的酒店"},
-		{Day: "2026-10-05", Text: "聊了周报"},
+		{Day: old, Text: "很久以前订了去杭州的酒店"},
+		{Day: d1, Text: "订了国庆去杭州的酒店"},
+		{Day: d2, Text: "聊了周报"},
 	}
-	day := time.Date(2026, 10, 5, 9, 0, 0, 0, time.Local)
-	store.say(day, session.RoleUser, "周报写好了吗")
+	store.say(now.AddDate(0, 0, -10), session.RoleUser, "周报写好了吗")
 	a := NewActuator(nil, nil).WithSessions(store)
 	run := func(params string) (recallOutput, error) {
 		out, err := a.runRecall(context.Background(), &core.Step{ToolName: ToolRecall, Input: json.RawMessage(params)})
@@ -188,16 +192,21 @@ func TestRecall_查摘要和某一天的原话(t *testing.T) {
 		}
 		return r, err
 	}
-	r, err := run(`{"from":"2026-10-01","to":"2026-10-21","query":"杭州"}`)
-	if err != nil || len(r.Summaries) != 1 || r.Summaries[0].Day != "2026-10-01" {
+	r, err := run(`{"from":"` + d1 + `","query":"杭州"}`)
+	if err != nil || len(r.Summaries) != 1 || r.Summaries[0].Day != d1 {
 		t.Fatalf("按词查摘要不对: %+v %v", r, err)
 	}
-	r, err = run(`{"day":"2026-10-05"}`)
+	r, err = run(`{"day":"` + session.Day(now.AddDate(0, 0, -10)) + `"}`)
 	if err != nil || !strings.Contains(r.Messages, "周报写好了吗") {
 		t.Fatalf("翻某一天的原话不对: %+v %v", r, err)
 	}
-	if _, err := run(`{"from":"2026-01-01","to":"2026-10-21"}`); err == nil {
-		t.Fatal("范围太大应报错")
+	// 超过 30 天的摘要和原话不能查：范围里太早的部分不给，并说明；单查那一天直接拒绝。
+	r, err = run(`{"from":"` + old + `","query":"杭州"}`)
+	if err != nil || len(r.Summaries) != 1 || r.Summaries[0].Day != d1 || !strings.Contains(r.Note, "30 天") {
+		t.Fatalf("超过 30 天的摘要不应给出: %+v %v", r, err)
+	}
+	if _, err := run(`{"day":"` + old + `"}`); err == nil || !strings.Contains(err.Error(), "30 天") {
+		t.Fatalf("超过 30 天的原话不应能查: %v", err)
 	}
 	if _, err := run(`{"from":"10月1日"}`); err == nil {
 		t.Fatal("日子写法不对应报错")
@@ -210,13 +219,18 @@ func TestDigest_过完的日子写成摘要今天的不写(t *testing.T) {
 	store.say(now.Add(-26*time.Hour), session.RoleUser, "提醒我周五交作业")
 	store.say(now.Add(-time.Hour), session.RoleUser, "今天说的")
 	m := &fakeModel{replies: []string{"还没办完的：周五交作业"}}
-	d := NewDigest(m, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mem := &dayMemory{}
+	d := NewDigest(m, store, slog.New(slog.NewTextHandler(io.Discard, nil))).WithMemory(mem)
 	d.now = func() time.Time { return now }
 	if err := d.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.sums) != 1 || store.sums[0].Day != "2026-10-20" || store.sums[0].Text != "还没办完的：周五交作业" {
 		t.Fatalf("应只给过完的那天写摘要: %+v", store.sums)
+	}
+	// 写完摘要后，那天的对话交去提炼记忆：重要的存进记忆，不重要的留在会话里。
+	if len(mem.days) != 1 || mem.days[0] != "2026-10-20|还没办完的：周五交作业|1" {
+		t.Fatalf("写完摘要应把那天的对话交去提炼记忆: %v", mem.days)
 	}
 	if m.lastPurp != llm.PurposeSummarize || m.lastReq.JSONMode || !strings.Contains(m.lastReq.Messages[1].Content, "提醒我周五交作业") {
 		t.Fatalf("写摘要的请求不对: %s %+v", m.lastPurp, m.lastReq)
@@ -230,4 +244,12 @@ func TestDigest_过完的日子写成摘要今天的不写(t *testing.T) {
 	if err := d.RunOnce(context.Background()); err == nil {
 		t.Fatal("空摘要应报错")
 	}
+}
+
+// dayMemory 记下交来提炼记忆的日子：日子|摘要|消息条数。
+type dayMemory struct{ days []string }
+
+func (m *dayMemory) DayFinished(_ context.Context, day, summary string, msgs []session.Message) error {
+	m.days = append(m.days, fmt.Sprintf("%s|%s|%d", day, summary, len(msgs)))
+	return nil
 }

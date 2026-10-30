@@ -1,0 +1,40 @@
+{{define "content"}}
+{{with .Data}}
+<div class="crumb"><a href="/">任务</a> / {{.Task.Title}}</div>
+<div class="pagehead"><h1>{{.Task.Title}}</h1>{{if .Task.State.Terminal}}<span class="pill plain">已结束</span>{{else}}<span class="pill info">进行中</span>{{end}}</div>
+<div class="sub">{{.Day}} 这一天与助手的对话（凌晨 4 点为分界）。当天交代的事列在下面；没办完的长程任务会在第二天移到新的会话里。</div>
+
+<div class="cols even">
+<div>
+<h2 style="margin-top:0">当天的事 <span class="count">{{len .Children}}</span></h2>
+<div class="card rows">
+  {{range .Children}}<a href="/tasks/{{.ID}}">
+    <span class="t">{{short .Title 30}}</span>
+    <span class="pill {{stateClass .State}}">{{stateName .State}}</span>
+    <span class="d">{{short .Reason 100}}</span>
+    <span class="w">{{when .CreatedAt}}</span>
+  </a>{{else}}<div class="empty">这一天没有交代需要办的事。</div>{{end}}
+</div>
+
+<h2>摘要</h2>
+<div class="card pad">
+  {{if .Expired}}<div class="note muted">已超过 30 天，摘要不再提供查看。其中的重要内容已存入记忆。</div>
+  {{else if .Summary}}<div style="white-space:pre-wrap;word-break:break-word">{{.Summary.Text}}</div>
+    <div class="note muted" style="margin-top:10px">写于 {{when .Summary.At}}</div>
+  {{else}}<div class="note muted">这一天过完（凌晨 4 点以后）会自动写成摘要。</div>{{end}}
+</div>
+</div>
+
+<div>
+<h2 style="margin-top:0">对话 <span class="count">{{len .Messages}}</span></h2>
+<div class="card chatlog">
+  {{if .Expired}}<div class="empty">已超过 30 天，原话不再提供查看。</div>
+  {{else}}{{range .Messages}}<div class="msg {{.Role}}">
+    <div class="who">{{if eq (print .Role) "user"}}你{{else}}助手{{end}} · {{when .At}}{{with .Channel}} · {{.}}{{end}}</div>
+    <div class="text">{{.Text}}</div>
+  </div>{{else}}<div class="empty">这一天还没有对话。</div>{{end}}{{end}}
+</div>
+</div>
+</div>
+{{end}}
+{{end}}

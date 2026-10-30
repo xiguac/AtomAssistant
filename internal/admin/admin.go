@@ -214,6 +214,7 @@ func New(opts Options) (*Server, error) {
 		"masked":     func() string { return maskedSecret },
 		"yuan":       func(micros int64) string { return fmt.Sprintf("¥%.2f", float64(micros)/1e6) },
 		"taskTabs":   func() any { return taskTabs },
+		"isSession":  isSession,
 		"pct":        func(f float64) int { return int(f*100 + 0.5) },
 		// 配置里的类别是字符串，记录里的是 team.Category，两种都接。
 		"catName":  func(c any) string { return team.CategoryName(team.Category(fmt.Sprint(c))) },
@@ -892,9 +893,12 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request, v *view) {
 	d := overviewData{Setup: s.setupItems(r)}
 	if active, err := s.opts.Store.ListTasks(ctx, true, 1000); err == nil {
 		for _, t := range active {
-			if needsUser(t) {
+			switch {
+			case isSession(t):
+				// 每天的会话只是个容器，不算一件在办的事。
+			case needsUser(t):
 				d.Waiting++
-			} else {
+			default:
 				d.Active++
 			}
 		}
@@ -1168,6 +1172,10 @@ func (s *Server) taskPage(w http.ResponseWriter, r *http.Request, v *view) {
 	t, err := s.opts.Store.GetTask(r.Context(), id)
 	if err != nil {
 		http.Error(w, "任务不存在", http.StatusNotFound)
+		return
+	}
+	if day, ok := channel.SessionDay(t.Tags); ok {
+		s.sessionPage(w, r, v, t, day)
 		return
 	}
 	steps, err := s.opts.Store.ListSteps(r.Context(), id)
