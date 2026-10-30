@@ -531,7 +531,9 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 		parts = append(parts, ps.get(PromptWorker))
 	}
 	// 当前时间不放在这里：它每次都变，放在前面会让后面整段都命中不了缓存。见 taskctx.go。
-	system := sections(append(parts, style)...) + "\n\nAvailable tools:\n" + p.toolList()
+	// 内置工具作为函数发给模型（见 native.go），系统提示里只留 MCP 工具的目录。
+	system := sections(append(parts, style)...) + p.toolDirectory()
+	tools := p.nativeTools(history)
 	msgs, err := p.build(t, system, segs)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -540,7 +542,7 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 		return kernel.Decision{}, err
 	}
 
-	d, firstErr := p.ask(ctx, t, msgs)
+	d, firstErr := p.ask(ctx, t, msgs, tools, false)
 	if firstErr == nil || ctx.Err() != nil || !errors.Is(firstErr, errBadOutput) {
 		return d, firstErr
 	}
@@ -548,10 +550,10 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	// 这类错多半一提醒就改；交给内核的话要先退避十秒，还白占一次失败额度。
 	retry := append(append([]llm.Message{}, msgs...), llm.Message{
 		Role: llm.RoleUser,
-		Content: "你上一次的输出无法使用：" + firstErr.Error() +
-			"\n请重新决定，只输出一个符合格式的 JSON 对象。",
+		Content: "你上一次的回答无法使用：" + firstErr.Error() +
+			"\n请重新决定：调用一个或几个工具，或者调用 finish / ask_user / wait / fail 之一。",
 	})
-	d2, err := p.ask(ctx, t, retry)
+	d2, err := p.ask(ctx, t, retry, tools, true)
 	// 两次调用都花了钱，都要记账。
 	d2.TokensIn += d.TokensIn
 	d2.TokensOut += d.TokensOut
@@ -566,11 +568,9 @@ var errBadOutput = errors.New("agent: 模型输出不可用")
 // ask 调一次模型并把回答校验成决策。
 //
 // 回答不可用时返回的 Decision 只带用量，供调用方记账。
-func (p *Planner) ask(ctx context.Context, t *core.Task, msgs []llm.Message) (kernel.Decision, error) {
-	resp, err := p.complete(ctx, llm.Request{
-		Messages: msgs,
-		JSONMode: true,
-	})
+// acceptText 为真时，模型没调用函数、只写了文字，也把文字当作答复（见 decodeNative）。
+func (p *Planner) ask(ctx context.Context, t *core.Task, msgs []llm.Message, tools []llm.Tool, acceptText bool) (kernel.Decision, error) {
+	resp, err := p.complete(ctx, llm.Request{Messages: msgs, Tools: tools})
 	if err != nil {
 		return kernel.Decision{}, err
 	}
@@ -580,13 +580,9 @@ func (p *Planner) ask(ctx context.Context, t *core.Task, msgs []llm.Message) (ke
 		CostMicros:   resp.CostMicros,
 		TokensCached: resp.Usage.CachedTokens,
 	}
-
-	// 只取第一个 JSON 值：模型偶尔会在对象后面再跟一段解释，
-	// 为这种尾巴整次重试不值得。
-	var md modelDecision
-	if err := json.NewDecoder(strings.NewReader(stripFence(resp.Content))).Decode(&md); err != nil {
-		return spent, fmt.Errorf("%w: 不是合法 JSON: %v (原文: %s)",
-			errBadOutput, err, truncate(strings.TrimSpace(resp.Content), 200))
+	md, err := decodeNative(resp, acceptText)
+	if err != nil {
+		return spent, err
 	}
 	d, err := p.validate(t, md)
 	if err != nil {

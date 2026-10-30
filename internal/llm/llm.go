@@ -48,6 +48,8 @@ type Request struct {
 	WebSearch bool
 	// Thinking 是这次调用的思考强度。路由配了而调用方没指定时，用路由的。
 	Thinking Thinking
+	// Tools 是这次可供模型调用的工具，见 tools.go。模型可以调用其中的一个或几个，也可以直接回答。
+	Tools []Tool
 }
 
 // Source 是模型联网搜索时引用的一个网页。
@@ -77,6 +79,8 @@ type Response struct {
 	NoSearch bool
 	// Timing 是这次调用各阶段的耗时，用来查"为什么这么慢"。provider 量不到的项为 0。
 	Timing Timing
+	// ToolCalls 是模型发起的工具调用，只在请求带了 Tools 时可能有。
+	ToolCalls []ToolCall
 }
 
 // Timing 是一次调用各阶段的耗时，都从发出请求算起。
@@ -282,7 +286,9 @@ func (r *Router) run(ctx context.Context, what string, route Route, req Request)
 		// JSON 模式下模型偶尔只吐一串空白就结束了（DeepSeek 上实测约每十几次一次）。
 		// 当场再问，最后一次不用 JSON 模式：空白多半出在 JSON 模式上，调用方本来就会从正文里解析 JSON。
 		// 这比交回调用方失败、再由内核退避 10 秒到 1 分钟重试快得多。
-		if !req.JSONMode || strings.TrimSpace(resp.Content) != "" || attempt >= blankRetries || ctx.Err() != nil {
+		// 带着工具的请求同理：既没有调用工具、正文又是空白，也当场再问一次。
+		answered := strings.TrimSpace(resp.Content) != "" || len(resp.ToolCalls) > 0
+		if (!req.JSONMode && len(req.Tools) == 0) || answered || attempt >= blankRetries || ctx.Err() != nil {
 			resp.Usage, resp.CostMicros = spent, cost
 			return resp, nil
 		}
@@ -315,13 +321,16 @@ func (r *Router) logCall(what string, route Route, req Request, resp Response, t
 		"输出token", resp.Usage.CompletionTokens,
 		"结束原因", resp.Timing.FinishReason, "消息条数", len(req.Messages),
 	}
+	if len(req.Tools) > 0 {
+		args = append(args, "可用工具数", len(req.Tools), "工具调用数", len(resp.ToolCalls))
+	}
 	if err != nil {
 		r.log.Warn("模型调用失败", append(args, "err", err)...)
 		return
 	}
 	// 正文为空的那一次要能查出原因：结束原因、正文里到底是什么（这时只有空白，不涉及内容）、
 	// 答案是不是写进了思考里。
-	if strings.TrimSpace(resp.Content) == "" {
+	if strings.TrimSpace(resp.Content) == "" && len(resp.ToolCalls) == 0 {
 		raw := resp.Content
 		if len(raw) > 40 {
 			raw = raw[:40]

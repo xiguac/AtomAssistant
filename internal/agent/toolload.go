@@ -128,25 +128,7 @@ func (p *Planner) resolveLoad(params json.RawMessage) ([]string, error) {
 //
 // 放在背景之后、步骤历史之前：每取来一个新服务，它后面的内容命中不了一次缓存；取来之后就不再变。
 func (p *Planner) loadedSegment(history []*core.Step) (llm.Segment, bool) {
-	var names []string
-	seen := map[string]bool{}
-	for _, s := range history {
-		if s.ToolName != ToolLoad || s.Status != core.StepDone {
-			continue
-		}
-		var in struct {
-			Tools []string `json:"tools"`
-		}
-		if json.Unmarshal(s.Input, &in) != nil {
-			continue
-		}
-		for _, n := range in.Tools {
-			if !seen[n] {
-				seen[n] = true
-				names = append(names, n)
-			}
-		}
-	}
+	names := p.loadedNames(history)
 	if len(names) == 0 {
 		return llm.Segment{}, false
 	}

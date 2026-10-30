@@ -94,6 +94,10 @@ type anthropicResponse struct {
 type anthropicBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+	// Name 与 Input 只在 tool_use 块里有：调用的工具和参数。流式返回里参数分段到，拼在 partial 里。
+	Name    string          `json:"name"`
+	Input   json.RawMessage `json:"input"`
+	partial string
 	// Content 只在 web_search_tool_result 块里有：一组搜到的网页，或一个错误对象。
 	Content json.RawMessage `json:"content"`
 }
@@ -121,8 +125,9 @@ type anthropicEvent struct {
 	ContentBlock *anthropicBlock `json:"content_block"`
 	// content_block_delta 带着块的增量。
 	Delta *struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type        string `json:"type"`
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
 	} `json:"delta"`
 	// message_delta 带着累计的输出用量。
 	Usage *anthropicUsage `json:"usage"`
@@ -148,9 +153,14 @@ func readAnthropicStream(r io.Reader) (anthropicResponse, error) {
 				out.Content = append(out.Content, *e.ContentBlock)
 			}
 		case "content_block_delta":
-			// 只拼文字；思考过程和工具参数的增量用不上。
-			if e.Delta != nil && e.Delta.Type == "text_delta" && e.Index < len(out.Content) {
-				out.Content[e.Index].Text += e.Delta.Text
+			// 拼文字和工具参数；思考过程用不上。
+			if e.Delta != nil && e.Index < len(out.Content) {
+				switch e.Delta.Type {
+				case "text_delta":
+					out.Content[e.Index].Text += e.Delta.Text
+				case "input_json_delta":
+					out.Content[e.Index].partial += e.Delta.PartialJSON
+				}
 			}
 		case "message_delta":
 			if e.Usage != nil {
@@ -202,6 +212,12 @@ func (p *AnthropicCompatible) Complete(ctx context.Context, req Request) (Respon
 	}
 	if req.WebSearch {
 		body.Tools = []any{webSearchTool}
+	}
+	if len(req.Tools) > 0 {
+		names, _ := wireNames(req.Tools)
+		for i, t := range req.Tools {
+			body.Tools = append(body.Tools, map[string]any{"name": names[i], "description": t.Description, "input_schema": toolSchema(t.Parameters)})
+		}
 	}
 	anthropicThinking(p.dialect, req.Thinking, &body)
 	// 流式取回，理由同 OpenAICompatible。
@@ -263,12 +279,24 @@ func (p *AnthropicCompatible) finish(parsed anthropicResponse, req Request) (Res
 	// 只取文字块。思考过程（thinking）是另一种块，不是答案的一部分。
 	var text strings.Builder
 	var sources []Source
+	var calls []ToolCall
+	_, back := wireNames(req.Tools)
 	searched := false
 	seen := map[string]bool{}
 	for _, c := range parsed.Content {
 		switch c.Type {
 		case "text":
 			text.WriteString(c.Text)
+		case "tool_use":
+			name := back[c.Name]
+			if name == "" {
+				name = c.Name // 不在给它的工具里：原样交回，由调用方拒绝
+			}
+			args := c.partial
+			if args == "" && len(c.Input) > 0 {
+				args = string(c.Input)
+			}
+			calls = append(calls, ToolCall{Name: name, Arguments: toolArgs(args)})
 		case "server_tool_use":
 			searched = true
 		case "web_search_tool_result":
@@ -294,10 +322,11 @@ func (p *AnthropicCompatible) finish(parsed anthropicResponse, req Request) (Res
 		model = req.Model
 	}
 	return Response{
-		Content: text.String(),
-		Model:   model,
-		Usage:   Usage{PromptTokens: parsed.Usage.InputTokens, CompletionTokens: parsed.Usage.OutputTokens},
-		Sources: sources,
+		Content:   text.String(),
+		ToolCalls: calls,
+		Model:     model,
+		Usage:     Usage{PromptTokens: parsed.Usage.InputTokens, CompletionTokens: parsed.Usage.OutputTokens},
+		Sources:   sources,
 		// 这个协议下搜没搜是看得见的：一次搜索都没有，回答就只是模型的记忆。
 		NoSearch: req.WebSearch && !searched,
 	}, nil

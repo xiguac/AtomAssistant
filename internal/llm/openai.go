@@ -89,6 +89,28 @@ type chatRequest struct {
 	Thinking        *thinkingSwitch `json:"thinking,omitempty"`
 	EnableThinking  *bool           `json:"enable_thinking,omitempty"`
 	ThinkingBudget  int             `json:"thinking_budget,omitempty"`
+	// Tools 是可供调用的工具，见 tools.go。不传 tool_choice：DeepSeek 在思考模式下不接受强制调用。
+	Tools []openAITool `json:"tools,omitempty"`
+}
+
+type openAITool struct {
+	Type     string         `json:"type"`
+	Function openAIFunction `json:"function"`
+}
+
+type openAIFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+// openAIToolCall 是返回里的一次工具调用。流式返回里同一个调用分几段到，按 index 拼起来。
+type openAIToolCall struct {
+	Index    int `json:"index"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 type streamOptions struct {
@@ -146,6 +168,13 @@ func (p *OpenAICompatible) Complete(ctx context.Context, req Request) (Response,
 		body.ResponseFormat = &respFmt{Type: "json_object"}
 	}
 	openAIThinking(p.dialect, req.Thinking, &body)
+	if len(req.Tools) > 0 {
+		names, _ := wireNames(req.Tools)
+		for i, t := range req.Tools {
+			body.Tools = append(body.Tools, openAITool{Type: "function",
+				Function: openAIFunction{Name: names[i], Description: t.Description, Parameters: toolSchema(t.Parameters)}})
+		}
+	}
 	// 流式取回：强模型想得久，一次性返回要等它全部写完才有响应头，容易超时。
 	body.Stream = true
 	body.StreamOptions = &streamOptions{IncludeUsage: true}
@@ -225,9 +254,21 @@ func (p *OpenAICompatible) finish(parsed chatResponse, req Request) (Response, e
 	if model == "" {
 		model = req.Model
 	}
+	var calls []ToolCall
+	if len(parsed.Choices[0].Message.ToolCalls) > 0 {
+		_, back := wireNames(req.Tools)
+		for _, c := range parsed.Choices[0].Message.ToolCalls {
+			name := back[c.Function.Name]
+			if name == "" {
+				name = c.Function.Name // 不在给它的工具里：原样交回，由调用方拒绝
+			}
+			calls = append(calls, ToolCall{Name: name, Arguments: toolArgs(c.Function.Arguments)})
+		}
+	}
 	return Response{
-		Content: parsed.Choices[0].Message.Content,
-		Model:   model,
+		Content:   parsed.Choices[0].Message.Content,
+		ToolCalls: calls,
+		Model:     model,
 		Usage: Usage{
 			PromptTokens:     parsed.Usage.PromptTokens,
 			CompletionTokens: parsed.Usage.CompletionTokens,
@@ -238,7 +279,8 @@ func (p *OpenAICompatible) finish(parsed chatResponse, req Request) (Response, e
 
 type chatChoice struct {
 	Message struct {
-		Content string `json:"content"`
+		Content   string           `json:"content"`
+		ToolCalls []openAIToolCall `json:"tool_calls"`
 	} `json:"message"`
 	FinishReason string `json:"finish_reason"`
 }
@@ -248,8 +290,9 @@ type chatChunk struct {
 	Model   string `json:"model"`
 	Choices []struct {
 		Delta struct {
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
+			Content          string           `json:"content"`
+			ReasoningContent string           `json:"reasoning_content"`
+			ToolCalls        []openAIToolCall `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -272,6 +315,7 @@ type chatChunk struct {
 func readOpenAIStream(r io.Reader) (chatResponse, error) {
 	var out chatResponse
 	var text, reasoning strings.Builder
+	var calls []openAIToolCall
 	gotChoice := false
 	err := readEvents(r, func(data []byte) error {
 		var c chatChunk
@@ -289,6 +333,13 @@ func readOpenAIStream(r io.Reader) (chatResponse, error) {
 			gotChoice = true
 			text.WriteString(ch.Delta.Content)
 			reasoning.WriteString(ch.Delta.ReasoningContent)
+			for _, tc := range ch.Delta.ToolCalls {
+				for len(calls) <= tc.Index {
+					calls = append(calls, openAIToolCall{Index: len(calls)})
+				}
+				calls[tc.Index].Function.Name += tc.Function.Name
+				calls[tc.Index].Function.Arguments += tc.Function.Arguments
+			}
 			out.reasoningChars += utf8.RuneCountInString(ch.Delta.ReasoningContent)
 			if ch.FinishReason != "" {
 				out.finishReason = ch.FinishReason
@@ -312,6 +363,7 @@ func readOpenAIStream(r io.Reader) (chatResponse, error) {
 	if gotChoice {
 		var c chatChoice
 		c.Message.Content = text.String()
+		c.Message.ToolCalls = calls
 		c.FinishReason = out.finishReason
 		out.Choices = []chatChoice{c}
 	}

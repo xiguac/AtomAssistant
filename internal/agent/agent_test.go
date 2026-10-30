@@ -20,11 +20,13 @@ import (
 // ---- 测试替身 ----
 
 type fakeModel struct {
-	replies  []string
-	calls    int
-	lastReq  llm.Request
-	lastPurp llm.Purpose
-	err      error
+	replies []string
+	// toolCalls 与 replies 一一对应：第 i 次回答里的工具调用。可以比 replies 短。
+	toolCalls [][]llm.ToolCall
+	calls     int
+	lastReq   llm.Request
+	lastPurp  llm.Purpose
+	err       error
 }
 
 func (m *fakeModel) Complete(_ context.Context, p llm.Purpose, req llm.Request) (llm.Response, error) {
@@ -38,11 +40,15 @@ func (m *fakeModel) Complete(_ context.Context, p llm.Purpose, req llm.Request) 
 	if i >= len(m.replies) {
 		i = len(m.replies) - 1
 	}
-	return llm.Response{
+	resp := llm.Response{
 		Content: m.replies[i],
 		Model:   "fake",
 		Usage:   llm.Usage{PromptTokens: 10, CompletionTokens: 5},
-	}, nil
+	}
+	if i < len(m.toolCalls) {
+		resp.ToolCalls = m.toolCalls[i]
+	}
+	return resp, nil
 }
 
 type fakeCatalog struct{ tools []mcpgw.ToolInfo }
@@ -99,8 +105,15 @@ func TestPlanner_解析工具决策(t *testing.T) {
 	if m.lastPurp != llm.PurposePlan {
 		t.Fatalf("规划应走 plan 用途，实际 %s", m.lastPurp)
 	}
-	if !m.lastReq.JSONMode {
-		t.Fatal("应要求模型输出 JSON")
+	// 内置工具作为函数发给模型，连同结束、提问等控制函数；不再用 JSON 模式。
+	// MCP 工具只在系统提示的目录里，取来说明（tools.load）之后才作为函数发出。
+	names := map[string]bool{}
+	for _, tool := range m.lastReq.Tools {
+		names[tool.Name] = true
+	}
+	if m.lastReq.JSONMode || !names[ToolLoad] || !names[callFinish] || !names[callAsk] || names["demo.weather"] ||
+		!strings.Contains(m.lastReq.Messages[0].Content, "demo.weather") {
+		t.Fatalf("应以原生工具调用作答: JSON 模式=%v 工具=%v", m.lastReq.JSONMode, names)
 	}
 	// 规划本身的用量必须回传给内核，否则预算管不到它。
 	if d.TokensIn != 10 || d.TokensOut != 5 {
@@ -210,10 +223,93 @@ func TestPlanner_容忍代码围栏与非法输出(t *testing.T) {
 		t.Fatalf("期望 finish，实际 %s", d.Kind)
 	}
 
-	broken := &fakeModel{replies: []string{"我觉得应该先查一下天气"}}
+	// 只写了文字、没调用函数：第一次算答非所问，提醒后还是文字，才当作答复。
+	broken := &fakeModel{replies: []string{"我觉得应该先查一下天气", "明天晴，适合出门。"}}
 	p2 := NewPlanner(broken, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
-	if _, err := p2.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil); err == nil {
-		t.Fatal("非 JSON 输出应报错而不是猜测")
+	d, err = p2.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil)
+	if err != nil || d.Kind != kernel.DecideFinish || d.Reason != "明天晴，适合出门。" || broken.calls != 2 {
+		t.Fatalf("提醒一次之后的文字应作为答复: %+v %v 调用 %d 次", d, err, broken.calls)
+	}
+	// 看着像 JSON 却不是决策的，提醒后也不收。
+	junk := &fakeModel{replies: []string{`[{"title":"计划"}]`}}
+	p3 := NewPlanner(junk, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	if _, err := p3.Decide(context.Background(), core.NewTask("t", "g", core.TrustUser), nil); err == nil {
+		t.Fatal("不是决策的 JSON 应报错而不是猜测")
+	}
+}
+
+func TestPlanner_原生工具调用换成决策(t *testing.T) {
+	ctx := context.Background()
+	// 取来过说明的 MCP 工具才作为函数发给模型。
+	loaded := core.NewStep("t", 1, core.StepTool, json.RawMessage(`{"tools":["demo.weather"]}`))
+	loaded.ToolName = ToolLoad
+	loaded.Complete(json.RawMessage(`{}`), core.TrustSystem)
+	m := &fakeModel{replies: []string{`{"action":"finish","reason":"x"}`}}
+	if _, err := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).Decide(ctx, core.NewTask("t", "g", core.TrustUser), []*core.Step{loaded}); err != nil {
+		t.Fatal(err)
+	}
+	var weather *llm.Tool
+	for i, tool := range m.lastReq.Tools {
+		if tool.Name == "demo.weather" {
+			weather = &m.lastReq.Tools[i]
+		}
+	}
+	if weather == nil || strings.Contains(weather.Description, "查天气") || string(weather.Parameters) != `{"type":"object"}` {
+		t.Fatalf("取来说明后应作为函数发出，且服务方写的说明不进工具定义: %+v", weather)
+	}
+	call := func(name, args string) llm.ToolCall {
+		return llm.ToolCall{Name: name, Arguments: json.RawMessage(args)}
+	}
+	cases := []struct {
+		name  string
+		text  string
+		calls []llm.ToolCall
+		check func(kernel.Decision) bool
+	}{
+		{"一个工具，旁边的文字是理由", "先查天气", []llm.ToolCall{call("demo.weather", `{"city":"上海"}`)},
+			func(d kernel.Decision) bool {
+				return d.Kind == kernel.DecideStep && d.ToolName == "demo.weather" && string(d.Input) == `{"city":"上海"}` && d.Reason == "先查天气" && len(d.Then) == 0
+			}},
+		{"几个查询一起", "", []llm.ToolCall{call("demo.weather", `{"city":"上海"}`), call("demo.weather", `{"city":"杭州"}`)},
+			func(d kernel.Decision) bool {
+				return d.Kind == kernel.DecideStep && len(d.Then) == 1 && string(d.Then[0].Input) == `{"city":"杭州"}`
+			}},
+		{"结束", "", []llm.ToolCall{call(callFinish, `{"reason":"明天晴"}`)},
+			func(d kernel.Decision) bool { return d.Kind == kernel.DecideFinish && d.Reason == "明天晴" }},
+		{"结束时结论写在正文里", "明天晴", []llm.ToolCall{call(callFinish, `{}`)},
+			func(d kernel.Decision) bool { return d.Kind == kernel.DecideFinish && d.Reason == "明天晴" }},
+		{"提问", "", []llm.ToolCall{call(callAsk, `{"question":"几点出发？"}`)},
+			func(d kernel.Decision) bool {
+				return d.Kind == kernel.DecideWait && strings.Contains(d.Reason, "几点出发")
+			}},
+		{"等待", "", []llm.ToolCall{call(callWait, `{"wait_seconds":60,"reason":"等一会"}`)},
+			func(d kernel.Decision) bool {
+				return d.Kind == kernel.DecideWait && d.Wake != nil && d.Wake.Kind == core.WakeTime
+			}},
+		{"失败", "", []llm.ToolCall{call(callFail, `{"reason":"没有数据"}`)},
+			func(d kernel.Decision) bool { return d.Kind == kernel.DecideFail && d.Reason == "没有数据" }},
+		{"工具和结束一起，以工具为准", "", []llm.ToolCall{call(callFinish, `{"reason":"x"}`), call("demo.weather", `{}`)},
+			func(d kernel.Decision) bool { return d.Kind == kernel.DecideStep && d.ToolName == "demo.weather" }},
+	}
+	for _, c := range cases {
+		m := &fakeModel{replies: []string{c.text}, toolCalls: [][]llm.ToolCall{c.calls}}
+		d, err := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).Decide(ctx, core.NewTask("t", "g", core.TrustUser), nil)
+		if err != nil || !c.check(d) || m.calls != 1 {
+			t.Errorf("%s: %+v %v 调用 %d 次", c.name, d, err, m.calls)
+		}
+	}
+	// 不存在的工具、参数不是 JSON：提醒后重答。
+	for name, bad := range map[string]llm.ToolCall{"不存在的工具": call("no.such", `{}`), "参数不是 JSON": call("demo.weather", `{"city":`)} {
+		m := &fakeModel{replies: []string{"", ""}, toolCalls: [][]llm.ToolCall{{bad}, {call(callFinish, `{"reason":"好了"}`)}}}
+		d, err := NewPlanner(m, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).Decide(ctx, core.NewTask("t", "g", core.TrustUser), nil)
+		if err != nil || d.Kind != kernel.DecideFinish || m.calls != 2 {
+			t.Errorf("%s 应提醒后重答: %+v %v %d", name, d, err, m.calls)
+		}
+	}
+	// 有副作用的工具不能跟在查询后面一起调。
+	writer := &fakeModel{replies: []string{""}, toolCalls: [][]llm.ToolCall{{call("demo.weather", `{}`), call("demo.book", `{}`)}}}
+	if _, err := NewPlanner(writer, catalogWith(core.SideEffectReversible), PlannerOptions{}).Decide(ctx, core.NewTask("t", "g", core.TrustUser), nil); err == nil {
+		t.Fatal("一次调用里第二个是写操作时应拒绝")
 	}
 }
 

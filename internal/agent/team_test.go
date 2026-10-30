@@ -65,8 +65,13 @@ func TestDispatch_主AI只有配了协作模型才能派活而且选不了模型
 	if d.ToolName != ToolDispatch || d.SideEffect != core.SideEffectReadOnly {
 		t.Fatalf("应得到一次只读的派活: %+v", d)
 	}
-	system := m.lastReq.Messages[0].Content
-	if !strings.Contains(system, ToolDispatch) || !strings.Contains(system, "writing（写作") {
+	var dispatch *llm.Tool
+	for i, tool := range m.lastReq.Tools {
+		if tool.Name == ToolDispatch {
+			dispatch = &m.lastReq.Tools[i]
+		}
+	}
+	if dispatch == nil || !strings.Contains(dispatch.Description+string(dispatch.Parameters), "writing（写作") {
 		t.Fatal("派活工具和类别应列给主 AI")
 	}
 	// 主 AI 的参数里没有任何指定模型的位置。
@@ -74,6 +79,7 @@ func TestDispatch_主AI只有配了协作模型才能派活而且选不了模型
 		t.Fatal("主 AI 不应能指定派给哪个模型")
 	}
 	// 动手之前先问清楚、每问带上建议的答案：这是沉淀流程的前提，写在系统提示里，每个任务都带着。
+	system := m.lastReq.Messages[0].Content
 	if !strings.Contains(system, "Clarify before acting") || !strings.Contains(system, "your recommended answer") {
 		t.Fatal("系统提示里应有先问清楚再动手的要求")
 	}

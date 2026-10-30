@@ -42,7 +42,7 @@ func PromptSpecs() []PromptSpec {
 	return []PromptSpec{
 		{PromptBase, "基础约束", "每一次模型调用都加载，位于系统提示最前面，优先级高于其余各段。含语言要求。", baseRules, false},
 		{PromptPersona, "人设", "每一次模型调用都加载，紧跟在基础约束后面。规定助手是谁、怎么说话，只影响语气与表达，不影响办事。", personaRule, false},
-		{PromptPlanner, "规划说明", "模型决定任务的下一步时加载。规定输出的 JSON 格式与决策方法，含主模型接手任务后的要求。", plannerSystemPrompt, true},
+		{PromptPlanner, "规划说明", "模型决定任务的下一步时加载。规定作答方式（调用工具或 finish 等函数）与决策方法，含主模型接手任务后的要求。", plannerSystemPrompt, true},
 		{PromptWeb, "联网搜索", "已接入联网搜索时加载。规定何时搜索、如何节省搜索次数。", webRule, false},
 		{PromptFetch, "读网页", "已接入读网页时加载。规定读哪些网页、怎么用读到的内容。", fetchRule, false},
 		{PromptCapability, "查找与安装能力", "模型可自行查找、安装 Skill 与 MCP server 时加载。", capabilityRule, false},
