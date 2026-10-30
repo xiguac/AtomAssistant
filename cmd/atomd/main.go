@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -109,29 +110,129 @@ func run(migrateOnly, checkOnly bool) error {
 	// 用户得有个地方把它们填上——而这个地方就是后台。
 	var problem atomic.Value
 	problem.Store("")
+	reloads := make(chan chan error)
+	// reload 交给后台：保存配置后调用，等新配置装好并换上（或装不起来）才返回。
+	reload := func(rctx context.Context) error {
+		done := make(chan error, 1)
+		select {
+		case reloads <- done:
+		case <-rctx.Done():
+			return rctx.Err()
+		}
+		select {
+		case err := <-done:
+			return err
+		case <-rctx.Done():
+			return rctx.Err()
+		}
+	}
 	adminOn := cfg.AdminAddr != "" && !checkOnly
 	if adminOn {
-		if err := startAdmin(ctx, cfg, st, box, bus, stop, func() string { return problem.Load().(string) }, log.With(oplog.Key, oplog.Admin)); err != nil {
+		if err := startAdmin(ctx, cfg, st, box, bus, reload, func() string { return problem.Load().(string) }, log.With(oplog.Key, oplog.Admin)); err != nil {
 			return err
 		}
 	}
 
-	parts, err := assemble(initCtx, cfg, st, box, log)
-	if err != nil {
-		if !adminOn {
+	p, err := assemble(initCtx, cfg, st, box, log)
+	if checkOnly {
+		if err != nil {
 			return err
 		}
+		p.close()
+		log.Info("配置与连接校验通过")
+		return nil
+	}
+	if err != nil && !adminOn {
+		return err
+	}
+
+	// Webhook 入口只用到事件总线，不随配置变，开一次就行。
+	if cfg.WebhookAddr != "" {
+		stopWebhook, err := serveWebhook(ctx, cfg, bus, log)
+		if err != nil {
+			return err
+		}
+		defer stopWebhook()
+	}
+
+	// 助手本身按配置装出来。后台里改了配置，就在进程内按新配置再装一份，装好了才换下旧的；
+	// 装不起来就留着旧的接着跑，把原因告诉后台。整个过程不重启服务，后台也不断开。
+	var cur *generation
+	if err != nil {
 		// 助手起不来，但后台要留着：否则用户连修的地方都没有。
 		log.Error("助手未能启动，目前只有管理后台在运行", "err", err)
 		problem.Store(err.Error())
-		<-ctx.Done()
-		return nil
+	} else {
+		if cur, err = startGeneration(ctx, cfg, st, bus, p, log); err != nil {
+			p.close()
+			return err
+		}
 	}
-	defer parts.close()
+	for {
+		var failed <-chan error
+		if cur != nil {
+			failed = cur.failed
+		}
+		select {
+		case <-ctx.Done():
+			if cur != nil {
+				cur.stop()
+			}
+			return nil
+		case err := <-failed:
+			cur.stop()
+			return err
+		case done := <-reloads:
+			buildCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+			np, err := assemble(buildCtx, cfg, st, box, log)
+			cancel()
+			if err != nil {
+				if cur != nil {
+					log.Error("新配置未能生效，助手仍按原来的配置运行", "err", err)
+				} else {
+					problem.Store(err.Error())
+				}
+				done <- err
+				continue
+			}
+			if cur != nil {
+				cur.stop()
+			}
+			if cur, err = startGeneration(ctx, cfg, st, bus, np, log); err != nil {
+				np.close()
+				problem.Store(err.Error())
+				done <- err
+				continue
+			}
+			problem.Store("")
+			log.Info("已按新配置重新载入，未重启服务")
+			done <- nil
+		}
+	}
+}
 
-	if checkOnly {
-		log.Info("配置与连接校验通过")
-		return nil
+// generation 是按某一份配置跑起来的助手：调度器、消息渠道、每日摘要、下载入口。
+type generation struct {
+	// failed 在调度器意外退出时收到它的错误。
+	failed chan error
+	stop   func()
+}
+
+// startGeneration 用装好的部件把助手跑起来。stop 让它们都停下、等它们退出，再释放部件。
+//
+// 调度器停下时会把在跑的任务放回队列，下一代接着跑，不必等租约过期。
+func startGeneration(parent context.Context, cfg *config.Config, st *pg.Store, bus *event.Bus, parts *parts, log *slog.Logger) (*generation, error) {
+	ctx, cancel := context.WithCancel(parent)
+	var wg sync.WaitGroup
+	var closers []func()
+	g := &generation{failed: make(chan error, 1)}
+	g.stop = func() {
+		cancel()
+		wg.Wait()
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+		parts.close()
 	}
 
 	engine := kernel.NewEngine(st, parts.planner, parts.actuator).
@@ -156,7 +257,8 @@ func run(migrateOnly, checkOnly bool) error {
 		hub, err := channel.NewHub(parts.channels,
 			&channel.Kernel{Store: st, Bus: bus, Budget: taskBudget(cfg, log), Images: st}, st.Channels(), log.With(oplog.Key, oplog.Message))
 		if err != nil {
-			return err
+			cancel()
+			return nil, err
 		}
 		if parts.team {
 			hub = hub.WithFeedback(channel.TeamFeedback{Store: st.Team()})
@@ -168,7 +270,11 @@ func run(migrateOnly, checkOnly bool) error {
 		// 用户和助手说的话记进每天的会话；每天过完写成摘要。
 		hub = hub.WithSession(st.Sessions())
 		if parts.digest != nil {
-			go parts.digest.Run(ctx)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				parts.digest.Run(ctx)
+			}()
 		}
 		// 启用了文件处理：用户在聊天里发来的文件收进工作区。
 		if parts.workspace != nil {
@@ -185,30 +291,33 @@ func run(migrateOnly, checkOnly bool) error {
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
 		}
+		wg.Add(1)
 		go func() {
-			if err := hub.Run(ctx); err != nil {
+			defer wg.Done()
+			if err := hub.Run(ctx); err != nil && ctx.Err() == nil {
 				log.Error("消息渠道异常退出", "err", err)
 			}
 		}()
 	}
 
-	if cfg.WebhookAddr != "" {
-		stopWebhook, err := serveWebhook(ctx, cfg, bus, log)
-		if err != nil {
-			return err
-		}
-		defer stopWebhook()
-	}
-
 	if parts.shares != nil {
 		stopShare, err := serveShare(ctx, cfg, parts.shares, log.With(oplog.Key, oplog.Tool))
 		if err != nil {
-			return err
+			cancel()
+			wg.Wait()
+			return nil, err
 		}
-		defer stopShare()
+		closers = append(closers, stopShare)
 	}
 
-	return sched.Run(ctx)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
+			g.failed <- err
+		}
+	}()
+	return g, nil
 }
 
 // assemble 读取配置文件并装出各个部件。
@@ -222,7 +331,7 @@ func assemble(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal.B
 
 // startAdmin 启动网页管理后台。
 func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal.Box, bus *event.Bus,
-	restart func(), status func() string, log *slog.Logger) error {
+	reload func(context.Context) error, status func() string, log *slog.Logger) error {
 	tls := cfg.AdminTLSCert != "" && cfg.AdminTLSKey != ""
 	if err := admin.CheckAddr(cfg.AdminAddr, tls); err != nil {
 		return err
@@ -238,8 +347,8 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 		ConfigPath:   cfg.ConfigPath,
 		PasswordHash: cfg.AdminPasswordHash,
 		TLS:          tls,
-		// 让进程正常退出，由 systemd 拉起新的。
-		Restart: restart,
+		// 保存配置后在进程内按新配置重新装一遍助手，不重启服务。
+		Reload: reload,
 		Status:  status,
 		ShareOn: cfg.ShareAddr != "",
 		Log:     log,

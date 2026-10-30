@@ -369,7 +369,7 @@ func (s *Server) saveMCP(ctx context.Context, m config.MCPConfig, key string) (s
 		// server 已经存下了，只是工具还没登记：连上之后在页面上再读取一次即可。
 		return fmt.Sprintf("MCP server「%s」已保存，但读取工具列表失败：%v。排除问题后请点击「读取工具」。", m.Name, err), nil
 	}
-	return fmt.Sprintf("MCP server「%s」已保存，共 %d 个工具，新登记 %d 个。重启服务后生效。", m.Name, total, added), nil
+	return fmt.Sprintf("MCP server「%s」已保存，共 %d 个工具，新登记 %d 个。", m.Name, total, added), nil
 }
 
 // syncTools 连上一个 server 读出它的工具，把配置里还没有授权的登记进去。已有的授权不动。
@@ -460,7 +460,7 @@ func (s *Server) mcpPresetSave(i int) func(http.ResponseWriter, *http.Request, *
 		if err == nil {
 			s.opts.Log.Info("预置的 MCP server 已在后台配置", "server", p.Server.Name, "更换密钥", key != "", "来自", r.RemoteAddr)
 		}
-		back(w, r, "/mcp", notice, err)
+		s.backApplied(w, r, "/mcp", notice, err)
 	}
 }
 
@@ -473,7 +473,7 @@ func (s *Server) mcpSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("MCP server 已在后台修改", "server", m.Name, "更换密钥", key != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/mcp", notice, err)
+	s.backApplied(w, r, "/mcp", notice, err)
 }
 
 // mcpKey 给一个已接入的 server 填写或更换密钥。
@@ -511,7 +511,7 @@ func (s *Server) mcpKey(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("MCP server 的密钥已在后台更换", "server", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/mcp", notice, err)
+	s.backApplied(w, r, "/mcp", notice, err)
 }
 
 // saveExtraSecret 填写或新增一个 server 的第一项之外的某一项密钥。
@@ -548,7 +548,7 @@ func (s *Server) saveExtraSecret(ctx context.Context, m config.MCPConfig, param,
 	if err != nil {
 		return fmt.Sprintf("密钥「%s」已保存，但读取工具列表失败：%v。排除问题后请点击「读取工具」。", param, err), nil
 	}
-	return fmt.Sprintf("密钥「%s」已保存，共 %d 个工具，新登记 %d 个。重启服务后生效。", param, total, added), nil
+	return fmt.Sprintf("密钥「%s」已保存，共 %d 个工具，新登记 %d 个。", param, total, added), nil
 }
 
 // mcpTest 用表单里当前填写的内容连接一次，列出它提供的工具。测试不保存任何东西。
@@ -620,11 +620,11 @@ func (s *Server) mcpSync(w http.ResponseWriter, r *http.Request, _ *view) {
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("共 %d 个工具，新登记 %d 个。重启服务后生效。", total, added), nil
+			return fmt.Sprintf("共 %d 个工具，新登记 %d 个。", total, added), nil
 		}
 		return "", errors.New("MCP server 不存在")
 	}()
-	back(w, r, "/mcp", notice, err)
+	s.backApplied(w, r, "/mcp", notice, err)
 }
 
 // mcpTools 保存一个 server 的各个工具的授权：副作用等级与参数的隐私上限。
@@ -664,7 +664,7 @@ func (s *Server) mcpTools(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("MCP 工具的授权已在后台修改", "server", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/mcp", "工具授权已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/mcp", "工具授权已保存。", err)
 }
 
 // mcpDelete 移除一个 server，连同它的工具的授权和它的密钥。
@@ -699,7 +699,7 @@ func (s *Server) mcpDelete(w http.ResponseWriter, r *http.Request, _ *view) {
 		}
 		s.opts.Log.Info("MCP server 已在后台移除", "server", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/mcp", "MCP server「"+name+"」及其密钥已移除，重启服务后生效。", err)
+	s.backApplied(w, r, "/mcp", "MCP server「"+name+"」及其密钥已移除。", err)
 }
 
 // mcpInstalledDelete 移除一个在对话里装上的 server。用户给的地址里带的密钥一并从保险库删除。
@@ -726,5 +726,5 @@ func (s *Server) mcpInstalledDelete(w http.ResponseWriter, r *http.Request, _ *v
 		}
 		s.opts.Log.Info("助手安装的 MCP server 已在后台移除", "server", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/mcp", "MCP server「"+name+"」已移除，重启服务后断开连接。", err)
+	s.backApplied(w, r, "/mcp", "MCP server「"+name+"」已移除。", err)
 }

@@ -895,3 +895,32 @@ func TestAdmin_MCP页预置的飞常准密钥放在请求头里(t *testing.T) {
 		t.Fatalf("换密钥不应改动密钥的位置:\n%s", raw)
 	}
 }
+
+func TestAdmin_保存配置后在进程内重新载入(t *testing.T) {
+	e := setup(t)
+	e.login()
+	save := func() string {
+		t.Helper()
+		_, loc := e.post("/connectors/holidays", url.Values{"csrf": {e.csrf}, "url": {"https://example.com/h.ics"}})
+		return loc
+	}
+	calls := 0
+	e.server.opts.Reload = func(context.Context) error { calls++; return nil }
+	if loc := save(); calls != 1 || !strings.Contains(loc, "节假日订阅已保存。新配置已生效。") {
+		t.Fatalf("保存后应重新载入一次并说明已生效: %d %s", calls, loc)
+	}
+	// 新配置装不起来：保存的内容留着，页面上说明原因和旧配置还在跑。
+	e.server.opts.Reload = func(context.Context) error { return errors.New("模型服务连不上") }
+	if loc := save(); !strings.Contains(loc, "e=") || !strings.Contains(loc, "仍按原来的配置运行") || !strings.Contains(loc, "模型服务连不上") {
+		t.Fatalf("载入失败应说明原因: %s", loc)
+	}
+	// 校验不过的不保存，也不去载入。
+	calls = 0
+	e.server.opts.Reload = func(context.Context) error { calls++; return nil }
+	if _, loc := e.post("/connectors/holidays", url.Values{"csrf": {e.csrf}, "url": {""}}); calls != 0 || !strings.Contains(loc, "请填写订阅地址") {
+		t.Fatalf("保存失败时不应重新载入: %d %s", calls, loc)
+	}
+	if code, _ := e.post("/restart", url.Values{"csrf": {e.csrf}}); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {
+		t.Fatalf("重启服务的入口应已去掉: %d", code)
+	}
+}

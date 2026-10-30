@@ -136,7 +136,7 @@ func (s *Server) channelSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("消息源已在后台修改", "消息源", name, "更换凭据", secret != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/channels", "消息源「"+name+"」已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/channels", "消息源「"+name+"」已保存。", err)
 }
 
 func (s *Server) channelDelete(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -155,7 +155,7 @@ func (s *Server) channelDelete(w http.ResponseWriter, r *http.Request, _ *view) 
 		s.dropCredential(r.Context(), gone.Secret, gone.VaultUser())
 		s.opts.Log.Info("消息源已在后台删除", "消息源", name, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/channels", "消息源「"+name+"」及其凭据已删除，重启服务后生效。", err)
+	s.backApplied(w, r, "/channels", "消息源「"+name+"」及其凭据已删除。", err)
 }
 
 // channelOwner 给一个渠道添加或移除主人。
@@ -188,12 +188,12 @@ func (s *Server) channelOwner(w http.ResponseWriter, r *http.Request, _ *view) {
 		}
 		return nil, fmt.Errorf("消息源 %s 不存在", name)
 	})
-	notice := "已将该账号设为消息源「" + name + "」的主人，重启服务后生效。"
+	notice := "已将该账号设为消息源「" + name + "」的主人。"
 	if remove {
-		notice = "已移除消息源「" + name + "」的该主人，重启服务后生效。"
+		notice = "已移除消息源「" + name + "」的该主人。"
 	}
 	if err == nil {
 		s.opts.Log.Warn("消息源的主人已在后台变更", "消息源", name, "账号", owner, "移除", remove, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/channels", notice, err)
+	s.backApplied(w, r, "/channels", notice, err)
 }

@@ -156,7 +156,7 @@ func (s *Server) calendarSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("日历数据源已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/connectors", "日历配置已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/connectors", "日历配置已保存。", err)
 }
 
 func (s *Server) mailSave(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -193,7 +193,7 @@ func (s *Server) mailSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("邮件数据源已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/connectors", "邮件配置已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/connectors", "邮件配置已保存。", err)
 }
 
 func (s *Server) holidaysSave(w http.ResponseWriter, r *http.Request, _ *view) {
@@ -205,7 +205,7 @@ func (s *Server) holidaysSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		all.Holidays = &config.HolidaysConfig{URL: url}
 		return nil
 	})
-	back(w, r, "/connectors", "节假日订阅已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/connectors", "节假日订阅已保存。", err)
 }
 
 // weatherSave 保存和风天气的 API Host 与 API KEY。
@@ -239,7 +239,7 @@ func (s *Server) weatherSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("天气数据源已在后台修改", "更换密钥", key != "", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/connectors", "天气配置已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/connectors", "天气配置已保存。", err)
 }
 
 // searchSave 保存联网搜索用的 DeepSeek API Key。
@@ -271,7 +271,7 @@ func (s *Server) searchSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("联网搜索密钥已在后台修改", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/connectors", "联网搜索密钥已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/connectors", "联网搜索密钥已保存。", err)
 }
 
 // dropCredential 删掉一个配置对象独占的凭据：对象没了，它的密钥不该留在保险库里没人管。
@@ -337,7 +337,7 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 		s.dropCredential(r.Context(), handle, user)
 		s.opts.Log.Info("数据源已在后台停用", "数据源", which, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/connectors", names[which]+"已停用，重启服务后生效。", err)
+	s.backApplied(w, r, "/connectors", names[which]+"已停用。", err)
 }
 
 // connectorTest 用表单里当前填写的内容登录一次，确认服务器地址、账号、密码是否正确。

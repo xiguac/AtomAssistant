@@ -146,7 +146,15 @@ func (s *Server) weixinPoll(w http.ResponseWriter, r *http.Request, _ *view) {
 			return
 		}
 		s.opts.Log.Info("微信消息源已在后台扫码连接", "消息源", name, "来自", r.RemoteAddr)
-		reply(true, true, "微信已连接，扫码的微信号已设为该消息源的主人。重启服务后生效。")
+		msg := "微信已连接，扫码的微信号已设为该消息源的主人。"
+		if s.opts.Reload != nil {
+			if err := s.opts.Reload(r.Context()); err != nil {
+				reply(false, true, msg+"但新配置未能生效："+err.Error())
+				return
+			}
+			msg += "新配置已生效。"
+		}
+		reply(true, true, msg)
 	}
 }
 

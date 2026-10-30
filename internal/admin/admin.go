@@ -103,8 +103,9 @@ type Options struct {
 	PasswordHash string
 	// TLS 为真表示后台自己提供 HTTPS，会话 cookie 会标成仅限加密连接。
 	TLS bool
-	// Restart 让进程退出，由进程管理器（systemd）拉起新的。改完配置后用。
-	Restart func()
+	// Reload 在进程内按配置文件重新装一遍助手，装好了才换下旧的，不重启服务。
+	// 改完配置后调用；返回时新配置已经生效，或者装不起来、旧的照常在跑。为空时只保存不载入。
+	Reload func(context.Context) error
 	// Status 返回当前的运行状况；非空表示助手本身没能启动（比如配置还没填完），只有后台在运行。
 	Status func() string
 	// ShareOn 为真表示开了文件下载入口（ATOM_SHARE_ADDR），「文件」页显示下载链接的设置和列表。
@@ -442,7 +443,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /memory/dismiss", auth(s.memoryDismiss))
 	mux.HandleFunc("POST /memory/affirm", auth(s.memoryAffirm))
 	mux.HandleFunc("POST /memory/forget", auth(s.memoryForget))
-	mux.HandleFunc("POST /restart", auth(s.restart))
 	mux.HandleFunc("GET /channels", auth(s.channelsPage))
 	mux.HandleFunc("POST /channels", auth(s.channelSave))
 	mux.HandleFunc("POST /channels/delete", auth(s.channelDelete))
@@ -692,7 +692,6 @@ var opNames = []struct{ prefix, name string }{
 	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
 	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
 	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"},
-	{"/restart", "重启服务"},
 	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
 	{"/connectors/disable", "停用数据源"}, {"/connectors/test", "测试数据源"}, {"/connectors/", "保存数据源"},
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
@@ -1311,7 +1310,7 @@ func (s *Server) vaultRequestFill(w http.ResponseWriter, r *http.Request, _ *vie
 	if err == nil {
 		s.opts.Log.Info("待填写的环境变量已由用户填写", "名字", label, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/vault", "条目「"+label+"」已保存。保存后不可查看；供 MCP server 使用的密钥需重启服务后生效。", err)
+	back(w, r, "/vault", "条目「"+label+"」已保存，保存后不可查看。", err)
 }
 
 // vaultReplace 更换一个已有条目的值。用途和授权对象不变。
@@ -1336,7 +1335,7 @@ func (s *Server) vaultReplace(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("环境变量条目的值已更换", "名字", label, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/vault", "条目「"+label+"」的值已更换。供模型服务、消息源、数据源、MCP server 使用的需重启服务后生效。", err)
+	back(w, r, "/vault", "条目「"+label+"」的值已更换。", err)
 }
 
 // vaultRequestDismiss 忽略一条待填写的条目。
@@ -1494,21 +1493,19 @@ func (s *Server) writeConfig(text string) error {
 	return nil
 }
 
-func (s *Server) restart(w http.ResponseWriter, r *http.Request, v *view) {
-	if s.opts.Restart == nil {
-		back(w, r, "/", "", errors.New("当前进程未由进程管理器托管，请手动重启"))
-		return
+// backApplied 用于改了配置的操作：保存成功就在进程内按新配置重新载入助手，再把结果带回页面。
+// 新配置装不起来时，保存的内容留着，助手仍按原来的配置运行，页面上说明原因。
+func (s *Server) backApplied(w http.ResponseWriter, r *http.Request, to, notice string, err error) {
+	if err == nil && s.opts.Reload != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		if rerr := s.opts.Reload(ctx); rerr != nil {
+			err = fmt.Errorf("%s但新配置未能生效，助手仍按原来的配置运行：%w", notice, rerr)
+		} else {
+			notice += "新配置已生效。"
+		}
 	}
-	s.opts.Log.Info("后台请求重启", "来自", r.RemoteAddr)
-	s.render(w, "restarting", v)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	// 等页面发出去再退出。
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		s.opts.Restart()
-	}()
+	back(w, r, to, notice, err)
 }
 
 // ---- 文件 ----

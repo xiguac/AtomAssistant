@@ -94,7 +94,7 @@ func (s *Server) budgetSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("任务预算已在后台修改", "来自", r.RemoteAddr)
 	}
-	back(w, r, "/models", "任务预算已保存，重启服务后对新建的任务生效。", err)
+	s.backApplied(w, r, "/models", "任务预算已保存。", err)
 }
 
 // readModels 读出配置文件的原文和其中模型相关的几节。文件还不存在时当作空的。
@@ -255,7 +255,7 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("模型服务已在后台修改", "服务", name, "换了密钥", key != "", "来自", r.RemoteAddr)
 	}
-	notice := "模型服务「" + name + "」已保存，重启服务后生效。"
+	notice := "模型服务「" + name + "」已保存。"
 	// 填了测试用的模型就顺手测一次：地址或密钥填错了，当场就知道，不必等到重启之后。
 	if model := strings.TrimSpace(r.PostFormValue("test_model")); err == nil && model != "" {
 		result, testErr := s.probeModel(r.Context(), name, model)
@@ -265,7 +265,7 @@ func (s *Server) providerSave(w http.ResponseWriter, r *http.Request, _ *view) {
 			notice += result
 		}
 	}
-	back(w, r, "/models", notice, err)
+	s.backApplied(w, r, "/models", notice, err)
 }
 
 // sealProviderKey 把一家模型服务的密钥存进保险库。
@@ -337,7 +337,7 @@ func (s *Server) mainSave(w http.ResponseWriter, r *http.Request, _ *view) {
 	if err == nil {
 		s.opts.Log.Info("主 AI 已在后台修改", "服务", provider, "模型", model, "来自", r.RemoteAddr)
 	}
-	back(w, r, "/models", "主 AI 已设置为 "+provider+" / "+model+"，重启服务后生效。", err)
+	s.backApplied(w, r, "/models", "主 AI 已设置为 "+provider+" / "+model+"。", err)
 }
 
 // modelOptions 读出表单里的思考强度和支持的输入。文字总是支持的，勾不勾都算上。
@@ -393,7 +393,7 @@ func (s *Server) agentSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		m.Agents = append(m.Agents, a)
 		return nil
 	})
-	back(w, r, "/models", "协作模型「"+a.Name+"」已保存，重启服务后生效。", err)
+	s.backApplied(w, r, "/models", "协作模型「"+a.Name+"」已保存。", err)
 }
 
 func (s *Server) agentDelete(w http.ResponseWriter, r *http.Request, _ *view) {

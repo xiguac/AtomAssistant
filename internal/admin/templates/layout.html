@@ -309,7 +309,7 @@ label.method .note { display:block; margin-top:2px; }
 .secret { letter-spacing:.08em; word-break:break-all; font-size:13px; }
 .band .async-result { flex-basis:100%; margin:0; }
 
-/* 页头：标题在左，页面级的操作（创建任务、重启服务）在右。 */
+/* 页头：标题在左，页面级的操作在右。 */
 .pagehead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .pagehead form { margin:0; }
 h2 .btn { margin-left:auto; }
@@ -535,10 +535,10 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
   <label for="navtoggle" class="{{if not (or (eq .Page "home") (eq .Page "task") (eq .Page "memory") (eq .Page "files"))}}on{{end}}"><svg class="ico" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg><span>更多</span></label>
 </nav>
 <main class="main"><div class="wrap">
-  {{if .Status}}{{if ne .Page "restarting"}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：
+  {{if .Status}}<div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>助手未能启动，当前仅管理后台可用。原因：
 {{.Status}}
 
-请在「模型」页填写模型的接口地址与密钥，在「消息源」「数据源」页填写对应的账号与凭据，然后重启服务。</div><a class="go" href="/models">前往模型页</a></div>{{end}}{{end}}
+请在「模型」页填写模型的接口地址与密钥，在「消息源」「数据源」页填写对应的账号与凭据，保存后自动生效。</div><a class="go" href="/models">前往模型页</a></div>{{end}}
   {{if .Notice}}<div class="banner ok"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><div>{{.Notice}}</div></div>{{end}}
   {{if .Error}}<div class="banner bad"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>{{.Error}}</div></div>{{end}}
   {{template "content" .}}
@@ -549,4 +549,3 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 </body>
 </html>
 
-{{define "restartbtn"}}<form method="post" action="/restart"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn sec sm"><svg class="ico" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4.5V9h-4.5"/></svg>重启服务</button></form>{{end}}

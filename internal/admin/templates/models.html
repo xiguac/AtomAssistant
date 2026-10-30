@@ -1,6 +1,6 @@
 {{define "content"}}
-<div class="pagehead"><h1>模型</h1>{{template "restartbtn" .}}</div>
-<div class="sub">配置主 AI 使用的接口地址、密钥与模型，并管理协作模型。配置协作模型后，任务由协作模型拟定方案并执行，主 AI 负责评估方案、审核结果并答复用户；分派对象依据用户评分确定。修改后需重启服务方可生效。</div>
+<div class="pagehead"><h1>模型</h1></div>
+<div class="sub">配置主 AI 使用的接口地址、密钥与模型，并管理协作模型。配置协作模型后，任务由协作模型拟定方案并执行，主 AI 负责评估方案、审核结果并答复用户；分派对象依据用户评分确定。保存后自动生效，无需重启服务。</div>
 
 {{with .Data}}
 <div class="cols even">
@@ -42,7 +42,7 @@
     <div><label for="b-hours">执行时长上限（小时）</label><input id="b-hours" type="text" name="max_hours" inputmode="decimal" value="{{.BudgetHours}}">
       <div class="help">仅累计实际执行时间，等待时间不计</div></div>
   </div>
-  <div class="band foot"><span class="note muted">任一项达到上限时任务即暂停，不再继续消耗。留空或填 0 表示使用默认值。对保存并重启之后新建的任务生效。</span><button class="btn">保存</button></div>
+  <div class="band foot"><span class="note muted">任一项达到上限时任务即暂停，不再继续消耗。留空或填 0 表示使用默认值。保存后对新建的任务生效。</span><button class="btn">保存</button></div>
 </form>
 </div>
 </div>

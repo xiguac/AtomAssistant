@@ -1,6 +1,6 @@
 {{define "content"}}
-<div class="pagehead"><h1>MCP</h1>{{template "restartbtn" .}}</div>
-<div class="sub">接入 MCP server 并设定各工具的授权范围。接入后其工具进入工具目录，助手在任务规划时可直接调用。密钥保存至环境变量，保存后不可查看。修改后需重启服务方可生效。</div>
+<div class="pagehead"><h1>MCP</h1></div>
+<div class="sub">接入 MCP server 并设定各工具的授权范围。接入后其工具进入工具目录，助手在任务规划时可直接调用。密钥保存至环境变量，保存后不可查看。保存后自动生效，无需重启服务。</div>
 
 {{with .Data}}
 {{$more := false}}{{range .Presets}}{{if not .On}}{{$more = true}}{{end}}{{end}}
