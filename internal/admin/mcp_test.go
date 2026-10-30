@@ -899,14 +899,17 @@ func TestAdmin_MCP页预置的飞常准密钥放在请求头里(t *testing.T) {
 func TestAdmin_保存配置后在进程内重新载入(t *testing.T) {
 	e := setup(t)
 	e.login()
+	// 第一次是新增，之后是修改同一个订阅。
+	orig := ""
 	save := func() string {
 		t.Helper()
-		_, loc := e.post("/connectors/holidays", url.Values{"csrf": {e.csrf}, "url": {"https://example.com/h.ics"}})
+		_, loc := e.post("/connectors/holidays", url.Values{"csrf": {e.csrf}, "orig": {orig}, "name": {"节假日"}, "url": {"https://example.com/h.ics"}})
+		orig = "节假日"
 		return loc
 	}
 	calls := 0
 	e.server.opts.Reload = func(context.Context) error { calls++; return nil }
-	if loc := save(); calls != 1 || !strings.Contains(loc, "节假日订阅已保存。新配置已生效。") {
+	if loc := save(); calls != 1 || !strings.Contains(loc, "节假日订阅「节假日」已保存。新配置已生效。") {
 		t.Fatalf("保存后应重新载入一次并说明已生效: %d %s", calls, loc)
 	}
 	// 新配置装不起来：保存的内容留着，页面上说明原因和旧配置还在跑。
@@ -917,7 +920,7 @@ func TestAdmin_保存配置后在进程内重新载入(t *testing.T) {
 	// 校验不过的不保存，也不去载入。
 	calls = 0
 	e.server.opts.Reload = func(context.Context) error { calls++; return nil }
-	if _, loc := e.post("/connectors/holidays", url.Values{"csrf": {e.csrf}, "url": {""}}); calls != 0 || !strings.Contains(loc, "请填写订阅地址") {
+	if _, loc := e.post("/connectors/holidays", url.Values{"csrf": {e.csrf}, "orig": {"节假日"}, "name": {"节假日"}, "url": {""}}); calls != 0 || !strings.Contains(loc, "请填写订阅地址") {
 		t.Fatalf("保存失败时不应重新载入: %d %s", calls, loc)
 	}
 	if code, _ := e.post("/restart", url.Values{"csrf": {e.csrf}}); code != http.StatusNotFound && code != http.StatusMethodNotAllowed {

@@ -375,9 +375,12 @@ dialog.modal input[readonly] { background:var(--recess); color:var(--text-2); }
 .tasks-filter .dates input[type=date] { width:150px; }
 .pager { align-items:center; }
 /* 通行密钥：一把一行，名称在上、域名与时间在下，删除按钮在右。 */
-.rows.passkeys > div { padding:12px 20px; }
-.passkeys .pk { flex:1; min-width:0; }
-.passkeys .pk .note { margin-top:2px; overflow-wrap:anywhere; }
+.rows.passkeys > div, .rows.accounts > div { padding:12px 20px; }
+.passkeys .pk, .accounts .acct { flex:1; min-width:0; }
+.passkeys .pk .note, .accounts .acct .note { margin-top:2px; overflow-wrap:anywhere; }
+/* 数据源：一个账号一行，名称、标签、状态在上，账号与服务器在下，操作在右。 */
+.accounts .acct-head { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; }
+.accounts .actions { flex-wrap:nowrap; }
 
 
 /* 后台提交后的提示：浮在页面下方，几秒后自行消失，不挪动页面内容。 */

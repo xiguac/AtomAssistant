@@ -107,6 +107,8 @@ type Planner struct {
 	paidResources bool
 	// 已接入的内建连接器。canSend 为真表示邮件连接器配了发信服务器。
 	hasCalendar, hasMail, canSend bool
+	// calendarNote、mailNote 说明接了哪几个日历账号、邮箱和各自的用途，只有一个账号时为空。
+	calendarNote, mailNote string
 	// hasHolidays 为真表示接入了节假日数据。
 	hasHolidays bool
 	// conversation 非空时，属于会话的任务看得到同一个会话里最近的对话，见 conversation.go。
@@ -273,6 +275,12 @@ func (p *Planner) WithWeather(enabled bool) *Planner {
 	return p
 }
 
+// WithAccounts 告诉模型接了哪几个日历账号、邮箱，各自的用途（见 AccountsNote）。
+func (p *Planner) WithAccounts(calendarNote, mailNote string) *Planner {
+	p.calendarNote, p.mailNote = calendarNote, mailNote
+	return p
+}
+
 // WithMail 向模型开放邮件工具。canSend 为假时只能读和整理，不能发信。
 func (p *Planner) WithMail(enabled, canSend bool) *Planner {
 	p.hasMail, p.canSend = enabled, canSend
@@ -296,7 +304,7 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 		tools = append(tools, weatherTool)
 	}
 	gated := append(payTools(p.pay), resourceTools(p.pay && p.paidResources)...)
-	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend)...)
+	gated = append(gated, connectorTools(p.hasCalendar, p.hasMail, p.canSend, p.calendarNote, p.mailNote)...)
 	if p.hasFiles {
 		gated = append(gated, fileToolset...)
 		if p.canSendFiles {

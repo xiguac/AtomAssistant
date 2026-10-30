@@ -2,12 +2,16 @@ package admin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/xiguac/atomassistant/internal/config"
 	"github.com/xiguac/atomassistant/internal/connector/calendar"
@@ -17,20 +21,31 @@ import (
 	"github.com/xiguac/atomassistant/internal/vault"
 )
 
-// 「连接器」页：日历（CalDAV）、邮件（IMAP/SMTP）的账号与密码，节假日订阅，天气（和风天气），
-// 以及联网搜索（DeepSeek 搜索接口）的密钥。
+// 「数据源」页：日历（CalDAV）、邮箱（IMAP/SMTP）、节假日订阅可以各加好几个，各有名字和用途标签；
+// 天气（和风天气）与联网搜索（DeepSeek 搜索接口）各一把密钥。
 //
-// 这一页改的是配置文件里 connectors 一节。密码照旧只进保险库，配置里留的是句柄；
-// 各存一条、各自授权，停用其中一个不影响另一个。
+// 这一页改的是配置文件里 connectors 一节，保存时一律写成列表。密码照旧只进保险库，配置里留的是句柄；
+// 每个账号各存一条，删掉其中一个不影响别的。
 
 type connectorsData struct {
-	Calendar *config.CalendarConfig
-	Mail     *config.MailConfig
-	Holidays *config.HolidaysConfig
-	Weather  *config.WeatherConfig
-	Search   *config.SearchConfig
-	// CalendarKey、MailKey、WeatherKey 与 SearchKey 表示保险库里有没有对应的密码或密钥。
-	CalendarKey, MailKey, WeatherKey, SearchKey bool
+	Calendars []calendarRow
+	Mailboxes []mailRow
+	Holidays  []config.HolidaysConfig
+	Weather   *config.WeatherConfig
+	Search    *config.SearchConfig
+	// WeatherKey 与 SearchKey 表示保险库里有没有对应的密钥。
+	WeatherKey, SearchKey bool
+}
+
+// calendarRow、mailRow 是页面上的一个账号，Key 表示保险库里有它的密码。
+type calendarRow struct {
+	config.CalendarConfig
+	Key bool
+}
+
+type mailRow struct {
+	config.MailConfig
+	Key bool
 }
 
 func (s *Server) readConnectors() ([]byte, config.ConnectorsConfig, error) {
@@ -66,33 +81,30 @@ func (s *Server) connectorsPage(w http.ResponseWriter, r *http.Request, v *view)
 	if err != nil {
 		v.Error = err.Error()
 	}
-	d := connectorsData{Calendar: c.Calendar, Mail: c.Mail, Holidays: c.Holidays, Weather: c.Weather, Search: c.Search}
+	d := connectorsData{Holidays: c.HolidayList(), Weather: c.Weather, Search: c.Search}
+	stored := map[string]bool{}
 	if metas, err := s.opts.Vault.List(r.Context()); err != nil {
 		v.Error = err.Error()
 	} else {
 		for _, meta := range metas {
-			if c.Calendar != nil && vault.HandlePrefix+meta.Label == c.Calendar.Password {
-				d.CalendarKey = true
-			}
-			if c.Mail != nil && vault.HandlePrefix+meta.Label == c.Mail.Password {
-				d.MailKey = true
-			}
-			if c.Weather != nil && vault.HandlePrefix+meta.Label == c.Weather.Key {
-				d.WeatherKey = true
-			}
-			if c.Search != nil && vault.HandlePrefix+meta.Label == c.Search.Key {
-				d.SearchKey = true
-			}
+			stored[vault.HandlePrefix+meta.Label] = true
 		}
 	}
+	for _, cal := range c.CalendarList() {
+		d.Calendars = append(d.Calendars, calendarRow{cal, stored[cal.Password]})
+	}
+	for _, m := range c.MailboxList() {
+		d.Mailboxes = append(d.Mailboxes, mailRow{m, stored[m.Password]})
+	}
+	d.WeatherKey = c.Weather != nil && stored[c.Weather.Key]
+	d.SearchKey = c.Search != nil && stored[c.Search.Key]
 	v.Data = d
 	s.render(w, "connectors", v)
 }
 
 // sealConnectorPassword 把连接器的密码存进保险库，返回句柄。
-// 原来就指着保险库里某一条的，换的是那一条，它原有的授权保留；否则存成与连接器同名的一条。
-func (s *Server) sealConnectorPassword(ctx context.Context, handle, user, password, note string) (string, error) {
-	label := user
+// 原来就指着保险库里某一条的，换的是那一条，它原有的授权保留；否则新存一条，名字是 label。
+func (s *Server) sealConnectorPassword(ctx context.Context, handle, label, user, password, note string) (string, error) {
 	if handle != "" {
 		label = strings.TrimPrefix(handle, vault.HandlePrefix)
 	}
@@ -120,18 +132,83 @@ func (s *Server) sealConnectorPassword(ctx context.Context, handle, user, passwo
 	return vault.HandlePrefix + label, nil
 }
 
+// accountLabel 是一个账号的密码在保险库里的名字：同类账号各存一条，靠名字区分。
+// 账号名里有保险库名字不收的字符时，用名字的摘要代替。
+func accountLabel(user, name string) string {
+	if label := user + "." + name; vault.ValidLabel(label) {
+		return label
+	}
+	sum := sha256.Sum256([]byte(name))
+	return user + "." + hex.EncodeToString(sum[:6])
+}
+
+// splitTags 把页面上填的用途标签拆开：中英文逗号、顿号、分号、空白都算分隔。
+func splitTags(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range strings.FieldsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune(",，、;；", r)
+	}) {
+		if !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// upsertAccount 在列表里按原名字（orig）找到那一项换掉；orig 为空是新增。名字不能和别的重复。
+func upsertAccount[T any](list []T, nameOf func(T) string, orig string, item T) ([]T, error) {
+	name := nameOf(item)
+	if err := config.ValidAccountName(name); err != nil {
+		return nil, err
+	}
+	at := -1
+	for i, x := range list {
+		switch {
+		case orig != "" && nameOf(x) == orig:
+			at = i
+		case nameOf(x) == name:
+			return nil, fmt.Errorf("已有一个叫「%s」的，名称不能重复", name)
+		}
+	}
+	if orig != "" && at < 0 {
+		return nil, fmt.Errorf("没有找到「%s」，可能已被删除，请刷新页面", orig)
+	}
+	if at < 0 {
+		return append(list, item), nil
+	}
+	list[at] = item
+	return list, nil
+}
+
+// withLists 把 cur 里的日历、邮箱、节假日列表换进 all，天气和搜索保持 all 里的。
+func withLists(all, cur config.ConnectorsConfig) config.ConnectorsConfig {
+	all.Normalize()
+	all.Calendars, all.Mailboxes, all.HolidayFeeds = cur.Calendars, cur.Mailboxes, cur.HolidayFeeds
+	return all
+}
+
+// trimSecret 去掉粘贴密码时常带上的结尾换行，其余原样保留。
+func trimSecret(s string) string { return strings.TrimRight(s, "\r\n") }
+
 func (s *Server) calendarSave(w http.ResponseWriter, r *http.Request, _ *view) {
-	// 密码原样存入，只去掉粘贴时常带上的结尾换行。
-	password := strings.TrimRight(r.PostFormValue("password"), "\r\n")
+	password := trimSecret(r.PostFormValue("password"))
+	orig := strings.TrimSpace(r.PostFormValue("orig"))
+	name := strings.TrimSpace(r.PostFormValue("name"))
 	err := func() error {
 		_, cur, err := s.readConnectors()
 		if err != nil {
 			return err
 		}
+		cur.Normalize()
 		c := config.CalendarConfig{}
-		if cur.Calendar != nil {
-			c = *cur.Calendar
+		for _, x := range cur.Calendars {
+			if orig != "" && x.Name == orig {
+				c = x
+			}
 		}
+		c.Name, c.Tags = name, splitTags(r.PostFormValue("tags"))
 		c.URL = strings.TrimSpace(r.PostFormValue("url"))
 		c.Username = strings.TrimSpace(r.PostFormValue("username"))
 		c.DefaultCalendar = strings.TrimSpace(r.PostFormValue("default_calendar"))
@@ -141,35 +218,47 @@ func (s *Server) calendarSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		if !strings.HasPrefix(c.URL, "https://") {
 			return errors.New("服务器地址必须以 https:// 开头：密码将随每次请求发送")
 		}
+		// 名字先查过再存密码：重名之类被拒绝时，不能已经把别人的密码换掉了。
+		if _, err := upsertAccount(append([]config.CalendarConfig(nil), cur.Calendars...), func(x config.CalendarConfig) string { return x.Name }, orig, c); err != nil {
+			return err
+		}
 		if password != "" {
-			if c.Password, err = s.sealConnectorPassword(r.Context(), c.Password, config.VaultUserCalendar, password, "日历账号的密码"); err != nil {
+			if c.Password, err = s.sealConnectorPassword(r.Context(), c.Password, accountLabel(config.VaultUserCalendar, name),
+				config.VaultUserCalendar, password, "日历「"+name+"」的密码"); err != nil {
 				return err
 			}
 		} else if c.Password == "" {
-			return errors.New("首次配置日历时必须填写密码")
+			return errors.New("新增日历时必须填写密码")
 		}
+		cur.Calendars, _ = upsertAccount(cur.Calendars, func(x config.CalendarConfig) string { return x.Name }, orig, c)
 		return s.editConnectors(func(all *config.ConnectorsConfig) error {
-			all.Calendar = &c
+			*all = withLists(*all, cur)
 			return nil
 		})
 	}()
 	if err == nil {
-		s.opts.Log.Info("日历数据源已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
+		s.opts.Log.Info("日历数据源已在后台修改", "名称", name, "更换密码", password != "", "来自", r.RemoteAddr)
 	}
-	s.backApplied(w, r, "/connectors", "日历配置已保存。", err)
+	s.backApplied(w, r, "/connectors", "日历「"+name+"」已保存。", err)
 }
 
 func (s *Server) mailSave(w http.ResponseWriter, r *http.Request, _ *view) {
-	password := strings.TrimRight(r.PostFormValue("password"), "\r\n")
+	password := trimSecret(r.PostFormValue("password"))
+	orig := strings.TrimSpace(r.PostFormValue("orig"))
+	name := strings.TrimSpace(r.PostFormValue("name"))
 	err := func() error {
 		_, cur, err := s.readConnectors()
 		if err != nil {
 			return err
 		}
+		cur.Normalize()
 		c := config.MailConfig{}
-		if cur.Mail != nil {
-			c = *cur.Mail
+		for _, x := range cur.Mailboxes {
+			if orig != "" && x.Label == orig {
+				c = x
+			}
 		}
+		c.Label, c.Tags = name, splitTags(r.PostFormValue("tags"))
 		c.IMAP = strings.TrimSpace(r.PostFormValue("imap"))
 		c.SMTP = strings.TrimSpace(r.PostFormValue("smtp"))
 		c.Username = strings.TrimSpace(r.PostFormValue("username"))
@@ -178,34 +267,52 @@ func (s *Server) mailSave(w http.ResponseWriter, r *http.Request, _ *view) {
 		if c.IMAP == "" || c.Username == "" {
 			return errors.New("请填写收信服务器与账号")
 		}
+		// 名字先查过再存密码：重名之类被拒绝时，不能已经把别人的密码换掉了。
+		if _, err := upsertAccount(append([]config.MailConfig(nil), cur.Mailboxes...), func(x config.MailConfig) string { return x.Label }, orig, c); err != nil {
+			return err
+		}
 		if password != "" {
-			if c.Password, err = s.sealConnectorPassword(r.Context(), c.Password, config.VaultUserMail, password, "邮箱账号的密码"); err != nil {
+			if c.Password, err = s.sealConnectorPassword(r.Context(), c.Password, accountLabel(config.VaultUserMail, name),
+				config.VaultUserMail, password, "邮箱「"+name+"」的密码"); err != nil {
 				return err
 			}
 		} else if c.Password == "" {
-			return errors.New("首次配置邮件时必须填写密码")
+			return errors.New("新增邮箱时必须填写密码")
 		}
+		cur.Mailboxes, _ = upsertAccount(cur.Mailboxes, func(x config.MailConfig) string { return x.Label }, orig, c)
 		return s.editConnectors(func(all *config.ConnectorsConfig) error {
-			all.Mail = &c
+			*all = withLists(*all, cur)
 			return nil
 		})
 	}()
 	if err == nil {
-		s.opts.Log.Info("邮件数据源已在后台修改", "更换密码", password != "", "来自", r.RemoteAddr)
+		s.opts.Log.Info("邮件数据源已在后台修改", "名称", name, "更换密码", password != "", "来自", r.RemoteAddr)
 	}
-	s.backApplied(w, r, "/connectors", "邮件配置已保存。", err)
+	s.backApplied(w, r, "/connectors", "邮箱「"+name+"」已保存。", err)
 }
 
 func (s *Server) holidaysSave(w http.ResponseWriter, r *http.Request, _ *view) {
-	url := strings.TrimSpace(r.PostFormValue("url"))
-	err := s.editConnectors(func(all *config.ConnectorsConfig) error {
-		if url == "" {
+	orig := strings.TrimSpace(r.PostFormValue("orig"))
+	item := config.HolidaysConfig{Name: strings.TrimSpace(r.PostFormValue("name")), Tags: splitTags(r.PostFormValue("tags")),
+		URL: strings.TrimSpace(r.PostFormValue("url"))}
+	err := func() error {
+		if item.URL == "" {
 			return errors.New("请填写订阅地址")
 		}
-		all.Holidays = &config.HolidaysConfig{URL: url}
-		return nil
-	})
-	s.backApplied(w, r, "/connectors", "节假日订阅已保存。", err)
+		_, cur, err := s.readConnectors()
+		if err != nil {
+			return err
+		}
+		cur.Normalize()
+		if cur.HolidayFeeds, err = upsertAccount(cur.HolidayFeeds, func(x config.HolidaysConfig) string { return x.Name }, orig, item); err != nil {
+			return err
+		}
+		return s.editConnectors(func(all *config.ConnectorsConfig) error {
+			*all = withLists(*all, cur)
+			return nil
+		})
+	}()
+	s.backApplied(w, r, "/connectors", "节假日订阅「"+item.Name+"」已保存。", err)
 }
 
 // weatherSave 保存和风天气的 API Host 与 API KEY。
@@ -225,7 +332,7 @@ func (s *Server) weatherSave(w http.ResponseWriter, r *http.Request, _ *view) {
 			return errors.New("请填写 API Host，格式为主机名，如 abcxyz.qweatherapi.com")
 		}
 		if key != "" {
-			if c.Key, err = s.sealConnectorPassword(r.Context(), c.Key, config.VaultUserWeather, key, "和风天气的 API KEY"); err != nil {
+			if c.Key, err = s.sealConnectorPassword(r.Context(), c.Key, config.VaultUserWeather, config.VaultUserWeather, key, "和风天气的 API KEY"); err != nil {
 				return err
 			}
 		} else if c.Key == "" {
@@ -260,7 +367,7 @@ func (s *Server) searchSave(w http.ResponseWriter, r *http.Request, _ *view) {
 			}
 			return errors.New("API Key 未修改")
 		}
-		if c.Key, err = s.sealConnectorPassword(r.Context(), c.Key, config.VaultUserSearch, key, "DeepSeek 搜索接口的 API Key"); err != nil {
+		if c.Key, err = s.sealConnectorPassword(r.Context(), c.Key, config.VaultUserSearch, config.VaultUserSearch, key, "DeepSeek 搜索接口的 API Key"); err != nil {
 			return err
 		}
 		return s.editConnectors(func(all *config.ConnectorsConfig) error {
@@ -299,45 +406,63 @@ func (s *Server) dropCredential(ctx context.Context, handle, user string) {
 	}
 }
 
-// connectorDisable 停用一个连接器，它的密码一并从保险库里删除。
+// connectorDisable 删除一个数据源（日历、邮箱、节假日订阅按名字），它的密码一并从保险库里删除。
 func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *view) {
-	which := r.PostFormValue("which")
-	names := map[string]string{"calendar": "日历", "mail": "邮件", "holidays": "节假日订阅", "weather": "天气", "search": "联网搜索密钥"}
+	which, name := r.PostFormValue("which"), strings.TrimSpace(r.PostFormValue("name"))
+	names := map[string]string{"calendar": "日历", "mail": "邮箱", "holidays": "节假日订阅", "weather": "天气", "search": "联网搜索密钥"}
 	var handle, user string
 	err := s.editConnectors(func(all *config.ConnectorsConfig) error {
+		all.Normalize()
+		found := false
 		switch which {
 		case "calendar":
-			if all.Calendar != nil {
-				handle, user = all.Calendar.Password, config.VaultUserCalendar
+			for i, c := range all.Calendars {
+				if c.Name == name && !found {
+					handle, user, found = c.Password, config.VaultUserCalendar, true
+					all.Calendars = append(all.Calendars[:i:i], all.Calendars[i+1:]...)
+				}
 			}
-			all.Calendar = nil
 		case "mail":
-			if all.Mail != nil {
-				handle, user = all.Mail.Password, config.VaultUserMail
+			for i, c := range all.Mailboxes {
+				if c.Label == name && !found {
+					handle, user, found = c.Password, config.VaultUserMail, true
+					all.Mailboxes = append(all.Mailboxes[:i:i], all.Mailboxes[i+1:]...)
+				}
 			}
-			all.Mail = nil
 		case "holidays":
-			all.Holidays = nil
+			for i, c := range all.HolidayFeeds {
+				if c.Name == name && !found {
+					found = true
+					all.HolidayFeeds = append(all.HolidayFeeds[:i:i], all.HolidayFeeds[i+1:]...)
+				}
+			}
 		case "weather":
 			if all.Weather != nil {
-				handle, user = all.Weather.Key, config.VaultUserWeather
+				handle, user, found = all.Weather.Key, config.VaultUserWeather, true
 			}
 			all.Weather = nil
 		case "search":
 			if all.Search != nil {
-				handle, user = all.Search.Key, config.VaultUserSearch
+				handle, user, found = all.Search.Key, config.VaultUserSearch, true
 			}
 			all.Search = nil
 		default:
 			return errors.New("数据源类型无效")
 		}
+		if !found {
+			return fmt.Errorf("没有找到这个%s，可能已被删除，请刷新页面", names[which])
+		}
 		return nil
 	})
 	if err == nil {
 		s.dropCredential(r.Context(), handle, user)
-		s.opts.Log.Info("数据源已在后台停用", "数据源", which, "来自", r.RemoteAddr)
+		s.opts.Log.Info("数据源已在后台删除", "数据源", which, "名称", name, "来自", r.RemoteAddr)
 	}
-	s.backApplied(w, r, "/connectors", names[which]+"已停用。", err)
+	what := names[which]
+	if name != "" {
+		what += "「" + name + "」"
+	}
+	s.backApplied(w, r, "/connectors", what+"已删除。", err)
 }
 
 // connectorTest 用表单里当前填写的内容登录一次，确认服务器地址、账号、密码是否正确。
@@ -347,6 +472,9 @@ func (s *Server) connectorDisable(w http.ResponseWriter, r *http.Request, _ *vie
 func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) {
 	which := r.PostFormValue("which")
 	typed := strings.TrimRight(r.PostFormValue("password"), "\r\n")
+	orig := strings.TrimSpace(r.PostFormValue("orig"))
+	// options 是读到的日历列表，页面用它填「默认日历」的下拉框。
+	var options []string
 	if which == "weather" || which == "search" {
 		typed = strings.TrimSpace(r.PostFormValue("key"))
 	}
@@ -382,8 +510,10 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 				return "", errors.New("服务器地址必须以 https:// 开头：密码将随每次请求发送")
 			}
 			handle := ""
-			if saved.Calendar != nil {
-				handle = saved.Calendar.Password
+			for _, c := range saved.CalendarList() {
+				if c.Name == orig {
+					handle = c.Password
+				}
 			}
 			take, err := secret(handle, config.VaultUserCalendar)
 			if err != nil {
@@ -393,11 +523,11 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 			if err != nil {
 				return "", err
 			}
-			names := make([]string, 0, len(list))
+			options = make([]string, 0, len(list))
 			for _, c := range list {
-				names = append(names, c.Name)
+				options = append(options, c.Name)
 			}
-			return fmt.Sprintf("日历连接成功，共 %d 个日历：%s", len(list), strings.Join(names, "、")), nil
+			return fmt.Sprintf("日历连接成功，共 %d 个日历：%s", len(list), strings.Join(options, "、")), nil
 		case "mail":
 			imap := strings.TrimSpace(r.PostFormValue("imap"))
 			user := strings.TrimSpace(r.PostFormValue("username"))
@@ -406,10 +536,12 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 			}
 			handle := ""
 			box := &mail.Client{IMAPAddr: imap, Username: user}
-			if saved.Mail != nil {
-				handle = saved.Mail.Password
-				// 加密方式页面上没有，沿用已保存的。
-				box.IMAPSecurity = mail.Security(saved.Mail.IMAPSecurity)
+			for _, c := range saved.MailboxList() {
+				if c.Label == orig {
+					handle = c.Password
+					// 加密方式页面上没有，沿用已保存的。
+					box.IMAPSecurity = mail.Security(c.IMAPSecurity)
+				}
 			}
 			if box.Secret, err = secret(handle, config.VaultUserMail); err != nil {
 				return "", err
@@ -454,5 +586,10 @@ func (s *Server) connectorTest(w http.ResponseWriter, r *http.Request, _ *view) 
 		}
 		return "", errors.New("数据源类型无效")
 	}()
+	if options != nil && r.Header.Get("X-Requested-With") == "fetch" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": err == nil, "message": result, "options": options})
+		return
+	}
 	back(w, r, "/connectors", result, err)
 }

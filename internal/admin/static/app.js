@@ -98,6 +98,18 @@
       return resp.json();
     }).then(function (data) {
       show(form, !!data.ok, data.message || (data.ok ? "成功" : "失败"));
+      // 应答里带着可选项（读取日历）：填进表单里标了 data-options 的下拉框，原来选的保持不变。
+      var sel = form.querySelector("select[data-options]");
+      if (sel && data.options && data.options.length) {
+        var keep = sel.value;
+        while (sel.options.length > 1) {
+          sel.remove(1);
+        }
+        data.options.forEach(function (v) {
+          sel.add(new Option(v, v));
+        });
+        sel.value = keep;
+      }
     }).catch(function (err) {
       show(form, false, "请求失败：" + err.message);
     }).then(function () {
@@ -137,6 +149,13 @@
     }
     var form = dlg.querySelector("form");
     form.reset();
+    // 读取过的选项属于上一次打开的那个账号，换一个账号要重新读。
+    var picks = form.querySelectorAll("select[data-options]");
+    for (var p = 0; p < picks.length; p++) {
+      while (picks[p].options.length > 1) {
+        picks[p].remove(1);
+      }
+    }
     var old = form.querySelectorAll(".async-result");
     for (var i = 0; i < old.length; i++) {
       old[i].parentNode.removeChild(old[i]);
@@ -158,6 +177,10 @@
         var f = fields[j];
         if (f.type === "checkbox" || f.type === "radio") {
           f.checked = vals.indexOf(f.value) >= 0;
+        } else if (f.tagName === "SELECT" && attrs[i].value && !Array.prototype.some.call(f.options, function (o) { return o.value === attrs[i].value; })) {
+          // 下拉框里还没有这个值（比如已保存的默认日历，日历列表还没读）：先加上它，才选得中。
+          f.add(new Option(attrs[i].value, attrs[i].value));
+          f.value = attrs[i].value;
         } else {
           f.value = attrs[i].value;
         }

@@ -452,7 +452,8 @@ func ReadConnectors(raw []byte) (ConnectorsConfig, error) {
 // WriteConnectors 把连接器一节写回配置文件的原文，其余的部分原样保留。
 func WriteConnectors(raw []byte, c ConnectorsConfig) ([]byte, error) {
 	values := map[string]any{}
-	if c.Calendar != nil || c.Mail != nil || c.Holidays != nil || c.Weather != nil || c.Search != nil {
+	if c.Calendar != nil || c.Mail != nil || c.Holidays != nil || c.Weather != nil || c.Search != nil ||
+		len(c.Calendars) > 0 || len(c.Mailboxes) > 0 || len(c.HolidayFeeds) > 0 {
 		values["connectors"] = c
 	}
 	return writeSections(raw, []string{"connectors"}, values)

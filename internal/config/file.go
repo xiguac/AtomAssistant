@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"unicode/utf8"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -306,12 +307,80 @@ func (f *File) BuildChannels(secrets SecretLender, state weixin.KV, log *slog.Lo
 }
 
 // ConnectorsConfig 是内建连接器的配置。不写的那一项就不接入。
+//
+// 日历、邮箱、节假日订阅都可以接好几个，写在 calendars / mailboxes / holiday_feeds 里，各有名字和用途标签。
+// 早先的写法 calendar / mail / holidays 只能写一个，仍然认：读的时候排在列表最前面，算默认的那个。
+// 后台保存时一律改写成列表。天气和联网搜索是一把密钥管全部，只有一个。
 type ConnectorsConfig struct {
-	Calendar *CalendarConfig `yaml:"calendar,omitempty"`
-	Mail     *MailConfig     `yaml:"mail,omitempty"`
-	Holidays *HolidaysConfig `yaml:"holidays,omitempty"`
-	Weather  *WeatherConfig  `yaml:"weather,omitempty"`
-	Search   *SearchConfig   `yaml:"search,omitempty"`
+	Calendar     *CalendarConfig  `yaml:"calendar,omitempty"`
+	Mail         *MailConfig      `yaml:"mail,omitempty"`
+	Holidays     *HolidaysConfig  `yaml:"holidays,omitempty"`
+	Calendars    []CalendarConfig `yaml:"calendars,omitempty"`
+	Mailboxes    []MailConfig     `yaml:"mailboxes,omitempty"`
+	HolidayFeeds []HolidaysConfig `yaml:"holiday_feeds,omitempty"`
+	Weather      *WeatherConfig   `yaml:"weather,omitempty"`
+	Search       *SearchConfig    `yaml:"search,omitempty"`
+}
+
+// 早先只能写一个时没有名字，按这个名字称呼它。
+const (
+	DefaultCalendarName = "日历"
+	DefaultMailboxName  = "邮箱"
+	DefaultHolidaysName = "节假日"
+)
+
+// CalendarList 返回全部日历账号，默认的在最前面。
+func (c ConnectorsConfig) CalendarList() []CalendarConfig {
+	var out []CalendarConfig
+	if c.Calendar != nil {
+		one := *c.Calendar
+		if one.Name == "" {
+			one.Name = DefaultCalendarName
+		}
+		out = append(out, one)
+	}
+	return append(out, c.Calendars...)
+}
+
+// MailboxList 返回全部邮箱，默认的在最前面。
+func (c ConnectorsConfig) MailboxList() []MailConfig {
+	var out []MailConfig
+	if c.Mail != nil {
+		one := *c.Mail
+		if one.Label == "" {
+			one.Label = DefaultMailboxName
+		}
+		out = append(out, one)
+	}
+	return append(out, c.Mailboxes...)
+}
+
+// HolidayList 返回全部节假日订阅。
+func (c ConnectorsConfig) HolidayList() []HolidaysConfig {
+	var out []HolidaysConfig
+	if c.Holidays != nil {
+		one := *c.Holidays
+		if one.Name == "" {
+			one.Name = DefaultHolidaysName
+		}
+		out = append(out, one)
+	}
+	return append(out, c.HolidayFeeds...)
+}
+
+// Normalize 把早先只能写一个的写法并进列表，后台保存前调用。
+func (c *ConnectorsConfig) Normalize() {
+	c.Calendars, c.Mailboxes, c.HolidayFeeds = c.CalendarList(), c.MailboxList(), c.HolidayList()
+	c.Calendar, c.Mail, c.Holidays = nil, nil, nil
+}
+
+// ValidAccountName 校验数据源账号的名字：不能空，不能带 / 和 |（它们用来拼日历名、编号）。
+func ValidAccountName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || utf8.RuneCountInString(name) > 32 || strings.ContainsAny(name, "/|\n\r\t") {
+		return fmt.Errorf("名称不能为空、不超过 32 个字，不能含 / 或 |")
+	}
+	return nil
 }
 
 // SearchConfig 是联网搜索与读网页用的 DeepSeek 搜索接口的密钥。
@@ -349,45 +418,56 @@ func (f *File) Weather(secrets SecretLender) (*weather.Client, error) {
 
 // HolidaysConfig 是节假日数据的来源：一个公开的日历订阅（.ics）。
 type HolidaysConfig struct {
+	// Name、Tags 是名字和用途标签，接了多个时用来区分。
+	Name string   `yaml:"name,omitempty"`
+	Tags []string `yaml:"tags,omitempty"`
 	// URL 是订阅地址，必须是 https。
 	// Apple 的中国大陆节假日订阅：https://calendars.icloud.com/holidays/cn_zh.ics
 	URL string `yaml:"url"`
 }
 
-// Holidays 按配置构造节假日订阅。没有配置时返回 nil。
-func (f *File) Holidays() (*holiday.Feed, error) {
-	c := f.Connectors.Holidays
-	if c == nil {
-		return nil, nil
-	}
-	feed := &holiday.Feed{URL: c.URL}
-	if err := feed.Check(); err != nil {
-		return nil, fmt.Errorf("config: connectors.holidays.url: %w", err)
-	}
-	return feed, nil
-}
 
 // validateConnectors 校验连接器一节。在加载时就查，理由同 validateChannels。
 func (f *File) validateConnectors() error {
-	if c := f.Connectors.Calendar; c != nil {
+	seen := map[string]bool{}
+	unique := func(kind, name string) error {
+		if err := ValidAccountName(name); err != nil {
+			return fmt.Errorf("config: %s「%s」: %w", kind, name, err)
+		}
+		if seen[kind+"/"+name] {
+			return fmt.Errorf("config: 有两个%s都叫「%s」，名字不能重复", kind, name)
+		}
+		seen[kind+"/"+name] = true
+		return nil
+	}
+	for _, c := range f.Connectors.CalendarList() {
+		if err := unique("日历", c.Name); err != nil {
+			return err
+		}
 		if c.URL == "" || c.Username == "" {
-			return fmt.Errorf("config: connectors.calendar 必须配齐 url / username / password")
+			return fmt.Errorf("config: 日历「%s」必须配齐 url / username / password", c.Name)
 		}
 		if !strings.HasPrefix(c.Password, "vault://") {
-			return fmt.Errorf("config: connectors.calendar.password 只能写保险库句柄（vault://名字），不能直接写密码")
+			return fmt.Errorf("config: 日历「%s」的 password 只能写保险库句柄（vault://名字），不能直接写密码", c.Name)
 		}
 	}
-	if c := f.Connectors.Mail; c != nil {
+	for _, c := range f.Connectors.MailboxList() {
+		if err := unique("邮箱", c.Label); err != nil {
+			return err
+		}
 		if c.IMAP == "" || c.Username == "" {
-			return fmt.Errorf("config: connectors.mail 必须配齐 imap / username / password")
+			return fmt.Errorf("config: 邮箱「%s」必须配齐 imap / username / password", c.Label)
 		}
 		if !strings.HasPrefix(c.Password, "vault://") {
-			return fmt.Errorf("config: connectors.mail.password 只能写保险库句柄（vault://名字），不能直接写密码")
+			return fmt.Errorf("config: 邮箱「%s」的 password 只能写保险库句柄（vault://名字），不能直接写密码", c.Label)
 		}
 	}
-	if c := f.Connectors.Holidays; c != nil {
+	for _, c := range f.Connectors.HolidayList() {
+		if err := unique("节假日订阅", c.Name); err != nil {
+			return err
+		}
 		if err := (&holiday.Feed{URL: c.URL}).Check(); err != nil {
-			return fmt.Errorf("config: connectors.holidays.url: %w", err)
+			return fmt.Errorf("config: 节假日订阅「%s」: %w", c.Name, err)
 		}
 	}
 	if c := f.Connectors.Search; c != nil && !strings.HasPrefix(c.Key, "vault://") {
@@ -414,6 +494,9 @@ const (
 
 // CalendarConfig 是日历连接器（CalDAV）的配置。
 type CalendarConfig struct {
+	// Name、Tags 是账号的名字和用途标签（如「工作」「家庭」），助手按它们区分该用哪个。
+	Name string   `yaml:"name,omitempty"`
+	Tags []string `yaml:"tags,omitempty"`
 	// URL 是 CalDAV 服务器地址，iCloud 是 https://caldav.icloud.com。
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
@@ -426,6 +509,9 @@ type CalendarConfig struct {
 
 // MailConfig 是邮件连接器（IMAP/SMTP）的配置。
 type MailConfig struct {
+	// Label、Tags 是邮箱的名字和用途标签。Name 已经用来写发信人名称，所以名字叫 Label。
+	Label string   `yaml:"label,omitempty"`
+	Tags  []string `yaml:"tags,omitempty"`
 	// IMAP 是收信服务器，写成 主机:端口，iCloud 是 imap.mail.me.com:993。
 	IMAP string `yaml:"imap"`
 	// SMTP 是发信服务器，iCloud 是 smtp.mail.me.com:587。不写则助手只能读和整理，不能发信。
@@ -446,40 +532,99 @@ type SecretLender interface {
 	Lend(handle, user string) (func(ctx context.Context) (string, error), error)
 }
 
-// Calendar 按配置构造日历连接器。没有配置时返回 nil。
-func (f *File) Calendar(secrets SecretLender) (*calendar.Client, error) {
-	c := f.Connectors.Calendar
-	if c == nil {
-		return nil, nil
-	}
-	if c.URL == "" || c.Username == "" {
-		return nil, fmt.Errorf("config: connectors.calendar 必须配齐 url / username / password")
-	}
-	secret, err := secrets.Lend(c.Password, VaultUserCalendar)
-	if err != nil {
-		return nil, fmt.Errorf("config: connectors.calendar.password: %w", err)
-	}
-	return &calendar.Client{Endpoint: c.URL, Username: c.Username, Secret: secret, Default: c.DefaultCalendar}, nil
+
+
+// NamedCalendar 是按配置装好的一个日历账号。
+type NamedCalendar struct {
+	Name   string
+	Tags   []string
+	Client *calendar.Client
 }
 
-// Mail 按配置构造邮件连接器。没有配置时返回 nil。
+// CalendarAccounts 按配置构造全部日历账号，默认的在最前面。没有配置时返回空。
+// 每个账号的密码各存一条，都授权给 connector.calendar。
+func (f *File) CalendarAccounts(secrets SecretLender) ([]NamedCalendar, error) {
+	var out []NamedCalendar
+	for _, c := range f.Connectors.CalendarList() {
+		if c.URL == "" || c.Username == "" {
+			return nil, fmt.Errorf("config: 日历「%s」必须配齐 url / username / password", c.Name)
+		}
+		secret, err := secrets.Lend(c.Password, VaultUserCalendar)
+		if err != nil {
+			return nil, fmt.Errorf("config: 日历「%s」的 password: %w", c.Name, err)
+		}
+		out = append(out, NamedCalendar{Name: c.Name, Tags: c.Tags,
+			Client: &calendar.Client{Endpoint: c.URL, Username: c.Username, Secret: secret, Default: c.DefaultCalendar}})
+	}
+	return out, nil
+}
+
+// Calendar 返回默认的那个日历账号。没有配置时返回 nil。
+func (f *File) Calendar(secrets SecretLender) (*calendar.Client, error) {
+	all, err := f.CalendarAccounts(secrets)
+	if err != nil || len(all) == 0 {
+		return nil, err
+	}
+	return all[0].Client, nil
+}
+
+// NamedMailbox 是按配置装好的一个邮箱。
+type NamedMailbox struct {
+	Name   string
+	Tags   []string
+	Client *mail.Client
+}
+
+// MailAccounts 按配置构造全部邮箱，默认的在最前面。没有配置时返回空。
+// 每个邮箱的密码各存一条，都授权给 connector.mail。
+func (f *File) MailAccounts(secrets SecretLender) ([]NamedMailbox, error) {
+	var out []NamedMailbox
+	for _, c := range f.Connectors.MailboxList() {
+		if c.IMAP == "" || c.Username == "" {
+			return nil, fmt.Errorf("config: 邮箱「%s」必须配齐 imap / username / password", c.Label)
+		}
+		secret, err := secrets.Lend(c.Password, VaultUserMail)
+		if err != nil {
+			return nil, fmt.Errorf("config: 邮箱「%s」的 password: %w", c.Label, err)
+		}
+		out = append(out, NamedMailbox{Name: c.Label, Tags: c.Tags, Client: &mail.Client{
+			IMAPAddr: c.IMAP, IMAPSecurity: mail.Security(c.IMAPSecurity),
+			SMTPAddr: c.SMTP, SMTPSecurity: mail.Security(c.SMTPSecurity),
+			Username: c.Username, From: c.From, Name: c.Name, Secret: secret,
+		}})
+	}
+	return out, nil
+}
+
+// Mail 返回默认的那个邮箱。没有配置时返回 nil。
 func (f *File) Mail(secrets SecretLender) (*mail.Client, error) {
-	c := f.Connectors.Mail
-	if c == nil {
-		return nil, nil
+	all, err := f.MailAccounts(secrets)
+	if err != nil || len(all) == 0 {
+		return nil, err
 	}
-	if c.IMAP == "" || c.Username == "" {
-		return nil, fmt.Errorf("config: connectors.mail 必须配齐 imap / username / password")
+	return all[0].Client, nil
+}
+
+// HolidayFeeds 按配置构造全部节假日订阅。没有配置时返回空。
+func (f *File) HolidayFeeds() ([]*holiday.Feed, error) {
+	var out []*holiday.Feed
+	for _, c := range f.Connectors.HolidayList() {
+		feed := &holiday.Feed{URL: c.URL}
+		if err := feed.Check(); err != nil {
+			return nil, fmt.Errorf("config: 节假日订阅「%s」: %w", c.Name, err)
+		}
+		out = append(out, feed)
 	}
-	secret, err := secrets.Lend(c.Password, VaultUserMail)
-	if err != nil {
-		return nil, fmt.Errorf("config: connectors.mail.password: %w", err)
+	return out, nil
+}
+
+// Holidays 返回第一个节假日订阅。没有配置时返回 nil。
+func (f *File) Holidays() (*holiday.Feed, error) {
+	all, err := f.HolidayFeeds()
+	if err != nil || len(all) == 0 {
+		return nil, err
 	}
-	return &mail.Client{
-		IMAPAddr: c.IMAP, IMAPSecurity: mail.Security(c.IMAPSecurity),
-		SMTPAddr: c.SMTP, SMTPSecurity: mail.Security(c.SMTPSecurity),
-		Username: c.Username, From: c.From, Name: c.Name, Secret: secret,
-	}, nil
+	return all[0], nil
 }
 
 // ProviderConfig 是一家模型服务。

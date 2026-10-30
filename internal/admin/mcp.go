@@ -344,7 +344,7 @@ func (s *Server) saveMCP(ctx context.Context, m config.MCPConfig, key string) (s
 		if m.SecretName == "" {
 			return "", errors.New("填写了密钥，还需填写密钥参数名")
 		}
-		if m.Secret, err = s.sealConnectorPassword(ctx, m.Secret, m.VaultUser(), key, "MCP server "+m.Name+" 的密钥"); err != nil {
+		if m.Secret, err = s.sealConnectorPassword(ctx, m.Secret, m.VaultUser(), m.VaultUser(), key, "MCP server "+m.Name+" 的密钥"); err != nil {
 			return "", err
 		}
 	case m.SecretName == "":

@@ -547,7 +547,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	approval := file.BuildApprovalPolicy()
 	// 用户亲口交代的日程直接记，不再逐条确认；读过外部内容的任务不适用。
-	if file.Connectors.Calendar != nil {
+	if len(file.Connectors.CalendarList()) > 0 {
 		agent.CalendarDefaults(approval)
 	}
 	// 写进本机工作区的文件同理：覆盖时旧的会留底，不必逐个确认。
@@ -697,14 +697,19 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 
 	// 内建连接器：密码每次连接时从保险库现取，配置里只有句柄。
 	actuator = actuator.WithAudit(agent.NewStoreAudit(st))
-	cal, err := file.Calendar(safe)
+	// 日历和邮箱可以各接好几个账号，对助手仍是一套工具，账号的名字和用途写进工具说明。
+	cals, err := file.CalendarAccounts(safe)
 	if err != nil {
 		return nil, err
 	}
-	if cal != nil {
+	var calAccounts []agent.Account[agent.CalendarService]
+	for _, c := range cals {
+		calAccounts = append(calAccounts, agent.Account[agent.CalendarService]{Name: c.Name, Tags: c.Tags, Svc: c.Client})
+		log.Info("已接入日历", "名称", c.Name, "服务器", c.Client.Endpoint, "账号", c.Client.Username)
+	}
+	if len(calAccounts) > 0 {
 		planner = planner.WithCalendar(true)
-		actuator = actuator.WithCalendar(cal)
-		log.Info("已接入日历", "服务器", cal.Endpoint, "账号", cal.Username)
+		actuator = actuator.WithCalendar(agent.Calendars(calAccounts))
 	}
 	if workspace != nil {
 		planner = planner.WithFiles(true)
@@ -735,14 +740,18 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 			log.Info("已启用沙箱", "解释器", runner.Python, "时间上限", runner.Timeout.String(), "内存上限MB", runner.MemoryMB)
 		}
 	}
-	feed, err := file.Holidays()
+	feeds, err := file.HolidayFeeds()
 	if err != nil {
 		return nil, err
 	}
-	if feed != nil {
+	if len(feeds) > 0 {
+		var hs []agent.HolidayService
+		for _, f := range feeds {
+			hs = append(hs, f)
+			log.Info("已接入节假日数据", "订阅", f.URL)
+		}
 		planner = planner.WithHolidays(true)
-		actuator = actuator.WithHolidays(feed)
-		log.Info("已接入节假日数据", "订阅", feed.URL)
+		actuator = actuator.WithHolidays(agent.Holidays(hs))
 	}
 	qw, err := file.Weather(safe)
 	if err != nil {
@@ -753,15 +762,22 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		actuator = actuator.WithWeather(qw)
 		log.Info("已接入天气数据", "来源", "和风天气", "API Host", qw.Host)
 	}
-	box, err := file.Mail(safe)
+	boxes, err := file.MailAccounts(safe)
 	if err != nil {
 		return nil, err
 	}
-	if box != nil {
-		planner = planner.WithMail(true, box.SMTPAddr != "")
-		actuator = actuator.WithMail(box)
-		log.Info("已接入邮件", "收信", box.IMAPAddr, "发信", box.SMTPAddr, "账号", box.Username)
+	var mailAccounts []agent.Account[agent.MailService]
+	canSend := false
+	for _, b := range boxes {
+		mailAccounts = append(mailAccounts, agent.Account[agent.MailService]{Name: b.Name, Tags: b.Tags, Svc: b.Client})
+		canSend = canSend || b.Client.SMTPAddr != ""
+		log.Info("已接入邮件", "名称", b.Name, "收信", b.Client.IMAPAddr, "发信", b.Client.SMTPAddr, "账号", b.Client.Username)
 	}
+	if len(mailAccounts) > 0 {
+		planner = planner.WithMail(true, canSend)
+		actuator = actuator.WithMail(agent.Mailboxes(mailAccounts))
+	}
+	planner = planner.WithAccounts(agent.AccountsNote("日历", calAccounts), agent.AccountsNote("邮箱", mailAccounts))
 
 	channels, err := file.BuildChannels(safe, st, log.With(oplog.Key, oplog.Message))
 	if err != nil {

@@ -143,6 +143,7 @@ var mailSendTool = builtin(ToolMailSend,
 	`{"type":"object","properties":{"to":{"type":"array","items":{"type":"string"}},`+
 		`"cc":{"type":"array","items":{"type":"string"}},"subject":{"type":"string"},`+
 		`"body":{"type":"string","description":"正文，纯文本"},"reply_to":{"type":"string"},`+
+		`"account":{"type":"string","description":"从哪个邮箱发，接了多个邮箱时可选；回复时不用写，从收信的邮箱回"},`+
 		`"attachments":{"type":"array","items":{"type":"string"},"description":"工作区里的文件路径"}},"required":["body"]}`,
 	// 发出去的信收不回来。
 	core.SideEffectIrreversible)
@@ -202,15 +203,32 @@ func (a *Actuator) runHolidays(ctx context.Context, s *core.Step) (json.RawMessa
 }
 
 // connectorTools 返回已接入的连接器对应的内置工具。
-func connectorTools(hasCalendar, hasMail, canSend bool) []mcpgw.ToolInfo {
+// calNote、mailNote 说明接了哪几个账号、各自的用途（见 AccountsNote），接在列表和查询工具的说明后面。
+func connectorTools(hasCalendar, hasMail, canSend bool, calNote, mailNote string) []mcpgw.ToolInfo {
+	noted := func(t mcpgw.ToolInfo, note string) mcpgw.ToolInfo {
+		if note != "" {
+			t.Description += note
+		}
+		return t
+	}
 	var out []mcpgw.ToolInfo
 	if hasCalendar {
-		out = append(out, calendarToolset...)
+		for _, t := range calendarToolset {
+			if t.Name == ToolCalendarList || t.Name == ToolCalendarEvents || t.Name == ToolCalendarCreate {
+				t = noted(t, calNote)
+			}
+			out = append(out, t)
+		}
 	}
 	if hasMail {
-		out = append(out, mailReadToolset...)
+		for _, t := range mailReadToolset {
+			if t.Name == ToolMailFolders || t.Name == ToolMailSearch {
+				t = noted(t, mailNote)
+			}
+			out = append(out, t)
+		}
 		if canSend {
-			out = append(out, mailSendTool)
+			out = append(out, noted(mailSendTool, mailNote))
 		}
 	}
 	return out
@@ -443,6 +461,7 @@ type mailInput struct {
 	Cc         []string `json:"cc"`
 	Body       string   `json:"body"`
 	ReplyTo    string   `json:"reply_to"`
+		Account    string   `json:"account"`
 	// Attachments 是工作区里要作为附件发出的文件路径。
 	Attachments []string `json:"attachments"`
 }
@@ -526,7 +545,13 @@ func (a *Actuator) runMail(ctx context.Context, s *core.Step) (json.RawMessage, 
 			}
 			out.Attachments = append(out.Attachments, mail.Attachment{Name: attachmentName(p), Data: data})
 		}
-		sent, err := a.mail.Send(ctx, out)
+		var sent mail.Sent
+		var err error
+		if as, ok := a.mail.(AccountSender); ok {
+			sent, err = as.SendAs(ctx, in.Account, out)
+		} else {
+			sent, err = a.mail.Send(ctx, out)
+		}
 		if err != nil {
 			return nil, err
 		}
