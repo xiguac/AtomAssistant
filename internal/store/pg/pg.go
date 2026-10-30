@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -32,6 +33,17 @@ type Store struct {
 	pool *pgxpool.Pool
 	// z 负责内容列的加解密，见 sealed.go。
 	z sealer
+	// memHook 在一条记忆写入后被调用，见 OnMemoryChange。
+	memHook *atomic.Pointer[func(id string)]
+}
+
+// OnMemoryChange 登记一个回调：每写入一条记忆（新增、修改、归档）就以它的编号调用一次。
+// 回调在写库的那个调用里执行，不能阻塞，要做的事自己放到后台去做。
+// 同一时间只有一个回调；返回的函数取消登记，若已被后来者换掉则什么都不做。
+func (s *Store) OnMemoryChange(f func(id string)) (cancel func()) {
+	p := &f
+	s.memHook.Store(p)
+	return func() { s.memHook.CompareAndSwap(p, nil) }
 }
 
 var _ store.TaskStore = (*Store)(nil)
@@ -60,7 +72,7 @@ func Open(ctx context.Context, dsn string, box *seal.Box) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("pg: 数据库不可达: %w", err)
 	}
-	return &Store{pool: pool, z: sealer{box: box}}, nil
+	return &Store{pool: pool, z: sealer{box: box}, memHook: new(atomic.Pointer[func(string)])}, nil
 }
 
 // Close 关闭连接池。

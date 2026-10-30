@@ -2,6 +2,7 @@ package memory_test
 
 import (
 	"context"
+	"strconv"
 	"errors"
 	"fmt"
 	"strings"
@@ -616,5 +617,54 @@ func TestAssemble_已归档与已过期不进上下文(t *testing.T) {
 	}
 	if len(asm.High)+len(asm.Medium)+len(asm.Index)+len(asm.Critical) != 0 {
 		t.Fatal("已归档的记忆不应进入上下文")
+	}
+}
+
+// prepared 模拟向量检索：Prepare 时按场景文字算好，给指定的那条记忆满分。
+type prepared struct {
+	want     string
+	prepared []string
+}
+
+func (p *prepared) Score(string, *memory.Memory) float64 { return 0 }
+
+func (p *prepared) Prepare(_ context.Context, text string) memory.Similarity {
+	p.prepared = append(p.prepared, text)
+	return byID(p.want)
+}
+
+type byID string
+
+func (b byID) Score(_ string, m *memory.Memory) float64 {
+	if m.ID == string(b) {
+		return 1
+	}
+	return 0
+}
+
+func TestAssemble_相似度按场景准备一次(t *testing.T) {
+	st := memstore.New()
+	now := time.Now().UTC()
+	var target string
+	for i := 0; i < 5; i++ {
+		m := memory.New(memory.KindFact, "user", "杂项"+strconv.Itoa(i), "内容"+strconv.Itoa(i), taskSource(), now)
+		m.Temporality = memory.TemporalDurable
+		if err := st.Put(ctx(), m); err != nil {
+			t.Fatalf("写入失败: %v", err)
+		}
+		if i == 3 {
+			target = m.ID
+		}
+	}
+	p := &prepared{want: target}
+	asm, err := memory.NewRetriever(st, p).Assemble(ctx(), "user", memory.Scene{Text: "给我妈准备生日礼物"}, memory.Budget{Total: 2000})
+	if err != nil {
+		t.Fatalf("装配失败: %v", err)
+	}
+	if len(p.prepared) != 1 || p.prepared[0] != "给我妈准备生日礼物" {
+		t.Fatalf("场景文字应只准备一次: %v", p.prepared)
+	}
+	if len(asm.High) == 0 || asm.High[0].Memory.ID != target {
+		t.Fatal("准备好的相似度应决定排序")
 	}
 }

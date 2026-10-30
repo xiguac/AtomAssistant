@@ -64,6 +64,9 @@ type Config struct {
 	ShareTLSCert string
 	ShareTLSKey  string
 
+	// QdrantKey 是向量记忆用的 Qdrant 的 API key，由 deploy/vector.sh 生成并写进服务器的 env 文件。
+	QdrantKey string
+
 	// SkillScanner 是 Skill 安装前扫描器的可执行文件，空值按 skillspector。
 	// SkillScannerArgs 是追加给它的参数，按空白分隔。
 	// 这两项只能由用户在环境里配置：助手没有任何途径改它们，也就关不掉扫描。
@@ -96,6 +99,7 @@ func Load() (*Config, error) {
 		ShareTLSCert: os.Getenv("ATOM_SHARE_TLS_CERT"),
 		ShareTLSKey:  os.Getenv("ATOM_SHARE_TLS_KEY"),
 
+		QdrantKey:        os.Getenv("ATOM_QDRANT_KEY"),
 		SkillScanner:     os.Getenv("ATOM_SKILL_SCANNER"),
 		SkillScannerArgs: strings.Fields(os.Getenv("ATOM_SKILL_SCANNER_ARGS")),
 	}

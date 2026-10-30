@@ -41,8 +41,23 @@ func TestMemoryStore(t *testing.T) {
 	m.Condition = memory.Condition{"场景": "个人通勤"}
 	m.Tags = []string{"domain:出行"}
 
+	// 写入后通知登记的回调；取消登记只撤掉自己那一个，后来者换上的不受影响。
+	var notified []string
+	cancelFirst := s.OnMemoryChange(func(id string) { notified = append(notified, "first:"+id) })
 	if err := ms.Put(ctx, m); err != nil {
 		t.Fatalf("写入失败: %v", err)
+	}
+	cancelSecond := s.OnMemoryChange(func(id string) { notified = append(notified, "second:"+id) })
+	cancelFirst()
+	if err := s.Memories().Put(ctx, m); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	cancelSecond()
+	if err := ms.Put(ctx, m); err != nil {
+		t.Fatalf("写入失败: %v", err)
+	}
+	if len(notified) != 2 || notified[0] != "first:"+m.ID || notified[1] != "second:"+m.ID {
+		t.Fatalf("写入记忆后的通知不对: %v", notified)
 	}
 
 	got, err := ms.Get(ctx, m.ID)

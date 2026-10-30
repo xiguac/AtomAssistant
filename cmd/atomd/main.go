@@ -33,6 +33,7 @@ import (
 	"github.com/xiguac/atomassistant/internal/mcpgw"
 	"github.com/xiguac/atomassistant/internal/media"
 	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/memvec"
 	"github.com/xiguac/atomassistant/internal/oplog"
 	"github.com/xiguac/atomassistant/internal/policy"
 	"github.com/xiguac/atomassistant/internal/schedule"
@@ -655,7 +656,20 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	} else if n > 0 {
 		log.Info("记忆里的流程已挪成 Skill，原记忆已归档", "条数", n)
 	}
-	mem := memory.NewRetriever(memStore, nil)
+	// 向量记忆：记忆的增删改实时同步进本机的向量库，检索时按意思召回。不可用时退回文字重合。
+	var similarity memory.Similarity
+	stopVectors := func() {}
+	if c := file.MemoryVector; c != nil {
+		idx := memvec.New(&memvec.Embedder{URL: c.EmbedURL}, &memvec.Qdrant{URL: c.QdrantURL, APIKey: cfg.QdrantKey},
+			memStore, key.VectorKey(), log.With(oplog.Key, oplog.System))
+		vecCtx, cancelVec := context.WithCancel(context.Background())
+		unhook := st.OnMemoryChange(idx.Notify)
+		go idx.Run(vecCtx)
+		stopVectors = func() { unhook(); cancelVec() }
+		similarity = idx
+		log.Info("已启用向量记忆", "向量服务", c.EmbedURL, "向量库", c.QdrantURL)
+	}
+	mem := memory.NewRetriever(memStore, similarity)
 	log.Info("记忆系统就绪")
 
 	planner := agent.NewPlanner(router, gw, agent.PlannerOptions{
@@ -862,7 +876,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		approver:  approver,
 		// 任务完成后提炼记忆与流程，经写入管线落库。
 		epilogue: epilogue,
-		close:    func() { _ = gw.Close() },
+		close:    func() { stopVectors(); _ = gw.Close() },
 	}, nil
 }
 

@@ -56,6 +56,12 @@ type Similarity interface {
 	Score(text string, m *Memory) float64
 }
 
+// ScenePreparer 由要先就整段场景文字做一次准备的相似度实现提供，如向量检索：
+// 场景文字只编码、只检索一次，再给每条记忆打分。Prepare 自己处理不可用的情况（如退回词元重合）。
+type ScenePreparer interface {
+	Prepare(ctx context.Context, text string) Similarity
+}
+
 // TokenOverlap 是基于词元重合的默认相似度实现。
 type TokenOverlap struct{}
 
@@ -183,6 +189,10 @@ func (r *Retriever) Assemble(ctx context.Context, subject string, scene Scene, b
 
 	var asm Assembly
 	scored := make([]Item, 0, len(all))
+	sim := r.sim
+	if p, ok := sim.(ScenePreparer); ok {
+		sim = p.Prepare(ctx, scene.Text)
+	}
 
 	for _, m := range all {
 		if !m.Retrievable(now) {
@@ -198,7 +208,7 @@ func (r *Retriever) Assemble(ctx context.Context, subject string, scene Scene, b
 			})
 			continue
 		}
-		score, reasons := r.score(m, scene, now)
+		score, reasons := r.score(sim, m, scene, now)
 		scored = append(scored, Item{Memory: m, Score: score, Reasons: reasons})
 	}
 
@@ -246,12 +256,12 @@ func (r *Retriever) Assemble(ctx context.Context, subject string, scene Scene, b
 }
 
 // score 计算一条记忆与场景的关联度。
-func (r *Retriever) score(m *Memory, scene Scene, now time.Time) (float64, []string) {
+func (r *Retriever) score(sim Similarity, m *Memory, scene Scene, now time.Time) (float64, []string) {
 	w := r.weights
 	var total float64
 	var reasons []string
 
-	if s := r.sim.Score(scene.Text, m); s > 0 {
+	if s := sim.Score(scene.Text, m); s > 0 {
 		total += w.Similarity * s
 		reasons = append(reasons, fmt.Sprintf("文本相关度 %.2f", s))
 	}

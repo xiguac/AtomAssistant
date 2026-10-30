@@ -48,6 +48,7 @@ type Box struct {
 	enc cipher.AEAD
 	det cipher.AEAD
 	mac []byte
+	vec []byte
 	id  string
 }
 
@@ -88,6 +89,9 @@ func newBox(key []byte, label string) (*Box, error) {
 	if b.mac, err = derive("mac"); err != nil {
 		return nil, fmt.Errorf("seal: 初始化加密失败: %w", err)
 	}
+	if b.vec, err = derive("vector"); err != nil {
+		return nil, fmt.Errorf("seal: 初始化加密失败: %w", err)
+	}
 	idKey, err := derive("id")
 	if err != nil {
 		return nil, fmt.Errorf("seal: 初始化加密失败: %w", err)
@@ -95,6 +99,9 @@ func newBox(key []byte, label string) (*Box, error) {
 	b.id = hex.EncodeToString(idKey[:8])
 	return b, nil
 }
+
+// VectorKey 是给记忆向量做旋转用的子密钥，见 internal/memvec。它是秘密，不要写进日志或存起来。
+func (b *Box) VectorKey() []byte { return append([]byte(nil), b.vec...) }
 
 // KeyID 是这把密钥的指纹，不是秘密。数据库里记着它，换了密钥启动时能立刻发现，
 // 而不是等读到第一条解不开的数据才报错。

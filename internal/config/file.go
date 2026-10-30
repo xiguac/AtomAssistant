@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strings"
-	"unicode/utf8"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -63,6 +64,17 @@ type File struct {
 	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
 	// ASR 是语音识别的配置。不写这一节，聊天里发来的语音消息收不了。
 	ASR *ASRConfig `yaml:"asr,omitempty"`
+	// MemoryVector 是向量记忆的配置。不写这一节，记忆检索只按文字重合。
+	MemoryVector *MemoryVectorConfig `yaml:"memory_vector,omitempty"`
+}
+
+// MemoryVectorConfig 是向量记忆用的两个本机服务。由 deploy/deploy.sh vector 安装并写入。
+// Qdrant 的 API key 由安装脚本写进服务器的 env 文件（ATOM_QDRANT_KEY），不经用户之手。
+type MemoryVectorConfig struct {
+	// EmbedURL 是向量服务的地址，如 http://127.0.0.1:8766。
+	EmbedURL string `yaml:"embed_url"`
+	// QdrantURL 是 Qdrant 的地址，如 http://127.0.0.1:6333。
+	QdrantURL string `yaml:"qdrant_url"`
 }
 
 // ASRConfig 是语音识别服务的配置。服务由 deploy/deploy.sh asr 装在本机。
@@ -426,7 +438,6 @@ type HolidaysConfig struct {
 	URL string `yaml:"url"`
 }
 
-
 // validateConnectors 校验连接器一节。在加载时就查，理由同 validateChannels。
 func (f *File) validateConnectors() error {
 	seen := map[string]bool{}
@@ -531,8 +542,6 @@ type MailConfig struct {
 type SecretLender interface {
 	Lend(handle, user string) (func(ctx context.Context) (string, error), error)
 }
-
-
 
 // NamedCalendar 是按配置装好的一个日历账号。
 type NamedCalendar struct {
@@ -871,6 +880,14 @@ func (f *File) validate() error {
 			return fmt.Errorf("config: asr 的 url 要写成 http://主机:端口，实际 %q", c.URL)
 		}
 	}
+	if c := f.MemoryVector; c != nil {
+		for name, raw := range map[string]string{"embed_url": c.EmbedURL, "qdrant_url": c.QdrantURL} {
+			u, err := url.Parse(raw)
+			if err != nil || u.Scheme != "http" || u.Host == "" || !isLoopback(u.Hostname()) {
+				return fmt.Errorf("config: memory_vector 的 %s 要写成 http://127.0.0.1:端口（只用本机的服务），实际 %q", name, raw)
+			}
+		}
+	}
 	if c := f.Sandbox; c != nil {
 		if c.TimeoutSeconds < 0 || c.TimeoutSeconds > 3600 || c.MemoryMB < 0 || c.MemoryMB > 16384 {
 			return fmt.Errorf("config: sandbox 的时间上限须在 0～3600 秒，内存上限须在 0～16384 MB")
@@ -1149,4 +1166,13 @@ func yuanToCents(y float64) int64 {
 		return 0
 	}
 	return int64(y*100 + 0.5)
+}
+
+// isLoopback 判断主机名是不是本机。
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

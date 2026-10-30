@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,10 +22,11 @@ import (
 type MemoryStore struct {
 	pool *pgxpool.Pool
 	z    sealer
+	hook *atomic.Pointer[func(id string)]
 }
 
 // Memories 返回基于同一连接池的记忆存储。
-func (s *Store) Memories() *MemoryStore { return &MemoryStore{pool: s.pool, z: s.z} }
+func (s *Store) Memories() *MemoryStore { return &MemoryStore{pool: s.pool, z: s.z, hook: s.memHook} }
 
 var _ memory.Store = (*MemoryStore)(nil)
 
@@ -117,6 +119,11 @@ func (s *MemoryStore) Put(ctx context.Context, m *memory.Memory) error {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pg: 提交记忆写入失败: %w", err)
+	}
+	if s.hook != nil {
+		if f := s.hook.Load(); f != nil {
+			(*f)(m.ID)
+		}
 	}
 	return nil
 }
