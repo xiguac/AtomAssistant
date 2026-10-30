@@ -2,9 +2,9 @@ package memory_test
 
 import (
 	"context"
-	"strconv"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
