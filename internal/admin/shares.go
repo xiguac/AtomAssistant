@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"html/template"
 	"net/http"
 	"strings"
@@ -14,8 +15,9 @@ import (
 
 // sharesData 是「下载链接」一节要显示的东西。
 type sharesData struct {
-	// On 为真表示开了下载入口（ATOM_SHARE_ADDR）。
-	On bool
+	// On 为真表示开了下载入口；Env 为真表示它由服务器上的 ATOM_SHARE_ADDR 开的，后台关不掉。
+	On  bool
+	Env bool
 	// Base 是已保存的外部访问地址；Suggest 是还没保存时按当前访问的域名给出的建议值。
 	Base    string
 	Suggest string
@@ -24,7 +26,14 @@ type sharesData struct {
 
 // loadShares 读出「下载链接」一节的数据。读失败时返回错误，页面其余部分照常显示。
 func (s *Server) loadShares(r *http.Request) (sharesData, error) {
-	d := sharesData{On: s.opts.ShareOn}
+	d := sharesData{On: s.opts.ShareEnv != "", Env: s.opts.ShareEnv != ""}
+	if !d.On {
+		listen, err := s.opts.Store.Setting(r.Context(), share.ListenSetting)
+		if err != nil {
+			return d, err
+		}
+		d.On = listen != ""
+	}
 	base, err := s.opts.Store.Setting(r.Context(), share.BaseURLSetting)
 	if err != nil {
 		return d, err
@@ -60,6 +69,21 @@ func (s *Server) shareBaseSave(w http.ResponseWriter, r *http.Request, _ *view) 
 	}
 	s.opts.Log.Info("下载链接的外部访问地址已在后台修改", "地址", base, "来自", r.RemoteAddr)
 	http.Redirect(w, r, "/files?ok="+template.URLQueryEscaper("已保存外部访问地址"), http.StatusSeeOther)
+}
+
+// shareListenSave 开关下载入口，保存后在进程内重新载入助手，立即生效。
+func (s *Server) shareListenSave(w http.ResponseWriter, r *http.Request, _ *view) {
+	if s.opts.ShareEnv != "" {
+		back(w, r, "/files", "", errors.New("下载入口由服务器上的 ATOM_SHARE_ADDR 开启，无法在后台关闭"))
+		return
+	}
+	on := r.PostFormValue("on") == "1"
+	listen, notice := "", "已关闭下载入口，已有的下载链接随之失效。"
+	if on {
+		listen, notice = share.DefaultListen, "已开启下载入口。"
+	}
+	err := s.opts.Store.PutSetting(r.Context(), share.ListenSetting, listen)
+	s.backApplied(w, r, "/files", notice, err)
 }
 
 // shareRevoke 提前撤销一个下载链接。

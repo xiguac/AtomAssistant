@@ -32,6 +32,10 @@
     <button class="btn">保存</button>
   </div>
 </form>
+{{if not .Shares.Env}}<form method="post" action="/files/share/listen" class="card" style="margin-top:12px">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="on" value="0">
+  <div class="band foot"><span class="note muted">关闭后助手不能再创建下载链接，已有的链接立即失效。</span><button class="btn danger sm">关闭下载入口</button></div>
+</form>{{end}}
 <div class="card" style="margin-top:12px">
   {{if .Shares.Links}}<table>
     <thead><tr><th>分享内容</th><th class="r" style="width:130px">创建时间</th><th class="r" style="width:130px">过期时间</th><th class="r" style="width:90px">操作</th></tr></thead>
@@ -47,7 +51,10 @@
   <div class="band foot"><span class="note muted">仅可分享助手生成的文件，有效期最长 24 小时。撤销后立即失效。链接地址只在创建时提供，此处不显示。</span></div>
 </div>
 {{else}}
-<div class="card pad"><div class="note">下载入口尚未开启。在服务器的环境变量中设置 <span class="mono">ATOM_SHARE_ADDR=127.0.0.1:8790</span> 并重启服务后，可在此设置外部访问地址、管理下载链接。</div></div>
+<form method="post" action="/files/share/listen" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="on" value="1">
+  <div class="band foot"><span class="note">下载入口尚未开启。开启后助手可为生成的文件创建临时下载链接，可在此设置外部访问地址、管理下载链接。保存后自动生效。</span><button class="btn">开启下载入口</button></div>
+</form>
 {{end}}
 
 <dialog class="modal" id="dlg-upload">

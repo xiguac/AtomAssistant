@@ -21,7 +21,13 @@ func TestAdmin_下载链接(t *testing.T) {
 	if _, body := e.get("/files"); !strings.Contains(body, "下载入口尚未开启") || strings.Contains(body, `action="/files/share/base"`) {
 		t.Fatal("没开下载入口时应只给提示")
 	}
-	e.server.opts.ShareOn = true
+	// 在后台开启：写进设置，下载入口随重新载入生效。
+	if _, loc := e.post("/files/share/listen", url.Values{"csrf": {e.csrf}, "on": {"1"}}); !strings.Contains(loc, "已开启") {
+		t.Fatalf("开启下载入口失败: %s", loc)
+	}
+	if got, _ := e.store.Setting(ctx, share.ListenSetting); got != share.DefaultListen {
+		t.Fatalf("应保存默认的监听地址: %q", got)
+	}
 
 	// 还没保存地址：按当前访问的域名给出建议值。
 	_, body := e.get("/files")

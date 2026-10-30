@@ -81,6 +81,12 @@ type Workspace interface {
 // BaseURLSetting 是外部访问地址在后台设置里的名字。地址由用户在管理后台「文件」页填写。
 const BaseURLSetting = "share.base_url"
 
+// ListenSetting 存下载入口的监听地址，在后台开关；为空表示没开。服务器上设了 ATOM_SHARE_ADDR 时以它为准。
+const ListenSetting = "share.listen"
+
+// DefaultListen 是在后台开启下载入口时默认的监听地址：只听本机，由前面的反向代理提供 HTTPS。
+const DefaultListen = "127.0.0.1:8790"
+
 // Settings 读后台设置，由 *pg.Store 提供。
 type Settings interface {
 	Setting(ctx context.Context, key string) (string, error)
@@ -244,7 +250,7 @@ func CheckAddr(addr string, tls bool) error {
 	local := host == "localhost" || (ip != nil && ip.IsLoopback())
 	if !local && !tls {
 		return fmt.Errorf("share: 下载入口监听在 %q 上却没有配置 TLS 证书——分享的文件会在网络上明文传输。"+
-			"要么监听 127.0.0.1 并由前面的反向代理提供 HTTPS，要么设置 ATOM_SHARE_TLS_CERT 与 ATOM_SHARE_TLS_KEY", addr)
+			"请监听 127.0.0.1，由前面的反向代理提供 HTTPS", addr)
 	}
 	return nil
 }

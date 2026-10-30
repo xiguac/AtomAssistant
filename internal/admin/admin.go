@@ -108,8 +108,8 @@ type Options struct {
 	Reload func(context.Context) error
 	// Status 返回当前的运行状况；非空表示助手本身没能启动（比如配置还没填完），只有后台在运行。
 	Status func() string
-	// ShareOn 为真表示开了文件下载入口（ATOM_SHARE_ADDR），「文件」页显示下载链接的设置和列表。
-	ShareOn bool
+	// ShareEnv 是服务器上 ATOM_SHARE_ADDR 设的下载入口地址。为空时下载入口在「文件」页里开关。
+	ShareEnv string
 	Log    *slog.Logger
 }
 
@@ -506,6 +506,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
 	mux.HandleFunc("POST /files/delete", auth(s.filesDelete))
 	mux.HandleFunc("POST /files/share/base", auth(s.shareBaseSave))
+	mux.HandleFunc("POST /files/share/listen", auth(s.shareListenSave))
 	mux.HandleFunc("POST /files/share/revoke", auth(s.shareRevoke))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -695,7 +696,7 @@ var opNames = []struct{ prefix, name string }{
 	{"/models/budget", "保存任务预算"},
 	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
 	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
-	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/logs/delete", "删除日志"},
+	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/logs/delete", "删除日志"}, {"/files/share/listen", "开关下载入口"},
 	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
 	{"/connectors/disable", "停用数据源"}, {"/connectors/test", "测试数据源"}, {"/connectors/", "保存数据源"},
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},

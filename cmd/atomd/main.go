@@ -37,8 +37,8 @@ import (
 	"github.com/xiguac/atomassistant/internal/policy"
 	"github.com/xiguac/atomassistant/internal/schedule"
 	"github.com/xiguac/atomassistant/internal/seal"
-	"github.com/xiguac/atomassistant/internal/skill"
 	"github.com/xiguac/atomassistant/internal/share"
+	"github.com/xiguac/atomassistant/internal/skill"
 	"github.com/xiguac/atomassistant/internal/skillscan"
 	"github.com/xiguac/atomassistant/internal/store/pg"
 	"github.com/xiguac/atomassistant/internal/style"
@@ -333,7 +333,7 @@ func startGeneration(parent context.Context, cfg *config.Config, st *pg.Store, b
 	}
 
 	if parts.shares != nil {
-		stopShare, err := serveShare(ctx, cfg, parts.shares, log.With(oplog.Key, oplog.Tool))
+		stopShare, err := serveShare(ctx, cfg, parts.shareAddr, parts.shares, log.With(oplog.Key, oplog.Tool))
 		if err != nil {
 			cancel()
 			wg.Wait()
@@ -380,10 +380,10 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 		PasswordHash: cfg.AdminPasswordHash,
 		TLS:          tls,
 		// 保存配置后在进程内按新配置重新装一遍助手，不重启服务。
-		Reload: reload,
-		Status:  status,
-		ShareOn: cfg.ShareAddr != "",
-		Log:     log,
+		Reload:   reload,
+		Status:   status,
+		ShareEnv: cfg.ShareAddr,
+		Log:      log,
 	})
 	if err != nil {
 		return err
@@ -437,10 +437,10 @@ func serveWebhook(ctx context.Context, cfg *config.Config, bus *event.Bus, log *
 }
 
 // serveShare 开文件下载入口，返回一个用于关停它的函数。和 Webhook 一样先同步监听再异步服务。
-func serveShare(ctx context.Context, cfg *config.Config, svc *share.Service, log *slog.Logger) (func(), error) {
-	ln, err := net.Listen("tcp", cfg.ShareAddr)
+func serveShare(ctx context.Context, cfg *config.Config, addr string, svc *share.Service, log *slog.Logger) (func(), error) {
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("下载入口监听 %s 失败: %w", cfg.ShareAddr, err)
+		return nil, fmt.Errorf("下载入口监听 %s 失败: %w", addr, err)
 	}
 	srv := &http.Server{
 		Handler:           svc.Handler(log),
@@ -487,8 +487,9 @@ type parts struct {
 	triage channel.Triager
 	// workspace 非空表示启用了文件处理。
 	workspace *files.Workspace
-	// shares 非空表示开启了对外分享，要开下载入口。
-	shares *share.Service
+	// shares 非空表示开启了对外分享，要在 shareAddr 上开下载入口。
+	shares    *share.Service
+	shareAddr string
 	// inputs 是各个模型支持的输入，demo 模式下为空。
 	inputs *config.ModelInputs
 	// asr 非空时聊天里发来的语音消息转成文字交给助手。
@@ -509,6 +510,18 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	safe, err := vault.Open(st.Vault(), cfg.VaultKey)
 	if err != nil {
 		return nil, err
+	}
+	// 下载入口：服务器上设了 ATOM_SHARE_ADDR 就用它，否则看后台「文件」页里开没开。
+	shareAddr := cfg.ShareAddr
+	if shareAddr == "" {
+		if shareAddr, err = st.Setting(ctx, share.ListenSetting); err != nil {
+			return nil, err
+		}
+		if shareAddr != "" {
+			if err := share.CheckAddr(shareAddr, cfg.ShareTLSCert != "" && cfg.ShareTLSKey != ""); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if cfg.VaultKey == "" {
 		log.Warn("未设置 ATOM_VAULT_KEY，保险库处于锁定状态，引用保险库条目的工具调用会被拒绝")
@@ -590,7 +603,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	if workspace != nil {
 		agent.FileDefaults(approval)
 		// 建、撤销下载链接直接做：地址要出去，得经过发信、HTTP 请求这些由用户确认的动作。
-		if cfg.ShareAddr != "" {
+		if shareAddr != "" {
 			agent.ShareDefaults(approval)
 		}
 	}
@@ -750,14 +763,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	}
 	// 对外分享：给助手生成的文件建临时下载链接。下载入口由 run 在助手装好之后开。
 	var shares *share.Service
-	if cfg.ShareAddr != "" {
+	if shareAddr != "" {
 		if workspace == nil {
-			log.Warn("设置了 ATOM_SHARE_ADDR，但没有启用文件处理（files 一节），对外分享不可用")
+			log.Warn("开启了下载入口，但没有启用文件处理（files 一节），对外分享不可用")
 		} else {
 			shares = &share.Service{Store: st, Workspace: workspace, Settings: st}
 			planner = planner.WithShares(true)
 			actuator = actuator.WithShares(shares)
-			log.Info("已启用对外分享", "下载入口", cfg.ShareAddr)
+			log.Info("已启用对外分享", "下载入口", shareAddr)
 		}
 	}
 	// 代码沙箱：断网、只读工作区，跑出来的文件收进工作区。机器上跑不了时只记下原因，不影响别的能力。
@@ -841,6 +854,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		digest:    agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)).WithMemory(epilogue),
 		workspace: workspace,
 		shares:    shares,
+		shareAddr: shareAddr,
 		channels:  channels,
 		outbox:    outbox,
 		planner:   planner,
