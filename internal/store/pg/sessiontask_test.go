@@ -97,6 +97,21 @@ func TestSessionTasks(t *testing.T) {
 	if day, _ := channel.SessionDay(next.Tags); day != session.Day(time.Now().Add(24*time.Hour)) {
 		t.Fatalf("应移到新一天的会话: %v", next.Tags)
 	}
+	// 以前建的、没挂到会话下的聊天任务：按创建的日子挂进那天的会话，过去的那天随后收尾。
+	legacy := core.NewTask("以前的事", "x", core.TrustUser)
+	legacy.CreatedAt = time.Now().AddDate(0, 0, -3)
+	legacy.Tags = chat
+	if err := s.CreateTask(ctx, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := k.AdoptChatTasks(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lt, _ := s.GetTask(ctx, legacy.ID)
+	lp, _ := s.GetTask(ctx, lt.ParentID)
+	if day, _ := channel.SessionDay(lp.Tags); day != session.Day(legacy.CreatedAt) {
+		t.Fatalf("以前的聊天任务应挂进它那天的会话: %v", lp.Tags)
+	}
 	// 重跑不会再动已经结束的会话。
 	if err := k.RollSessions(ctx, time.Now().Add(24*time.Hour)); err != nil {
 		t.Fatal(err)

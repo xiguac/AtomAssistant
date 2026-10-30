@@ -223,6 +223,10 @@ const rollSessionsEvery = 5 * time.Minute
 
 // rollSessions 每隔一段时间收尾过去的日子的会话，直到 ctx 结束。
 func rollSessions(ctx context.Context, tasks *channel.Kernel, log *slog.Logger) {
+	// 有每天的会话之前建的聊天任务，先挂进各自那天的会话。
+	if err := tasks.AdoptChatTasks(ctx); err != nil && ctx.Err() == nil {
+		log.Error("把以前的聊天任务归进会话失败", "err", err)
+	}
 	ticker := time.NewTicker(rollSessionsEvery)
 	defer ticker.Stop()
 	for {

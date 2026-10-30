@@ -84,3 +84,29 @@ func (k *Kernel) RollSessions(ctx context.Context, now time.Time) error {
 	}
 	return nil
 }
+
+// AdoptChatTasks 把还没挂到会话下面的聊天任务按创建的日子挂进那天的会话。
+// 有每天的会话之前建的聊天任务就是这样的；挂好之后，过去那些天的会话由 RollSessions 收尾。
+func (k *Kernel) AdoptChatTasks(ctx context.Context) error {
+	tasks, err := k.Store.TasksByTag(ctx, ConversationTag, false, 5000)
+	if err != nil {
+		return err
+	}
+	byDay := map[string][]string{}
+	for _, t := range tasks {
+		if t.ParentID == "" {
+			day := session.Day(t.CreatedAt)
+			byDay[day] = append(byDay[day], t.ID)
+		}
+	}
+	for day, ids := range byDay {
+		parent, err := k.openSession(ctx, day)
+		if err != nil {
+			return err
+		}
+		if err := k.Store.SetParent(ctx, ids, parent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
