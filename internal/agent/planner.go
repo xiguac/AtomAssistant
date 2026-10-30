@@ -57,7 +57,9 @@ func (o PlannerOptions) styleRule() string {
 	default:
 		rule = "Reply style: concise. Give the conclusion and the necessary evidence directly; one sentence where one will do. " +
 			"No pleasantries, no restating the question, nothing the user did not ask about. " +
-			"Length: ordinary matters in at most three sentences; matters that need a full plan (such as an itinerary) in at most 300 Chinese characters, " +
+			"But do not cut it so short that the user has to ask again: keep the times, places, prices, the differences between options " +
+			"and the risks they need in order to decide. " +
+			"Length: ordinary matters in a few sentences; matters that need a full plan (such as an itinerary) in at most 300 Chinese characters, " +
 			"containing only the conclusion, the key evidence and what could not be found. No item-by-item account of the lookups, no itinerary details the user did not ask for."
 	}
 	if c := strings.TrimSpace(o.ReplyCustom); c != "" {

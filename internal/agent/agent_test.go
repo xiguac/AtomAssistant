@@ -614,20 +614,20 @@ func TestPlanner_系统提示可以逐段改写与停用(t *testing.T) {
 
 	// 没有改动过：用内置的，各段按顺序拼起来。提示用英文写，只要求给用户看的内容用中文。
 	got := system(planner(nil))
-	if !strings.HasPrefix(got, baseRules+"\n\n"+plannerSystemPrompt+"\n\n"+webRule) {
-		t.Fatal("默认应使用内置的基础约束、规划说明与联网搜索")
+	if !strings.HasPrefix(got, baseRules+"\n\n"+personaRule+"\n\n"+plannerSystemPrompt+"\n\n"+webRule) {
+		t.Fatal("默认应使用内置的基础约束、人设、规划说明与联网搜索")
 	}
 	if !strings.Contains(got, "Think and reason in English") || !strings.Contains(got, "Simplified Chinese") {
 		t.Fatal("基础约束应要求用英文思考、用简体中文回复用户")
 	}
 	// 只改了基础约束：其余各段仍是内置的，工具目录照常附在后面。
 	got = system(planner(fakePrompts{PromptSettingKey(PromptBase): "# My rules"}))
-	if !strings.HasPrefix(got, "# My rules\n\n"+plannerSystemPrompt) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
+	if !strings.HasPrefix(got, "# My rules\n\n"+personaRule+"\n\n"+plannerSystemPrompt) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
 		t.Fatalf("应以改写的基础约束开头: %s", truncate(got, 200))
 	}
 	// 停用的段落不加载；别的段落不受影响。
-	got = system(planner(fakePrompts{PromptOffKey(PromptWeb): "1", PromptOffKey(PromptBase): "1"}))
-	if strings.Contains(got, webRule) || strings.Contains(got, baseRules) || !strings.HasPrefix(got, plannerSystemPrompt) {
+	got = system(planner(fakePrompts{PromptOffKey(PromptWeb): "1", PromptOffKey(PromptBase): "1", PromptOffKey(PromptPersona): "1"}))
+	if strings.Contains(got, webRule) || strings.Contains(got, baseRules) || strings.Contains(got, personaRule) || !strings.HasPrefix(got, plannerSystemPrompt) {
 		t.Fatalf("停用的段落不应出现在系统提示里: %s", truncate(got, 200))
 	}
 	// 规定了输出格式的段落停不掉：没有它程序解析不了模型的回答。
@@ -638,7 +638,7 @@ func TestPlanner_系统提示可以逐段改写与停用(t *testing.T) {
 	// 用户自己添加的段落接在基础约束后面；停用的不加载。
 	extra := `[{"id":"1","title":"Calendar","text":"Courses go in the 个人 calendar."},{"id":"2","title":"Old","text":"Never load me.","off":true}]`
 	got = system(planner(fakePrompts{PromptExtraKey: extra}))
-	if !strings.HasPrefix(got, baseRules+"\n\n# Calendar\nCourses go in the 个人 calendar.\n\n"+plannerSystemPrompt) || strings.Contains(got, "Never load me") {
+	if !strings.HasPrefix(got, baseRules+"\n\n"+personaRule+"\n\n# Calendar\nCourses go in the 个人 calendar.\n\n"+plannerSystemPrompt) || strings.Contains(got, "Never load me") {
 		t.Fatalf("自定义段落应紧跟基础约束，停用的不加载: %s", truncate(got, 300))
 	}
 	// 存坏了的设置要报出来，不能悄悄当作没有。

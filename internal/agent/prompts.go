@@ -41,6 +41,7 @@ type PromptSpec struct {
 func PromptSpecs() []PromptSpec {
 	return []PromptSpec{
 		{PromptBase, "基础约束", "每一次模型调用都加载，位于系统提示最前面，优先级高于其余各段。含语言要求。", baseRules, false},
+		{PromptPersona, "人设", "每一次模型调用都加载，紧跟在基础约束后面。规定助手是谁、怎么说话，只影响语气与表达，不影响办事。", personaRule, false},
 		{PromptPlanner, "规划说明", "模型决定任务的下一步时加载。规定输出的 JSON 格式与决策方法，含主模型接手任务后的要求。", plannerSystemPrompt, true},
 		{PromptWeb, "联网搜索", "已接入联网搜索时加载。规定何时搜索、如何节省搜索次数。", webRule, false},
 		{PromptFetch, "读网页", "已接入读网页时加载。规定读哪些网页、怎么用读到的内容。", fetchRule, false},
@@ -123,7 +124,7 @@ type promptSet struct {
 
 // base 返回基础约束，后面接上用户自己添加的段落。每一次决策都从它开头。
 func (s promptSet) base() string {
-	return sections(append([]string{s.get(PromptBase)}, s.extras...)...)
+	return sections(append([]string{s.get(PromptBase), s.get(PromptPersona)}, s.extras...)...)
 }
 
 // loadPrompts 读出各段当前生效的内容。

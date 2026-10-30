@@ -44,6 +44,9 @@ What to record:
 - preference: the user's habits and preferences, always with the scene in which they apply. "Prefers high-speed rail for travel" is not enough;
   write it as condition {场景: 800公里以内} → 高铁. One area may have several entries for different scenes.
 - entity: attributes of related people or places, such as a client's dietary restrictions or a family member's birthday. Mark allergies, illnesses and taboos as safety_critical.
+- How the user wants the assistant to reply: when the user comments on the assistant's replies ("说简单点", "这个可以展开讲", "别用列表", "太啰嗦了"),
+  record it as a preference with subject user and domain 回复方式, and the scene in which it applies (an empty condition when it applies to everything).
+  It is long-lived: the assistant follows it in later replies.
 - How to do a kind of task (steps, order of checks, pitfalls) is not a memory. Never write methods into memories.
 
 Existing memories (the 「已有记忆」 section, when present):
