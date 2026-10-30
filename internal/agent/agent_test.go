@@ -503,6 +503,17 @@ func TestApprover_绝密参数请用户确认并说明是哪几项(t *testing.T)
 	}
 }
 
+func TestApprover_取来工具说明不因工具名太长当成密钥(t *testing.T) {
+	a := newApprover()
+	out, reason, err := a.CheckAction(context.Background(), core.NewTask("t", "g", core.TrustUser), kernel.Decision{
+		ToolName: ToolLoad, SideEffect: core.SideEffectNone,
+		Input: json.RawMessage(`{"tools":["amap.maps_direction_transit_integrated","amap.maps_weather"]}`),
+	})
+	if err != nil || out != kernel.ApprovalAuto {
+		t.Fatalf("取来工具说明应直接放行: %s %s %v", out, reason, err)
+	}
+}
+
 func TestApprover_untrusted来源强制手动(t *testing.T) {
 	a := newApprover()
 	// 截图创建的任务。

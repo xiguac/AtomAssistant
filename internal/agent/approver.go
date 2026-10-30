@@ -290,6 +290,13 @@ func (a *Approver) CheckAction(ctx context.Context, t *core.Task, d kernel.Decis
 		return kernel.ApprovalManual, reason, nil
 	}
 
+	// 取来工具说明不做隐私分级：参数在规划时已换成本机工具目录里的工具全名（见 resolveLoad），
+	// 也没有任何东西离开这台机器。不跳过的话，maps_direction_transit_integrated 这种长工具名会被当成密钥，
+	// 每次用这个服务都要用户确认一次。
+	if d.ToolName == ToolLoad {
+		return kernel.ApprovalAuto, "只取来工具说明", nil
+	}
+
 	// 参数分级失败时按最保守处理：分不清就不能放行。
 	fields, maxPrivacy, err := a.classifier.ClassifyJSON(classifiable(d))
 	if err != nil {
