@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xiguac/atomassistant/internal/core"
 	"github.com/xiguac/atomassistant/internal/llm"
@@ -99,10 +101,17 @@ func (p *Planner) background(ctx context.Context, t *core.Task) ([]llm.Segment, 
 		// 记忆放在任务定义之后：先知道"用户是谁、在乎什么"，再看"这个任务做到哪一步了"。
 		segs = append(segs, memorySegments(asm)...)
 	}
+	// 这件事此前的进展排在记忆之后、对话之前：它比一天的聊天记录更直接地说明这次的话指什么。
+	if segs2, err := p.matterSegments(ctx, t); err != nil {
+		return nil, err
+	} else {
+		segs = append(segs, segs2...)
+	}
 	if seg, ok, err := p.conversationSegment(ctx, t); err != nil {
 		return nil, err
 	} else if ok {
-		segs = append(segs, seg)
+		// 用法说明在前、不进围栏，对话原文在后、在围栏里，见 conversationNote。
+		segs = append(segs, conversationNote(p.sessions != nil), seg)
 	}
 	if seg, ok, err := p.vaultSegment(ctx); err != nil {
 		return nil, err
@@ -140,6 +149,28 @@ func (p *Planner) tail(t *core.Task) llm.Segment {
 	}
 }
 
+// restateGoalRunes 是在末尾重述任务目标的长度上限。更长的目标本身就是一篇材料，重述一遍只是多占预算。
+const restateGoalRunes = 600
+
+// restateGoal 在上下文末尾把用户的要求再写一遍。
+//
+// 任务定义排在最前面（为了命中前缀缓存），后面跟着记忆、此前的对话和几十步的历史，
+// 模型读到末尾要决定下一步时，离用户的原话已经隔了上万字。长上下文里把问题放在材料之后，
+// 模型更不容易答偏；重述的这一段在每步都变的末尾，不影响前面的缓存。
+// 信任等级与任务定义相同：来源不可信的目标，重述时照样在围栏里。
+func restateGoal(t *core.Task, segs []llm.Segment) (llm.Segment, bool) {
+	goal := strings.TrimSpace(t.Goal)
+	// 只有任务定义一段时，目标本来就在末尾。
+	if len(segs) < 2 || goal == "" || utf8.RuneCountInString(goal) > restateGoalRunes {
+		return llm.Segment{}, false
+	}
+	return llm.Segment{
+		Role:    llm.RoleUser,
+		Content: "用户最初的要求（与开头的任务目标相同，放在这里便于对照；用户之后补充的话在步骤历史里）：\n" + goal,
+		Trust:   t.Origin, Source: "任务目标", Pinned: true,
+	}, true
+}
+
 func tokenLimit(n int64) string {
 	if n <= 0 {
 		return "不限"
@@ -149,8 +180,12 @@ func tokenLimit(n int64) string {
 
 // build 把一次调用的系统提示和上下文装成消息：用任务固定的围栏标记，末尾接上当前状态。
 func (p *Planner) build(t *core.Task, system string, segs []llm.Segment) ([]llm.Message, error) {
-	all := make([]llm.Segment, 0, len(segs)+1)
-	all = append(append(all, segs...), p.tail(t))
+	all := make([]llm.Segment, 0, len(segs)+2)
+	all = append(all, segs...)
+	if seg, ok := restateGoal(t, segs); ok {
+		all = append(all, seg)
+	}
+	all = append(all, p.tail(t))
 	return llm.Build(all, llm.BuildOptions{
 		SystemPrompt: system,
 		// 预算只管任务的上下文，系统提示是另算的固定开销。

@@ -27,7 +27,7 @@ providers:
 # 按用途路由模型。规划用强模型，打标/摘要/抽取用便宜模型——
 # 后者的调用量通常是前者的几十倍，这是成本控制里最有效的一招。
 #
-# purpose 取值: plan / extract / summarize / vision
+# purpose 取值: plan / extract / summarize / vision / triage
 # ---------------------------------------------------------------
 #
 # input_yuan_per_mtok / output_yuan_per_mtok 是每百万 token 的单价（元），照服务商的价目表填。
@@ -43,6 +43,12 @@ routes:
     provider: deepseek
     model: deepseek-chat
     max_tokens: 1000
+  # 判断聊天里的一句话归给哪件事。你发消息后的第一句回执就等这一次调用，想让它快一些可以单独配：
+  # 换一个快的模型，或者同一个模型关掉思考。不写这一条时用 plan 的那个模型。
+  # - purpose: triage
+  #   provider: deepseek
+  #   model: deepseek-chat
+  #   thinking: "off"
 
 fallback:
   provider: deepseek

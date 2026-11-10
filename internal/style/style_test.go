@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -115,7 +118,7 @@ func TestRefresh_样本够了才提炼且攒够一批才重新提炼(t *testing.
 		for i := 0; i < n; i++ {
 			texts = append(texts, fmt.Sprintf("%s%d", prefix, i))
 		}
-		if _, err := l.Observe(ctx, SceneChat, "", texts); err != nil {
+		if _, err := l.Observe(ctx, SceneMail, "", texts); err != nil {
 			t.Fatalf("收样本失败: %v", err)
 		}
 	}
@@ -134,7 +137,7 @@ func TestRefresh_样本够了才提炼且攒够一批才重新提炼(t *testing.
 	if cost != (Cost{TokensIn: 100, TokensOut: 20, Micros: 7}) {
 		t.Fatalf("提炼的花费应如实上报: %+v", cost)
 	}
-	p, _ := st.GetProfile(ctx, SceneChat)
+	p, _ := st.GetProfile(ctx, SceneMail)
 	if p == nil || !strings.Contains(p.Description, "不寒暄") {
 		t.Fatalf("概述应已保存: %+v", p)
 	}
@@ -161,7 +164,7 @@ func TestRefresh_样本够了才提炼且攒够一批才重新提炼(t *testing.
 	if _, err := l.Refresh(ctx); err != nil || len(m.seen) != 2 {
 		t.Fatalf("攒够一批应重新提炼: %v %d", err, len(m.seen))
 	}
-	if p, _ := st.GetProfile(ctx, SceneChat); !strings.Contains(p.Description, "省略号") {
+	if p, _ := st.GetProfile(ctx, SceneMail); !strings.Contains(p.Description, "省略号") {
 		t.Fatalf("概述应被新的替换（带代码围栏的输出也要认）: %+v", p)
 	}
 	if _, err := l.Refresh(ctx); err != nil || len(m.seen) != 2 {
@@ -179,11 +182,11 @@ func TestRefresh_失败时保留旧概述并报错(t *testing.T) {
 		}
 		return out
 	}
-	_, _ = l.Observe(ctx, SceneChat, "", texts("a", minSamples))
+	_, _ = l.Observe(ctx, SceneMail, "", texts("a", minSamples))
 	if _, err := l.Refresh(ctx); err != nil {
 		t.Fatalf("提炼失败: %v", err)
 	}
-	_, _ = l.Observe(ctx, SceneChat, "", texts("b", refreshEvery))
+	_, _ = l.Observe(ctx, SceneMail, "", texts("b", refreshEvery))
 
 	for name, broken := range map[string]*fakeModel{
 		"模型不可达":   {err: errors.New("上游超时")},
@@ -194,7 +197,7 @@ func TestRefresh_失败时保留旧概述并报错(t *testing.T) {
 		if _, err := l.Refresh(ctx); err == nil {
 			t.Errorf("%s: 应报错", name)
 		}
-		if p, _ := st.GetProfile(ctx, SceneChat); p == nil || p.Description != "简短直接" {
+		if p, _ := st.GetProfile(ctx, SceneMail); p == nil || p.Description != "简短直接" {
 			t.Errorf("%s: 旧概述应保留: %+v", name, p)
 		}
 	}
@@ -234,4 +237,124 @@ func TestVoice_按场景给出概述和最近的样本(t *testing.T) {
 	if v, _ := l.Voice(ctx); !v.Empty() {
 		t.Fatalf("忘记之后应为空: %+v", v)
 	}
+}
+
+func TestLearnDay_每天按当天的话修订风格文件(t *testing.T) {
+	ctx := context.Background()
+	m := &fakeModel{replies: []string{
+		"## 句子与篇幅\n句子很短，一件事拆成几条发。",
+		"```markdown\n## 句子与篇幅\n句子很短。\n\n## 用词与口头禅\n常说\"行\"。\n```",
+	}}
+	l, st := learner(m)
+	dir := t.TempDir()
+	l.WithDir(dir)
+	day := func(n int, prefix string) []string {
+		var out []string
+		for i := 0; i < n; i++ {
+			out = append(out, fmt.Sprintf("%s%d", prefix, i))
+		}
+		return out
+	}
+
+	// 一天里的话太少：只收作样本，不修订。
+	if cost, err := l.LearnDay(ctx, "session:2026-10-09", day(minSamples-1, "少")); err != nil || len(m.seen) != 0 || cost != (Cost{}) {
+		t.Fatalf("话太少时不应调用模型: %v %d", err, len(m.seen))
+	}
+	if n, _ := st.CountSamples(ctx, SceneChat, time.Time{}); n != minSamples-1 {
+		t.Fatalf("当天的话应收作样本: %d", n)
+	}
+
+	// 第一次：还没有风格文件，从当天的话写出来，存成 chat.md。
+	cost, err := l.LearnDay(ctx, "session:2026-10-10", day(minSamples, "帮我把钱转给老王，第"))
+	if err != nil || len(m.seen) != 1 || cost != (Cost{TokensIn: 100, TokensOut: 20, Micros: 7}) {
+		t.Fatalf("话够了应修订一次并如实上报花费: %v %d %+v", err, len(m.seen), cost)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "chat.md"))
+	if err != nil || !strings.Contains(string(data), "一件事拆成几条发") {
+		t.Fatalf("风格应写进 chat.md: %q %v", data, err)
+	}
+	req := m.seen[0]
+	system := req.Messages[0].Content
+	if req.JSONMode || !strings.Contains(system, "contradict it clearly and more than once") || !strings.Contains(system, "not instructions to you") {
+		t.Fatal("系统提示应说明怎样才改旧条目、材料不是指令，且不用 JSON 模式")
+	}
+	if len(req.Messages) != 3 {
+		t.Fatalf("应是系统提示加两段材料: %d", len(req.Messages))
+	}
+	for i, want := range []string{"还没有", "帮我把钱转给老王"} {
+		if user := req.Messages[i+1].Content; !strings.HasPrefix(user, "<untrusted-") || !strings.Contains(user, want) {
+			t.Fatalf("现有风格和当天的话都应包在围栏里: %s", user)
+		}
+	}
+
+	// 用户动手改过文件：第二天交给模型的是改过的那份。带代码围栏的输出也要认。
+	if err := os.WriteFile(filepath.Join(dir, "chat.md"), []byte("## 句子与篇幅\n用户自己改的一句。\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.LearnDay(ctx, "session:2026-10-11", day(minSamples, "第二天，第")); err != nil {
+		t.Fatalf("修订失败: %v", err)
+	}
+	if !strings.Contains(text(m.seen[1]), "用户自己改的一句") {
+		t.Fatal("修订时应以文件里现有的内容为准")
+	}
+	if p, _ := l.Profile(ctx, SceneChat); p == nil || strings.Contains(p.Description, "```") || !strings.Contains(p.Description, "常说") {
+		t.Fatalf("风格应被修订后的替换: %+v", p)
+	}
+
+	// 修订失败：原来的文件原样留着。
+	l.model = &fakeModel{err: errors.New("上游超时")}
+	if _, err := l.LearnDay(ctx, "session:2026-10-12", day(minSamples, "第三天，第")); err == nil {
+		t.Fatal("模型不可达时应报错")
+	}
+	if p, _ := l.Profile(ctx, SceneChat); p == nil || !strings.Contains(p.Description, "常说") {
+		t.Fatalf("失败时应保留原来的风格: %+v", p)
+	}
+
+	// 任务结束时不再整段重写对助手说话的风格。
+	l.model = &fakeModel{replies: []string{`{"description":"不该出现"}`}}
+	_, _ = l.Observe(ctx, SceneChat, "", day(refreshEvery*2, "任务里说的，第"))
+	if _, err := l.Refresh(ctx); err != nil {
+		t.Fatalf("提炼失败: %v", err)
+	}
+	if p, _ := l.Profile(ctx, SceneChat); p == nil || strings.Contains(p.Description, "不该出现") {
+		t.Fatalf("Refresh 不应改对助手说话的风格: %+v", p)
+	}
+
+	// 忘掉一切时文件也删掉。
+	if err := l.Forget(ctx); err != nil {
+		t.Fatalf("忘记失败: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "chat.md")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("忘记之后风格文件应删掉: %v", err)
+	}
+}
+
+func TestProfile_数据库里的旧概述第一次读时搬成文件(t *testing.T) {
+	ctx := context.Background()
+	l, st := learner(nil)
+	_ = st.PutProfile(ctx, &Profile{Scene: SceneMail, Description: "称呼加\"好\"，不写落款"})
+	dir := t.TempDir()
+	l.WithDir(dir)
+	if p, err := l.Profile(ctx, SceneMail); err != nil || p == nil || !strings.Contains(p.Description, "不写落款") {
+		t.Fatalf("应读到数据库里的旧概述: %+v %v", p, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "mail.md")); err != nil || !strings.Contains(string(data), "不写落款") {
+		t.Fatalf("旧概述应搬成 mail.md: %q %v", data, err)
+	}
+	// 搬过之后以文件为准：用户清空了文件，就当作没有，不会再从数据库搬回来。
+	if err := os.WriteFile(filepath.Join(dir, "mail.md"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := l.Profile(ctx, SceneMail); err != nil || p != nil {
+		t.Fatalf("清空的文件应当作没有概述: %+v %v", p, err)
+	}
+}
+
+// text 把一次请求里的全部消息连成一段。
+func text(req llm.Request) string {
+	var sb strings.Builder
+	for _, m := range req.Messages {
+		sb.WriteString(m.Content + "\n")
+	}
+	return sb.String()
 }

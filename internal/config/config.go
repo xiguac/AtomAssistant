@@ -48,6 +48,10 @@ type Config struct {
 	WebhookAddr  string
 	WebhookToken string
 
+	// IP2RegionDB 是 ip2region 的 IPv4 库（ip2region_v4.xdb）的路径。为空时用默认位置，
+	// 文件不存在就不开公网 IP 归属地。用 deploy/deploy.sh ip2region 把库传到服务器。
+	IP2RegionDB string
+
 	// AdminAddr 是网页管理后台的监听地址，如 127.0.0.1:8780。为空则不开。
 	// 不是本机地址时必须同时给出 TLS 证书，否则拒绝启动。
 	AdminAddr string
@@ -89,6 +93,8 @@ func Load() (*Config, error) {
 
 		WebhookAddr:  os.Getenv("ATOM_WEBHOOK_ADDR"),
 		WebhookToken: os.Getenv("ATOM_WEBHOOK_TOKEN"),
+
+		IP2RegionDB: os.Getenv("ATOM_IP2REGION_DB"),
 
 		AdminAddr:         os.Getenv("ATOM_ADMIN_ADDR"),
 		AdminPasswordHash: os.Getenv("ATOM_ADMIN_PASSWORD_HASH"),

@@ -4,7 +4,7 @@
 
 {{with .Data}}
 {{if .Setup}}
-<h2 style="margin-top:0">开始使用</h2>
+<h2>开始使用</h2>
 <div class="card setup">
   {{range $i, $s := .Setup}}<a class="todo{{if .Done}} done{{end}}" href="{{.Href}}">
     <span class="ico-wrap">{{if .Done}}<svg class="ico" viewBox="0 0 24 24"><path d="m6.5 12.5 3.5 3.5 7.5-8"/></svg>{{else}}{{add $i 1}}{{end}}</span>
@@ -32,9 +32,9 @@
   </a>{{end}}
 </div>{{end}}
 
+<h2>创建任务</h2>
 <form method="post" action="/tasks" class="card quick">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>创建任务</b></div>
   <div class="pad" style="padding-bottom:8px">
     <textarea class="bare" name="goal" aria-label="任务内容" placeholder="例如：下周五下午三点与供应商开会，地点 3 号会议室，请添加日程"></textarea>
   </div>

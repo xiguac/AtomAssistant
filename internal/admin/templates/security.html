@@ -7,9 +7,9 @@
 
 <div class="cols even">
 <div>
+  <h2>登录方式</h2>
   <form method="post" action="/security/methods" class="card">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <div class="band"><b>登录方式</b></div>
     <div class="pad" style="display:grid;gap:14px">
       <label class="check method"><input type="checkbox" name="password_totp" value="1"{{if .PasswordTOTP}} checked{{end}}{{if not .TOTPBound}} disabled{{end}}>
         <span><b>密码 + 动态验证码</b><span class="note">输入密码后，再输入手机验证器上的 6 位数字。{{if not .TOTPBound}}须先绑定验证器。{{end}}</span></span>
@@ -21,8 +21,8 @@
     <div class="band foot"><span class="note muted">两种方式同时启用时，登录时任选其一。</span><button class="btn">保存</button></div>
   </form>
 
+  <h2>动态验证码 {{if .TOTPBound}}<span class="pill ok plain">已绑定验证器</span>{{else}}<span class="pill plain">未绑定</span>{{end}}</h2>
   <div class="card">
-    <div class="band"><b>动态验证码</b>{{if .TOTPBound}}<span class="pill ok plain">已绑定验证器</span>{{else}}<span class="pill plain">未绑定</span>{{end}}</div>
     {{if .PendingSecret}}
     <div class="pad totp">
       <div class="qr">{{.PendingQR}}</div>
@@ -58,9 +58,9 @@
     {{end}}
   </div>
 
+  <h2>修改登录密码</h2>
   <form method="post" action="/password" autocomplete="off" class="card">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <div class="band"><b>修改登录密码</b></div>
     <div class="pad grid2">
       <div class="full"><label for="pw-current">当前密码</label><input id="pw-current" type="password" name="current" autocomplete="current-password"></div>
       <div><label for="pw-new">新密码</label><input id="pw-new" type="password" name="new" autocomplete="new-password">
@@ -72,8 +72,8 @@
 </div>
 
 <div>
+  <h2>通行密钥 <span class="count">{{len .Passkeys}}</span></h2>
   <div class="card">
-    <div class="band"><b>通行密钥</b><span class="count">{{len .Passkeys}}</span></div>
     {{if .Passkeys}}<div class="rows passkeys">{{range .Passkeys}}<div>
       <div class="pk">
         <b>{{.Name}}</b>
@@ -91,8 +91,8 @@
     </form>
   </div>
 
+  <h2>使用说明</h2>
   <div class="card">
-    <div class="band"><b>使用说明</b></div>
     <div class="pad">
       {{if .PasskeyBlocked}}<div class="banner warn" style="margin-bottom:14px"><div>{{.PasskeyBlocked}}</div></div>{{end}}
       <dl class="kv wide">

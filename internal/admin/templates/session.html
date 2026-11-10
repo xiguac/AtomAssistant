@@ -6,7 +6,7 @@
 
 <div class="cols even">
 <div>
-<h2 style="margin-top:0">当天的事 <span class="count">{{len .Children}}</span></h2>
+<h2>当天的事 <span class="count">{{len .Children}}</span></h2>
 <div class="card rows">
   {{range .Children}}<a href="/tasks/{{.ID}}">
     <span class="t">{{short .Title 30}}</span>
@@ -26,7 +26,7 @@
 </div>
 
 <div>
-<h2 style="margin-top:0">对话 <span class="count">{{len .Messages}}</span></h2>
+<h2>对话 <span class="count">{{len .Messages}}</span></h2>
 <div class="card chatlog">
   {{if .Expired}}<div class="empty">已超过 30 天，原话不再提供查看。</div>
   {{else}}{{range .Messages}}<div class="msg {{.Role}}">

@@ -7,8 +7,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/matter"
 	"github.com/xiguac/atomassistant/internal/session"
 )
 
@@ -33,6 +35,18 @@ type Candidate struct {
 	Idle time.Duration
 	// Finished 为真表示这件事刚办完。归给它的话另起一个任务接着办，之前的对话随上下文带过去。
 	Finished bool
+
+	// 以下几项只有清单里的事才有（Matter 为真），见 matters.go。这时 ID 是 matter:事项编号。
+	Matter bool
+	// Ongoing 为真是长期的事，否则是一次性的。Under 是它挂在哪件长期的事下面（那件事的标题）。
+	Ongoing bool
+	Under   string
+	// Last 是最近一次进展：用户说了什么、办成了什么样。
+	Last string
+	// Dormant 是它放了多久："low" 一周多没动静，"archived" 两周多没动静，空表示最近还在说。
+	Dormant string
+	// Asked 为真表示已经问过用户这件事还留不留，正在等回答。
+	Asked bool
 }
 
 // Verdict 是判断的结果：TaskID 非空表示这句话是说那件事的；New 为真表示是一件新的事；
@@ -42,6 +56,15 @@ type Verdict struct {
 	TaskID string
 	New    bool
 	Reply  string
+	// Ack 是这句话要交给任务去办时先回给用户的一句回执（"收到，我查一下"）。为空时用 defaultAck。
+	Ack string
+
+	// 以下三项只在 New 为真时有用：这件新的事在清单里叫什么、是不是长期的、挂在哪件事下面（候选的 ID）。
+	Title   string
+	Ongoing bool
+	Under   string
+	// Keep 与 Close 只对问过"还留着吗"的事有用：用户说留着，或者说不要了。
+	Keep, Close bool
 }
 
 // TriageInput 是判断一句话归给谁时能看到的全部材料。
@@ -70,12 +93,33 @@ const (
 	// maxCandidates 是交给模型判断的事的个数上限，取最近的。
 	// 给得宽一些：拖了好几天的长程任务排在后面，被截掉的话，用户再提起它就会被当成一件新的事。
 	maxCandidates = 20
+	// maxAskChoices 是问用户"这句话是说哪件事"时最多列几件。
+	maxAskChoices = 6
 	// askTTL 是"这句话是说哪件事"这个问题等用户回答的时间。过了就不等了，那句话算一件新的事。
 	askTTL = 10 * time.Minute
 	// continueWindow 是"接着说"的时间窗：用户上次说到一件事在这之内，新的话默认是接着它说的；
 	// 刚办完的事在这之内也还算在说。
 	continueWindow = 30 * time.Minute
 )
+
+const (
+	// defaultAck 是模型没有写回执时用的那一句。
+	defaultAck = "收到，我看看。"
+	// maxAckRunes 是回执的长度上限。超过的不是一句回执，多半是模型直接作答了：不发它，发 defaultAck。
+	maxAckRunes = 40
+)
+
+// ack 在一句话交给任务之后，先回用户一句回执。
+//
+// 任务办完要等模型想、等工具返回，短则十几秒，长则几分钟；这期间用户看不到任何动静，
+// 分不清是收到了还是丢了。回执不记进会话：它不含任何内容，记了只会让之后看会话的模型多读一行。
+func (h *Hub) ack(ctx context.Context, channel, chat, words string) {
+	words = strings.TrimSpace(words)
+	if words == "" || utf8.RuneCountInString(words) > maxAckRunes || strings.Contains(words, "\n") {
+		words = defaultAck
+	}
+	h.say(ctx, channel, chat, words)
+}
 
 // noteSaid 记下用户刚说到一件事。
 func (h *Hub) noteSaid(taskID string) {
@@ -177,7 +221,12 @@ func (h *Hub) deliver(ctx context.Context, t *core.Task, channel, chat, text str
 	h.noteSaid(t.ID)
 	h.log.Info("消息交给已有的任务", "任务", t.ID)
 	h.follow(ctx, t, channel, chat)
+	h.saidAbout(ctx, t, channel, chat)
 	if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
+		// 归属判断把一句"好"判给了这件等确认的事：那是同意，不是修改意见。
+		if isApproval(strings.TrimPrefix(text, voiceNote)) {
+			return h.tasks.Approve(ctx, t.ID)
+		}
 		return h.tasks.Reject(ctx, t.ID, text)
 	}
 	return h.tasks.Reply(ctx, t.ID, text, channel)
@@ -203,6 +252,13 @@ func (h *Hub) answerAsk(ctx context.Context, channel, chat, text string, active 
 	}
 	if n, convErr := strconv.Atoi(choice); convErr == nil && n >= 1 && n <= len(ask.candidates) {
 		want := ask.candidates[n-1].ID
+		// 选的是清单里的一件事：有任务在办就送给它，没有就在它名下新开一个。
+		if mid := matter.FromTags([]string{want}); mid != "" && h.matters != nil {
+			if handled, _, err := h.routeToMatter(ctx, mid, Verdict{}, active, channel, chat, ask.text, ask.tag); handled {
+				return true, err
+			}
+			return true, h.create(ctx, ask.text, ask.tag)
+		}
 		for _, t := range active {
 			if t.ID == want {
 				return true, h.deliver(ctx, t, channel, chat, ask.text)
@@ -217,6 +273,21 @@ func (h *Hub) answerAsk(ctx context.Context, channel, chat, text string, active 
 
 // askWhich 问用户这句话是说哪件事。
 func (h *Hub) askWhich(ctx context.Context, channel, chat, tag, text string, cands []Candidate) {
+	// 只列最近还在说的几件：清单里放了很久的事不拿来让用户挑，列几十行也没法看。
+	var shown []Candidate
+	for _, c := range cands {
+		if c.Dormant == "" && len(shown) < maxAskChoices {
+			shown = append(shown, c)
+		}
+	}
+	if len(shown) == 0 {
+		// 没有一件可挑的：按一件新的事办，不问。
+		if err := h.create(ctx, text, tag); err != nil {
+			h.log.Error("处理消息失败", "渠道", channel, "err", err)
+		}
+		return
+	}
+	cands = shown
 	h.mu.Lock()
 	h.asked = &pendingAsk{text: text, tag: tag, candidates: cands, at: h.now()}
 	h.mu.Unlock()

@@ -357,6 +357,48 @@ func (r *Retriever) Expand(ctx context.Context, id string) (*Memory, error) {
 	return m, nil
 }
 
+// Search 按给定的检索词找记忆，相关的在前，最多 limit 条。
+//
+// Assemble 只在任务开始时按任务的标题和目标检索一次。办到一半才出现的人名、地点、话题，
+// 模型要能自己换个说法再找，而不是只能在预先给它的索引行里挑。
+// 这里只看文字上的相关（向量相似或词元重合，以及字面包含），不看新近和命中次数：
+// 它回答的是"有没有记过这件事"，不是在排上下文。一点都不相关的不返回。
+func (r *Retriever) Search(ctx context.Context, subject, query string, limit int) ([]Item, error) {
+	query = strings.TrimSpace(query)
+	if query == "" || limit <= 0 {
+		return nil, nil
+	}
+	all, err := r.store.List(ctx, Query{Subject: subject})
+	if err != nil {
+		return nil, err
+	}
+	sim := r.sim
+	if p, ok := sim.(ScenePreparer); ok {
+		sim = p.Prepare(ctx, query)
+	}
+	now := r.now()
+	needle := strings.ToLower(query)
+	var found []Item
+	for _, m := range all {
+		if !m.Retrievable(now) {
+			continue
+		}
+		score := sim.Score(query, m)
+		// 字面包含算满分：查"张总"，主体是"客户张总"的记忆就该在最前面，而主体不参与相似度比对。
+		if strings.Contains(strings.ToLower(describeSubject(m)+" "+m.Current.Value), needle) {
+			score = 1
+		}
+		if score > 0 {
+			found = append(found, Item{Memory: m, Score: score})
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool { return found[i].Score > found[j].Score })
+	if len(found) > limit {
+		found = found[:limit]
+	}
+	return found, nil
+}
+
 // RenderFull 是高关联环的原文表示。
 func RenderFull(m *Memory) string {
 	var sb strings.Builder

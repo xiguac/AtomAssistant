@@ -3,8 +3,8 @@
 <div class="sub">查看、安装与移除 Skill。Skill 是声明式流程，不含可执行代码；安装不授予任何新权限，按其执行的任务仅可调用其声明且已授权的工具。</div>
 
 {{with .Data}}
+<h2>已安装的 Skill <span class="count">{{len .Skills}}</span><button type="button" class="btn sm" data-dialog="dlg-skill">安装 Skill</button></h2>
 <div class="card">
-  <div class="band"><span class="actions"><b>已安装的 Skill</b><span class="count">{{len .Skills}}</span></span><button type="button" class="btn sm" data-dialog="dlg-skill">安装 Skill</button></div>
   {{if .Skills}}<table>
     <thead><tr><th>名称</th><th>类型</th><th>声明的工具</th><th>安装时间</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Skills}}<tr>

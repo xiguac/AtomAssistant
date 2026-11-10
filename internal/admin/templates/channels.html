@@ -5,7 +5,7 @@
 <div class="banner warn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16v.5"/></svg><div>消息源主人拥有与用户本人相同的权限，请仅添加你自己的账号。主人名单只能在此页面或配置文件中由你本人修改，助手无法更改。</div></div>
 
 {{with .Data}}
-<h2 style="margin-top:0">已接入的消息源 <span class="count">{{len .Channels}}</span>
+<h2>已接入的消息源 <span class="count">{{len .Channels}}</span>
   <button type="button" class="btn sm" data-dialog="dlg-channel" data-title="添加消息源">添加</button></h2>
 <div class="cards2">
 {{range .Channels}}{{$ch := .}}

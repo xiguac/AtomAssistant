@@ -103,7 +103,7 @@ func TestPlanner_基础约束始终排在系统提示最前面(t *testing.T) {
 	if first.Role != "system" || !strings.HasPrefix(first.Content, baseRules) {
 		t.Fatal("基础约束应当在系统提示的最前面")
 	}
-	if !strings.Contains(first.Content, plannerSystemPrompt) {
+	if !strings.Contains(first.Content, dropSections(plannerSystemPrompt, headTakeover)) {
 		t.Fatal("基础约束不应挤掉规划器自己的说明")
 	}
 }
@@ -122,7 +122,7 @@ func TestCapability_启用后给出工具做法和已安装的Skill(t *testing.T
 		t.Fatalf("决策不对: %+v", d)
 	}
 	system := m.lastReq.Messages[0].Content
-	for _, want := range []string{ToolCapabilitySearch, ToolCapabilityInstall, ToolSkillRead, "go and find it instead of saying it cannot be done"} {
+	for _, want := range []string{ToolCapabilitySearch, ToolCapabilityInstall, ToolSkillRead, "去找，而不是说办不了"} {
 		if !strings.Contains(system, want) {
 			t.Errorf("系统提示里应有 %q", want)
 		}
@@ -149,7 +149,7 @@ func TestCapability_绑定了Skill的任务不能自己装东西(t *testing.T) {
 	if _, err := p.Decide(context.Background(), task, nil); err == nil {
 		t.Fatal("别人写的流程没声明就不该能安装东西")
 	}
-	if strings.Contains(m.lastReq.Messages[0].Content, "go and find it instead of saying it cannot be done") {
+	if strings.Contains(m.lastReq.Messages[0].Content, "去找，而不是说办不了") {
 		t.Fatal("绑定了 Skill 的任务不该被告知可以自己找能力")
 	}
 }

@@ -4,7 +4,7 @@
 
 {{with .Data}}
 {{if .Enabled}}
-<h2 style="margin-top:0">收到的文件 <span class="count">{{len .Received}}</span></h2>
+<h2>收到的文件 <span class="count">{{len .Received}}</span></h2>
 <div class="card">
   {{if .Received}}{{template "filetable" (dict "Entries" .Received "Dir" .ReceivedDir "CSRF" $.CSRF)}}{{else}}<div class="empty">还没有收到文件。在聊天里发给助手，或点击右上角「上传」。</div>{{end}}
   <div class="band foot"><span class="note muted">存放在工作区的「{{.ReceivedDir}}」目录。同名文件将被替换，原文件自动保留为历史版本。</span></div>
@@ -19,24 +19,12 @@
   {{if .Entries}}{{template "filetable" (dict "Entries" .Entries "Dir" .Dir "CSRF" $.CSRF)}}{{else}}<div class="empty">{{if .Dir}}这个目录是空的。{{else}}助手还没有生成文件。{{end}}</div>{{end}}
   <div class="band foot"><span class="note muted">删除后不可恢复。目录须先清空方可删除；被替换文件的历史版本不受影响。</span></div>
 </div>
-<h2>下载链接 {{if .Shares.On}}<span class="count">{{len .Shares.Links}}</span>{{else}}<span class="pill plain">未启用</span>{{end}}</h2>
+<h2>下载链接 {{if .Shares.On}}<span class="count">{{len .Shares.Links}}</span>{{else}}<span class="pill plain">未启用</span>{{end}}
+  {{if and .Shares.On (not .Shares.Env)}}<form method="post" action="/files/share/listen">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="on" value="0">
+    <button class="btn danger sm" title="关闭后助手不能再创建下载链接，已有的链接立即失效">关闭下载入口</button></form>{{end}}</h2>
 {{if .Shares.On}}
-<form method="post" action="/files/share/base" class="card">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="pad">
-    <label for="share-base">外部访问地址</label><input id="share-base" type="text" name="base" value="{{if .Shares.Base}}{{.Shares.Base}}{{else}}{{.Shares.Suggest}}{{end}}" placeholder="https://atom.example.com/download">
-    <div class="help">{{if .Shares.Base}}下载链接以此地址开头。{{else}}尚未保存，以上为按当前域名给出的建议值。保存前助手无法创建下载链接。{{end}}反向代理须将该路径转发至下载入口。</div>
-  </div>
-  <div class="band foot">
-    <span class="note muted">修改后仅对新建的链接生效。</span>
-    <button class="btn">保存</button>
-  </div>
-</form>
-{{if not .Shares.Env}}<form method="post" action="/files/share/listen" class="card" style="margin-top:12px">
-  <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="on" value="0">
-  <div class="band foot"><span class="note muted">关闭后助手不能再创建下载链接，已有的链接立即失效。</span><button class="btn danger sm">关闭下载入口</button></div>
-</form>{{end}}
-<div class="card" style="margin-top:12px">
+<div class="card">
   {{if .Shares.Links}}<table>
     <thead><tr><th>分享内容</th><th class="r" style="width:130px">创建时间</th><th class="r" style="width:130px">过期时间</th><th class="r" style="width:90px">操作</th></tr></thead>
     <tbody>{{range .Shares.Links}}<tr>
@@ -48,8 +36,19 @@
         <button class="btn danger sm">撤销</button></form></td>
     </tr>{{end}}</tbody>
   </table>{{else}}<div class="empty">当前没有有效的下载链接。</div>{{end}}
-  <div class="band foot"><span class="note muted">仅可分享助手生成的文件，有效期最长 24 小时。撤销后立即失效。链接地址只在创建时提供，此处不显示。</span></div>
+  <div class="band foot"><span class="note muted">仅可分享助手生成的文件，有效期最长 24 小时。撤销后立即失效；关闭下载入口后，已有的链接也立即失效。链接地址只在创建时提供，此处不显示。</span></div>
 </div>
+<form method="post" action="/files/share/base" class="card">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="pad">
+    <label for="share-base">外部访问地址</label><input id="share-base" type="text" name="base" value="{{if .Shares.Base}}{{.Shares.Base}}{{else}}{{.Shares.Suggest}}{{end}}" placeholder="https://atom.example.com/download">
+    <div class="help">{{if .Shares.Base}}下载链接以此地址开头。{{else}}尚未保存，以上为按当前域名给出的建议值。保存前助手无法创建下载链接。{{end}}反向代理须将该路径转发至下载入口。</div>
+  </div>
+  <div class="band foot">
+    <span class="note muted">修改后仅对新建的链接生效。</span>
+    <button class="btn">保存</button>
+  </div>
+</form>
 {{else}}
 <form method="post" action="/files/share/listen" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="on" value="1">
@@ -77,10 +76,10 @@
   <thead><tr><th>名称</th><th class="r" style="width:110px">大小</th><th class="r" style="width:130px">修改时间</th><th class="r" style="width:90px">操作</th></tr></thead>
   <tbody>{{range .Entries}}<tr>
     <td>{{if .Dir}}<a href="/files?dir={{.Path}}" class="fname"><svg class="ico" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z"/></svg><span>{{base .Path}}</span></a>
-      {{else}}<a href="/files/download?path={{.Path}}" class="fname"><svg class="ico" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg><span>{{base .Path}}</span></a>{{end}}</td>
+      {{else}}<a href="{{if viewable .Path}}/files/view?path={{.Path}}{{else}}/files/download?path={{.Path}}{{end}}" class="fname"><svg class="ico" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"/><path d="M14 3.5v4h4"/></svg><span>{{base .Path}}</span></a>{{end}}</td>
     <td class="time r">{{if not .Dir}}{{size .Size}}{{end}}</td>
     <td class="time r">{{when .Modified}}</td>
-    <td class="r"><form method="post" action="/files/delete">
+    <td class="r" style="white-space:nowrap">{{if and (not .Dir) (viewable .Path)}}<a class="btn sec sm" href="/files/view?path={{.Path}}">查看</a> {{end}}<form method="post" action="/files/delete" style="display:inline">
       <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="dir" value="{{$.Dir}}"><input type="hidden" name="path" value="{{.Path}}">
       <button class="btn danger sm">删除</button></form></td>
   </tr>{{end}}</tbody>

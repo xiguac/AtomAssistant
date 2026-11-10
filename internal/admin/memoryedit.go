@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xiguac/atomassistant/internal/agent"
 	"github.com/xiguac/atomassistant/internal/config"
 	"github.com/xiguac/atomassistant/internal/llm"
 	"github.com/xiguac/atomassistant/internal/memory"
@@ -111,22 +112,7 @@ func (s *Server) proposeMemoryChanges(ctx context.Context, ask string) (*memoryP
 		return nil, err
 	}
 
-	_, models, err := s.readModels()
-	if err != nil {
-		return nil, err
-	}
-	providerName, model := models.Main()
-	if providerName == "" || model == "" {
-		return nil, errors.New("尚未设置主 AI，请先在「模型」页设置")
-	}
-	file, err := config.LoadFile(s.opts.ConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if file == nil {
-		return nil, errors.New("配置文件不存在")
-	}
-	provider, err := file.Provider(ctx, providerName, s.opts.Vault)
+	provider, model, err := s.mainModel(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -216,4 +202,44 @@ func (s *Server) memoryApply(w http.ResponseWriter, r *http.Request, _ *view) {
 		}
 	}
 	back(w, r, "/memory", fmt.Sprintf("已删除 %d 条、修改 %d 条记忆。", deleted, updated), nil)
+}
+
+// mainModel 取出配置里的主 AI：模型服务与模型名。
+func (s *Server) mainModel(ctx context.Context) (llm.Provider, string, error) {
+	_, models, err := s.readModels()
+	if err != nil {
+		return nil, "", err
+	}
+	providerName, model := models.Main()
+	if providerName == "" || model == "" {
+		return nil, "", errors.New("尚未设置主 AI，请先在「模型」页设置")
+	}
+	file, err := config.LoadFile(s.opts.ConfigPath)
+	if err != nil {
+		return nil, "", err
+	}
+	if file == nil {
+		return nil, "", errors.New("配置文件不存在")
+	}
+	provider, err := file.Provider(ctx, providerName, s.opts.Vault)
+	if err != nil {
+		return nil, "", err
+	}
+	return provider, model, nil
+}
+
+// memoryProfile 让主 AI 把已保存的全部记忆重新整合成一段话。每天的更新由 atomd 做，这里是想马上看到最新的。
+func (s *Server) memoryProfile(w http.ResponseWriter, r *http.Request, _ *view) {
+	provider, model, err := s.mainModel(r.Context())
+	if err != nil {
+		back(w, r, "/memory", "", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	err = agent.RefreshProfile(ctx, func(ctx context.Context, req llm.Request) (llm.Response, error) {
+		req.Model = model
+		return provider.Complete(ctx, req)
+	}, s.opts.Store.Memories(), s.opts.Store, time.Now())
+	back(w, r, "/memory", "已重新生成记忆摘要。", err)
 }

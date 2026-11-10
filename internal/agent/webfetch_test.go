@@ -114,7 +114,7 @@ func TestWebFetch_接入后模型看得到工具和用法(t *testing.T) {
 	if err != nil || d.ToolName != ToolWebFetch || d.SideEffect != core.SideEffectReadOnly {
 		t.Fatalf("读网页应是只读工具: %+v %v", d, err)
 	}
-	if system := m.lastReq.Messages[0].Content; !strings.Contains(system, "Copy the URL exactly") {
+	if system := m.lastReq.Messages[0].Content; !strings.Contains(system, "网址照搜索结果或用户写的原样抄") {
 		t.Fatalf("系统提示里应说明怎么读网页:\n%s", system)
 	}
 }

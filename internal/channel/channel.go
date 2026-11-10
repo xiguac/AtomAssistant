@@ -33,6 +33,7 @@ import (
 
 	"github.com/xiguac/atomassistant/internal/core"
 	"github.com/xiguac/atomassistant/internal/kernel"
+	"github.com/xiguac/atomassistant/internal/matter"
 	"github.com/xiguac/atomassistant/internal/media"
 	"github.com/xiguac/atomassistant/internal/policy"
 	"github.com/xiguac/atomassistant/internal/session"
@@ -148,6 +149,67 @@ func (h *Hub) SendFile(ctx context.Context, tags []string, name string, data []b
 	return h.state.PutChat(ctx, st)
 }
 
+// SayToTask 把一段话发到任务所来自的那个会话里，并记进当天的会话。
+//
+// 用于任务需要用户去别处办事时的提醒（比如「请打开手机上的 App 授权」）。和 SendFile 一样，
+// 发到哪里由任务的标签决定，调用方指定不了：话只会回到发起这个任务的主人那里。
+func (h *Hub) SayToTask(ctx context.Context, tags []string, taskID, text string) error {
+	channel, chat, ok := parseTag(tags)
+	if !ok {
+		return ErrNoChat
+	}
+	if err := h.send(ctx, channel, chat, text); err != nil {
+		return err
+	}
+	h.remember(ctx, session.RoleAssistant, channel, taskID, text)
+	return nil
+}
+
+// OwnerChatter 由能算出「主人的私聊会话标识」的渠道实现，让别处（比如手机上的快捷指令）
+// 能以主人的身份在这个渠道里发起一次对话。
+type OwnerChatter interface {
+	// OwnerChat 返回主人（owner 是他在这个渠道里的账号标识）的私聊会话标识。
+	OwnerChat(owner string) string
+}
+
+// InjectOwner 把一句话（可带图片）当作主人在这个渠道里发来的消息处理：
+// 走和他亲自发消息完全一样的路径——记进当天会话、判断归给哪件事、新建任务、审批、回复，
+// 回复发回这个渠道里他的私聊。用于手机上的快捷指令提问。
+//
+// 配置有问题（没有这个渠道、没绑定主人、渠道不支持）会立即返回错误；之后的处理在后台进行，不阻塞调用方。
+func (h *Hub) InjectOwner(ctx context.Context, channel, text string, images []Attachment) error {
+	b, ok := h.bindings[channel]
+	if !ok {
+		return fmt.Errorf("channel: 没有名为 %q 的消息渠道", channel)
+	}
+	oc, ok := b.Adapter.(OwnerChatter)
+	if !ok {
+		return fmt.Errorf("channel: 渠道 %q 还不支持从手机发起对话", channel)
+	}
+	if len(b.Owners) == 0 || b.Owners[0] == "" {
+		return fmt.Errorf("channel: 渠道 %q 还没有绑定主人", channel)
+	}
+	owner := b.Owners[0]
+	chat := oc.OwnerChat(owner)
+	st, err := h.state.GetChat(ctx, channel, chat)
+	if err != nil {
+		return err
+	}
+	// 沿用他最近一条真实来信的编号：有的渠道回复要带上它，编造一个会被拒。
+	id := ""
+	if st != nil {
+		id = st.LastMsgID
+	}
+	m := Message{Chat: chat, Sender: owner, Text: text, Images: images, ID: id, At: h.now()}
+	run := func(f func()) { go f() }
+	if h.runAsync != nil {
+		run = h.runAsync
+	}
+	bg := context.WithoutCancel(ctx)
+	run(func() { h.Handle(bg, channel, m) })
+	return nil
+}
+
 // Adapter 是一家聊天软件的接入。
 type Adapter interface {
 	// Name 是这个渠道在配置里的名字。
@@ -253,7 +315,8 @@ func (b Binding) owns(sender string) bool {
 
 const (
 	// pollEvery 是查看任务有没有新进展的间隔。
-	pollEvery = 2 * time.Second
+	// 任务办完到用户收到答复，中间最多隔这么久，所以给得短；每次只是按时间查一遍有变化的任务。
+	pollEvery = time.Second
 	// lookBack 是启动时往回看多久的任务。再早的进展即使没通知到也不补发了。
 	lookBack = 24 * time.Hour
 	// maxChunkRunes 是单条消息的长度上限，超出的拆成几条发。
@@ -266,6 +329,8 @@ const (
 
 // Hub 把渠道和任务系统接在一起。
 type Hub struct {
+	// runAsync 为空时用 go 另起协程；测试里设成同步执行，免得和断言抢时间。
+	runAsync func(func())
 	bindings map[string]Binding
 	tasks    Tasks
 	state    State
@@ -287,6 +352,10 @@ type Hub struct {
 	saidAt map[string]time.Time
 	// sessions 非空时用户和助手说的话都记进当天的会话，见 session.go。
 	sessions session.Store
+	// matters 非空时用户交代的事记在一张清单里，一句话归给清单里的哪件事，见 matters.go。
+	matters  matter.Store
+	deleter  TaskDeleter
+	matterMu sync.Mutex
 
 	mu     sync.Mutex
 	hinted map[string]time.Time
@@ -351,11 +420,17 @@ func (h *Hub) Run(ctx context.Context) error {
 	since := h.now().Add(-lookBack)
 	ticker := time.NewTicker(pollEvery)
 	defer ticker.Stop()
+	tidy := time.NewTicker(tidyEvery)
+	defer tidy.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
 			return nil
+		case <-tidy.C:
+			if err := h.tidyMatters(ctx); err != nil {
+				h.log.Error("整理事项清单失败", "err", err)
+			}
 		case <-ticker.C:
 			next := h.now()
 			if err := h.Notify(ctx, since); err != nil {
@@ -564,13 +639,28 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	if len(active) == 0 && h.triage == nil {
 		return h.create(ctx, text, tag)
 	}
-	// 有动作在等确认，而这句话就是一个"同意"：放行。这不需要判断。
+	// 有动作在等确认，而这句话就是一个"同意"：放行。
+	// 只有一件事在等用户时才不用判断。同时还有别的事在等确认或者在等回话，「好」「可以」说的是哪一件就不一定了：
+	// 另一件事刚问了一句"要不要顺便订酒店"，用户回"可以"，不能把等确认的那封邮件发出去。这时交给主模型判断，
+	// 判给等确认的那件事，deliver 照样按同意放行。没有模型可用时照旧直接放行。
 	if isApproval(plain) {
+		var pending *core.Task
+		waiting := 0
 		for _, t := range active {
-			if t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval {
-				h.follow(ctx, t, channel, m.Chat)
-				return h.tasks.Approve(ctx, t.ID)
+			switch {
+			case t.State == core.StateWaiting && t.Wake != nil && t.Wake.Kind == core.WakeApproval:
+				waiting++
+				if pending == nil {
+					pending = t
+				}
+			case asking(t):
+				waiting++
 			}
+		}
+		if pending != nil && (waiting == 1 || h.triage == nil) {
+			h.follow(ctx, pending, channel, m.Chat)
+			h.saidAbout(ctx, pending, channel, m.Chat)
+			return h.tasks.Approve(ctx, pending.ID)
 		}
 	}
 	if h.triage == nil {
@@ -582,24 +672,48 @@ func (h *Hub) route(ctx context.Context, channel string, m Message) error {
 	if err != nil {
 		return err
 	}
-	cands := h.candidatesOf(active, h.justFinished(all))
+	var cands []Candidate
+	if h.matters != nil {
+		cands = h.matterCandidates(ctx, active, h.justFinished(all))
+	} else {
+		cands = h.candidatesOf(active, h.justFinished(all))
+	}
 	verdict, err := h.triage.Triage(ctx, h.triageInput(ctx, text, current, cands))
 	if err != nil {
 		// 判断不了不能把话丢了：退回老办法，并留下痕迹。
 		h.log.Error("判断消息归属失败，按规则处理", "err", err)
 		return h.routeByRule(ctx, channel, m.Chat, text, tag, active)
 	}
+	// 交给任务之后先回一句回执：任务办完之前用户至少知道这句话收到了。交不出去就不回，错误照常报。
+	acked := func(err error) error {
+		if err == nil {
+			h.ack(ctx, channel, m.Chat, verdict.Ack)
+		}
+		return err
+	}
 	pick := func(id string) error {
+		// 清单里的一件事：有任务在办就送给它，没有就在它名下新开一个任务。
+		if mid := matter.FromTags([]string{id}); mid != "" && h.matters != nil {
+			handled, ack, err := h.routeToMatter(ctx, mid, verdict, active, channel, m.Chat, text, tag)
+			if handled {
+				if ack {
+					return acked(err)
+				}
+				return err
+			}
+			// 判断的这会儿它从清单里删掉了：按一件新的事办。
+			return acked(h.create(ctx, text, tag))
+		}
 		if t := find(active, id); t != nil {
-			return h.deliver(ctx, t, channel, m.Chat, text)
+			return acked(h.deliver(ctx, t, channel, m.Chat, text))
 		}
 		// 刚办完的事，或者判断的这会儿结束了的：另起一个任务接着办，之前的对话随上下文带过去。
-		return h.create(ctx, text, tag)
+		return acked(h.create(ctx, text, tag))
 	}
 	switch {
 	case verdict.New, len(cands) == 0 && verdict.Reply == "":
-		// 没有可归的事时，不用直接回的话就是一件新的事。
-		return h.create(ctx, text, tag)
+		// 没有可归的事时，不用直接回的话就是一件新的事。标题、种类、挂在哪件事下面，用模型判断的。
+		return acked(h.createAs(ctx, text, tag, verdict.Title, verdict.Ongoing, matter.FromTags([]string{verdict.Under})))
 	case verdict.TaskID != "":
 		return pick(verdict.TaskID)
 	case verdict.Reply != "":
@@ -650,26 +764,43 @@ func asking(t *core.Task) bool {
 		strings.Contains(t.Wake.Expr, `"user.message"`) && strings.Contains(t.Wake.Expr, t.ID)
 }
 
+// create 把一句话当作一件新的事办：清单里记一件一次性的事，再为它建任务。
 func (h *Hub) create(ctx context.Context, text, tag string) error {
-	id, err := h.createTask(ctx, text, text, tag)
-	if err == nil {
-		h.noteSaid(id)
-	}
-	return err
+	return h.createAs(ctx, text, tag, "", false, "")
 }
 
-// createTask 新建一个任务，标题取 title 的头一句。
-func (h *Hub) createTask(ctx context.Context, title, goal, tag string) (string, error) {
+// createAs 把一句话当作一件新的事办。title 为空时取这句话的头一句；ongoing 为真表示这是一件长期的事；
+// under 是它挂在清单里哪件事下面，没有为空。
+func (h *Hub) createAs(ctx context.Context, text, tag, title string, ongoing bool, under string) error {
+	if title = strings.TrimSpace(title); title == "" {
+		title = text
+	}
+	title = titleOf(title)
+	kind := matter.KindOnce
+	if ongoing {
+		kind = matter.KindOngoing
+	}
+	extra := h.openMatter(ctx, title, kind, under, tag)
+	id, err := h.createTask(ctx, title, text, tag, extra...)
+	if err != nil {
+		// 任务没建成，清单里刚记的那件事也不留。
+		if len(extra) > 0 {
+			if derr := h.matters.Delete(ctx, []string{matter.FromTags(extra)}); derr != nil {
+				h.log.Error("撤掉刚记的事项失败", "err", derr)
+			}
+		}
+		return err
+	}
+	h.noteSaid(id)
+	return nil
+}
+
+// createTask 新建一个任务，标题取 title 的头一句。extra 是另外要带的标签（属于清单里的哪件事）。
+func (h *Hub) createTask(ctx context.Context, title, goal, tag string, extra ...string) (string, error) {
 	// 语音转的话，标题取转出来的文字，不取前面那句说明。
-	title = strings.TrimPrefix(title, voiceNote)
-	if i := strings.IndexAny(title, "\n。"); i > 0 {
-		title = title[:i]
-	}
-	if r := []rune(title); len(r) > 24 {
-		title = string(r[:24]) + "…"
-	}
+	title = titleOf(title)
 	// 第二个标签标明它属于用户与助手的会话：所有消息源共用一个，新任务靠它看到最近的对话。
-	id, err := h.tasks.Create(ctx, title, goal, []string{tag, ConversationTag})
+	id, err := h.tasks.Create(ctx, title, goal, append([]string{tag, ConversationTag}, extra...))
 	if err == nil {
 		h.log.Info("消息新建了任务", "任务", id)
 	}
@@ -727,7 +858,11 @@ func (h *Hub) Notify(ctx context.Context, since time.Time) error {
 		h.remember(ctx, session.RoleAssistant, channel, t.ID, "（"+t.Title+"）"+text)
 		if err := h.state.PutNotice(ctx, t.ID, fingerprint); err != nil {
 			errs = append(errs, err)
+			continue
 		}
+		// 清单里那件事也记下有了进展；办完、办不成的，结果记进它的进展里。
+		// 放在指纹存下之后：指纹没存成的话下一轮会再推一次，结果不能跟着记两遍。
+		h.progressed(ctx, t)
 	}
 	return errors.Join(errs...)
 }
@@ -1019,12 +1154,17 @@ func (h *Hub) routeMedia(ctx context.Context, channel string, m Message, text, t
 	if goal == "" {
 		goal, title = mediaOnlyGoal(what), "处理"+what
 	}
-	id, err := h.createTask(ctx, title, goal, tag)
+	id, err := h.createTask(ctx, title, goal, tag, h.openMatter(ctx, titleOf(title), matter.KindOnce, "", tag)...)
 	if err != nil {
 		return err
 	}
 	h.noteSaid(id)
-	return h.tasks.Attach(ctx, id, pictures, channel)
+	if err := h.tasks.Attach(ctx, id, pictures, channel); err != nil {
+		return err
+	}
+	// 带图片、视频的话不经过归属判断，没有模型写的回执，用固定的那一句。
+	h.ack(ctx, channel, m.Chat, "")
+	return nil
 }
 
 // fetchMedia 按渠道给的地址取回一个附件（图片、语音、视频）。类型和大小由调用方再核对。

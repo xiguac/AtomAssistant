@@ -30,6 +30,9 @@ type TaskQuery struct {
 	// From、To 按创建时间筛选，范围是 [From, To)。零值表示不限。
 	From, To      time.Time
 	Limit, Offset int
+	// Flat 为真时连子任务一起列：聊天里（QQ、Siri 等）交代的事挂在当天的会话下面，是子任务。
+	// 网页后台的列表只列顶层、在会话里看那些事；手机 App 的列表要直接看到它们，所以要打开这个。
+	Flat bool
 }
 
 // QueryTasks 按条件列出任务，新建的在前，同时返回符合条件的总数。
@@ -58,8 +61,10 @@ func (s *Store) QueryTasks(ctx context.Context, q TaskQuery) ([]*core.Task, int,
 	if !q.To.IsZero() {
 		where = append(where, `created_at < `+arg(q.To))
 	}
-	// 列表只列顶层：聊天里交代的事挂在当天的会话下面，在会话里看。
-	where = append(where, `parent_id IS NULL`)
+	// 列表只列顶层：聊天里交代的事挂在当天的会话下面，在会话里看。Flat 时不限。
+	if !q.Flat {
+		where = append(where, `parent_id IS NULL`)
+	}
 	cond := ` WHERE ` + strings.Join(where, ` AND `)
 
 	var total int

@@ -51,21 +51,18 @@ func (o PlannerOptions) styleRule() string {
 	var rule string
 	switch o.ReplyStyle {
 	case "detailed":
-		rule = "Reply style: detailed. Conclusion first, then the evidence, the alternatives and the caveats."
+		rule = "回复风格：详细。先给结论，再给依据、备选方案和注意事项。"
 	case "balanced":
-		rule = "Reply style: balanced. Conclusion first, then a few sentences on the key evidence; no background padding."
+		rule = "回复风格：均衡。先给结论，再用几句话说明关键依据，不铺垫背景。"
 	default:
-		rule = "Reply style: concise. Give the conclusion and the necessary evidence directly; one sentence where one will do. " +
-			"No pleasantries, no restating the question, nothing the user did not ask about. " +
-			"But do not cut it so short that the user has to ask again: keep the times, places, prices, the differences between options " +
-			"and the risks they need in order to decide. " +
-			"Length: ordinary matters in a few sentences; matters that need a full plan (such as an itinerary) in at most 300 Chinese characters, " +
-			"containing only the conclusion, the key evidence and what could not be found. No item-by-item account of the lookups, no itinerary details the user did not ask for."
+		rule = "回复风格：简洁。直接给结论和必要的依据，不写用户没问的内容，也不逐条交代查了什么。" +
+			"但不能短到让用户再问一遍：他做决定要用的时间、地点、价格、各选项的差别和风险都要留着。" +
+			"篇幅：一般的事几句话；需要完整方案的事（如行程）不超过 300 字。"
 	}
 	if c := strings.TrimSpace(o.ReplyCustom); c != "" {
-		rule += "\nThe user's additional requirements for replies: " + c
+		rule += "\n用户对回复的额外要求：" + c
 	}
-	return rule + "\nThis requirement governs the reason and question you write for the user."
+	return rule + "\n这个要求适用于你写给用户的 reason 和 question。"
 }
 
 func (o *PlannerOptions) applyDefaults() {
@@ -117,10 +114,14 @@ type Planner struct {
 	conversation ConversationStore
 	// sessions 非空时"此前的对话"取自每天的会话，任务还能查以前的摘要，见 session.go。
 	sessions session.Store
+	// matters 非空时任务看得到它所属的那件事此前的进展，见 conversation.go。
+	matters MatterSource
 	// canRequestSecrets 为真表示助手可以在后台登记待用户填写的环境变量。
 	canRequestSecrets bool
 	// hasSandbox 为真表示启用了沙箱。
 	hasSandbox bool
+	// hasDevices 为真表示接入了手机端 App 这个数据源。
+	hasDevices bool
 	// hasWeather 为真表示接入了天气数据。
 	hasWeather bool
 	// hasFiles 为真表示启用了文件处理。
@@ -336,9 +337,17 @@ func (p *Planner) builtins() []mcpgw.ToolInfo {
 	if p.hasSandbox {
 		gated = append(gated, sandboxTool)
 	}
+	// 上下文里的记忆只有和这件事相关的那些；检索能翻到全部记忆，别人写的流程没声明就不能用。
+	if p.memory != nil {
+		gated = append(gated, searchMemoryTool)
+	}
 	// 以前的对话是用户最私人的记录，别人写的流程没声明就不能翻。
 	if p.sessions != nil {
 		gated = append(gated, recallTool)
+	}
+	// 手机上的数据是用户最私人的，别人写的流程没声明就不能读、不能向用户的手机要。
+	if p.hasDevices {
+		gated = append(gated, deviceQueryTool, deviceBatteryTool, deviceWhereTool, deviceRequestTool)
 	}
 	// 别人写的流程不能让后台多出一个向用户要密钥的输入框。
 	if p.canRequestSecrets {
@@ -503,26 +512,37 @@ func (p *Planner) propose(ctx context.Context, t *core.Task, history []*core.Ste
 	}
 	style := p.opts.styleRule()
 	// 用户的表达风格只给主模型：任务模型的结论不直接给用户，给用户的答复由主模型在审核时写。
+	voice := false
 	if p.voice != nil && p.worker == "" {
 		v, err := p.voice.Voice(ctx)
 		if err != nil {
 			return kernel.Decision{}, fmt.Errorf("agent: 读取表达风格失败: %w", err)
 		}
-		// 还什么都没学到、或者用户停用了这一段时不提这回事，免得模型去找一段并不存在的材料。
-		if rule := ps.get(PromptVoice); !v.Empty() && rule != "" {
-			style += "\n\n" + rule
+		// 还什么都没学到、或者用户停用了人设时不提这回事，免得模型去找一段并不存在的材料。
+		if !v.Empty() && ps.get(PromptPersona) != "" {
+			voice = true
 			// 紧跟在任务定义之后：先知道"替谁说话"，再看任务做到哪一步了。
 			segs = append(segs[:1], append([]llm.Segment{voiceSegment(v)}, segs[1:]...)...)
 		}
 	}
 	// 基础约束永远排在最前面，后面才是这一步具体怎么做。
 	// 没有当前时间，"下周三""国庆前后"这类说法模型无从换算。
-	parts := []string{ps.base(), ps.get(PromptPlanner)}
-	if p.hasWeb && p.permits(ToolWebSearch) {
-		parts = append(parts, ps.get(PromptWeb))
+	rules := ps.get(PromptPlanner)
+	if readDelegation(history).takeover == nil {
+		rules = dropSections(rules, headTakeover)
 	}
-	if p.hasFetch && p.permits(ToolWebFetch) {
-		parts = append(parts, ps.get(PromptFetch))
+	parts := []string{ps.base(voice), rules}
+	// 联网一段里搜索和读网页各占一节，没接入的那个工具不提。
+	search, fetch := p.hasWeb && p.permits(ToolWebSearch), p.hasFetch && p.permits(ToolWebFetch)
+	if search || fetch {
+		var drop []string
+		if !search {
+			drop = append(drop, headSearch)
+		}
+		if !fetch {
+			drop = append(drop, headFetch)
+		}
+		parts = append(parts, dropSections(ps.get(PromptWeb), drop...))
 	}
 	if p.library != nil && p.scope == nil {
 		parts = append(parts, ps.get(PromptCapability))

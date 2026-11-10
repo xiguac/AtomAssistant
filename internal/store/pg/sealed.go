@@ -72,8 +72,14 @@ var sealedColumns = map[string]map[string]colKind{
 	// 会话：用户和助手说的每一句话，以及每天的摘要。
 	"session_messages":  {"text": colText},
 	"session_summaries": {"summary": colText},
+	// 事项清单：事项的标题、历次进展，以及它所在的会话标识。
+	"matters": {"title": colText, "notes": colText, "chat": colText},
 	// 对外分享的链接：分享的路径和文件清单。
 	"share_links": {"path": colText, "files": colText},
+	// 手机端 App：设备名、上报的内容、授权需求的原因与参数。
+	"devices":         {"name": colText},
+	"device_data":     {"payload": colText},
+	"device_requests": {"reason": colText, "params": colText},
 }
 
 // sealer 是各个存储共用的加解密入口。

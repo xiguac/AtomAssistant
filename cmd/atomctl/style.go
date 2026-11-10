@@ -19,11 +19,11 @@ func styleCmd(ctx context.Context, st *pg.Store, cfg *config.Config, args []stri
 	if len(args) == 0 {
 		return fmt.Errorf("style 需要子命令: show / learn-mail / forget")
 	}
-	// 这里不接模型：CLI 只管攒样本和查看，概述由 atomd 在下一个任务结束时提炼。
-	learner := style.NewLearner(st.Style(), nil)
+	// 这里不接模型：CLI 只管攒样本和查看，风格由 atomd 更新。
+	learner := style.NewLearner(st.Style(), nil).WithDir(style.Dir(cfg.ConfigPath))
 	switch args[0] {
 	case "show":
-		return styleShow(ctx, st)
+		return styleShow(ctx, st, learner)
 	case "forget":
 		if err := learner.Forget(ctx); err != nil {
 			return err
@@ -45,7 +45,7 @@ func styleCmd(ctx context.Context, st *pg.Store, cfg *config.Config, args []stri
 	}
 }
 
-func styleShow(ctx context.Context, st *pg.Store) error {
+func styleShow(ctx context.Context, st *pg.Store, learner *style.Learner) error {
 	store := st.Style()
 	empty := true
 	for _, scene := range style.Scenes() {
@@ -53,7 +53,7 @@ func styleShow(ctx context.Context, st *pg.Store) error {
 		if err != nil {
 			return err
 		}
-		profile, err := store.GetProfile(ctx, scene)
+		profile, err := learner.Profile(ctx, scene)
 		if err != nil {
 			return err
 		}
@@ -66,10 +66,14 @@ func styleShow(ctx context.Context, st *pg.Store) error {
 			return err
 		}
 		fmt.Printf("【%s】共 %d 条样本\n", style.SceneName(scene), total)
+		when := "样本攒够后，在下一个任务结束时提炼"
+		if scene == style.SceneChat {
+			when = "每天的对话写成摘要后更新，那天至少要有 5 段可用的话"
+		}
 		if profile != nil {
-			fmt.Printf("概述（%s 提炼）：%s\n", profile.UpdatedAt.Local().Format("2006-01-02 15:04"), profile.Description)
+			fmt.Printf("风格文件 %s（%s 更新）：\n%s\n", learner.ProfilePath(scene), profile.UpdatedAt.Local().Format("2006-01-02 15:04"), profile.Description)
 		} else {
-			fmt.Println("概述：暂未提炼（样本攒够后，在下一个任务结束时提炼）")
+			fmt.Printf("风格：暂未生成（%s）\n", when)
 		}
 		fmt.Println("最近的样本：")
 		for _, s := range samples {

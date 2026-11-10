@@ -235,6 +235,8 @@ var inHouse = map[string]bool{
 	ToolCapabilityInstall: true,
 	// 只在用户自己的后台里多出一个空的输入框，值由用户填。
 	ToolVaultRequest: true,
+	// 只在用户自己的手机上多出一条待处理的需求，同不同意由用户定。
+	ToolDeviceRequest: true,
 	// 断网的沙箱，结果只写进本机工作区的一个新目录。
 	ToolSandboxRun: true,
 	// 建链接、撤销链接、在工作区里复制文件，都不把东西交给谁；地址要出去得经过对外发送的动作。

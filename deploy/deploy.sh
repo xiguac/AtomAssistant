@@ -7,6 +7,7 @@
 #   deploy/deploy.sh sandbox   安装代码沙箱：独立的 Python 环境与常用库，用 bubblewrap 隔离
 #   deploy/deploy.sh asr       安装语音识别服务（聊天里的语音消息转成文字；识别程序在 ASR_DIR，默认 ../asr-1.0）
 #   deploy/deploy.sh vector    安装向量记忆用的向量服务和 Qdrant（模型在 bin/embed，Qdrant 程序在 bin/qdrant-linux.tar.gz）
+#   deploy/deploy.sh ip2region 安装公网 IP 归属地库（ip2region，只到市级；助手据此在定位缺失或离谱时判断你在哪个城市）
 #   deploy/deploy.sh scanner   安装 Skill 扫描器 SkillSpector（助手自己安装 Skill、MCP server 之前要用它扫描）
 #   deploy/deploy.sh passwd    设置管理后台的登录口令（口令在你的终端里输入，不经过任何文件）
 #   deploy/deploy.sh tunnel    打开到管理后台的 SSH 隧道，然后在浏览器里访问 http://localhost:8780
@@ -193,6 +194,31 @@ case "${1:-release}" in
     "${SCP[@]}" "$QDRANT_PKG" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/atomassistant-vector/qdrant.tar.gz"
     remote "sudo bash /tmp/atomassistant-vector/vector.sh && rm -rf /tmp/atomassistant-vector && sudo systemctl restart atomassistant"
     ;;
+  ip2region)
+    # 在本机下载一次缓存起来，再传到服务器：服务器直接连 GitHub 不一定连得上。重启后生效。
+    XDB_DIR=bin/ip2region
+    XDB="$XDB_DIR/ip2region_v4.xdb"
+    if [ ! -s "$XDB" ]; then
+      echo "==> 下载 ip2region_v4.xdb（约 11 MB，只在第一次）"
+      mkdir -p "$XDB_DIR"
+      curl -fsSL -m 300 -o "$XDB.part" https://raw.githubusercontent.com/lionsoul2014/ip2region/master/data/ip2region_v4.xdb
+      mv "$XDB.part" "$XDB"
+    fi
+    echo "==> 上传"
+    "${SCP[@]}" "$XDB" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/ip2region_v4.xdb"
+    remote "set -e
+      sudo install -d -o root -g root -m 755 /opt/atomassistant/data
+      sudo install -o root -g root -m 644 /tmp/ip2region_v4.xdb /opt/atomassistant/data/ip2region_v4.xdb
+      rm -f /tmp/ip2region_v4.xdb
+      sudo systemctl restart atomassistant"
+    if result=$(healthy); then
+      echo "已安装并重启（$result）。"
+    else
+      echo "!! 服务没有起来。最近的日志：" >&2
+      remote "sudo journalctl -u atomassistant -n 30 --no-pager" >&2 || true
+      exit 1
+    fi
+    ;;
   release) release ;;
   rollback) rollback ;;
   passwd)
@@ -228,7 +254,7 @@ case "${1:-release}" in
     remote "systemctl status atomassistant --no-pager -n 0; echo; readlink /opt/atomassistant/current; echo; sudo journalctl -u atomassistant -n 25 --no-pager"
     ;;
   *)
-    echo "未知的子命令 $1（可用：setup / asr / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
+    echo "未知的子命令 $1（可用：setup / asr / ip2region / scanner / sandbox / release / passwd / tunnel / status / rollback）" >&2
     exit 2
     ;;
 esac

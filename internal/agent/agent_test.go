@@ -720,32 +720,37 @@ func TestPlanner_系统提示可以逐段改写与停用(t *testing.T) {
 	}
 
 	// 没有改动过：用内置的，各段按顺序拼起来。提示用英文写，只要求给用户看的内容用中文。
+	// 没学到表达风格时人设里不带学用户说话的一节；只接入了搜索时联网一段里不带读网页的一节。
+	persona, web := dropSections(personaRule, headVoice), dropSections(webRule, headFetch)
 	got := system(planner(nil))
-	if !strings.HasPrefix(got, baseRules+"\n\n"+personaRule+"\n\n"+plannerSystemPrompt+"\n\n"+webRule) {
+	if !strings.HasPrefix(got, baseRules+"\n\n"+persona+"\n\n"+dropSections(plannerSystemPrompt, headTakeover)+"\n\n"+web) {
 		t.Fatal("默认应使用内置的基础约束、人设、规划说明与联网搜索")
 	}
-	if !strings.Contains(got, "Think and reason in English") || !strings.Contains(got, "Simplified Chinese") {
-		t.Fatal("基础约束应要求用英文思考、用简体中文回复用户")
+	if strings.Contains(got, headVoice) || strings.Contains(got, headFetch) || strings.Contains(got, headTakeover) || !strings.Contains(got, headSearch) {
+		t.Fatal("用不上的小节应去掉，用得上的留着")
+	}
+	if strings.Contains(got, "Think and reason in English") || !strings.Contains(got, "简体中文") {
+		t.Fatal("基础约束不规定用什么语言思考，只要求用简体中文回复用户")
 	}
 	// 只改了基础约束：其余各段仍是内置的，工具目录照常附在后面。
 	got = system(planner(fakePrompts{PromptSettingKey(PromptBase): "# My rules"}))
-	if !strings.HasPrefix(got, "# My rules\n\n"+personaRule+"\n\n"+plannerSystemPrompt) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
+	if !strings.HasPrefix(got, "# My rules\n\n"+persona+"\n\n"+dropSections(plannerSystemPrompt, headTakeover)) || strings.Contains(got, baseRules) || !strings.Contains(got, "demo.weather") {
 		t.Fatalf("应以改写的基础约束开头: %s", truncate(got, 200))
 	}
 	// 停用的段落不加载；别的段落不受影响。
 	got = system(planner(fakePrompts{PromptOffKey(PromptWeb): "1", PromptOffKey(PromptBase): "1", PromptOffKey(PromptPersona): "1"}))
-	if strings.Contains(got, webRule) || strings.Contains(got, baseRules) || strings.Contains(got, personaRule) || !strings.HasPrefix(got, plannerSystemPrompt) {
+	if strings.Contains(got, web) || strings.Contains(got, baseRules) || strings.Contains(got, persona) || !strings.HasPrefix(got, dropSections(plannerSystemPrompt, headTakeover)) {
 		t.Fatalf("停用的段落不应出现在系统提示里: %s", truncate(got, 200))
 	}
 	// 规定了输出格式的段落停不掉：没有它程序解析不了模型的回答。
 	got = system(planner(fakePrompts{PromptOffKey(PromptPlanner): "1"}))
-	if !strings.Contains(got, plannerSystemPrompt) {
+	if !strings.Contains(got, dropSections(plannerSystemPrompt, headTakeover)) {
 		t.Fatal("必需的段落不应被停用")
 	}
 	// 用户自己添加的段落接在基础约束后面；停用的不加载。
 	extra := `[{"id":"1","title":"Calendar","text":"Courses go in the 个人 calendar."},{"id":"2","title":"Old","text":"Never load me.","off":true}]`
 	got = system(planner(fakePrompts{PromptExtraKey: extra}))
-	if !strings.HasPrefix(got, baseRules+"\n\n"+personaRule+"\n\n# Calendar\nCourses go in the 个人 calendar.\n\n"+plannerSystemPrompt) || strings.Contains(got, "Never load me") {
+	if !strings.HasPrefix(got, baseRules+"\n\n"+persona+"\n\n# Calendar\nCourses go in the 个人 calendar.\n\n"+dropSections(plannerSystemPrompt, headTakeover)) || strings.Contains(got, "Never load me") {
 		t.Fatalf("自定义段落应紧跟基础约束，停用的不加载: %s", truncate(got, 300))
 	}
 	// 存坏了的设置要报出来，不能悄悄当作没有。
@@ -759,5 +764,66 @@ func TestPlanner_系统提示可以逐段改写与停用(t *testing.T) {
 			t.Fatalf("段落登记不完整或重复: %+v", spec.Key)
 		}
 		seen[spec.Key] = true
+	}
+}
+
+func TestDropSections_合在一段里的各节按场合取用(t *testing.T) {
+	// 起草和评估方案各自只带自己那一节，输出格式不会串。
+	draft, review := dropSections(planPrompt, headPlanReview), dropSections(planPrompt, headDraft)
+	if !strings.Contains(draft, `"done_when"`) || strings.Contains(draft, `"verdict"`) || strings.Contains(draft, headPlanReview) {
+		t.Fatalf("起草时只应带起草那一节:\n%s", draft)
+	}
+	if !strings.Contains(review, `"verdict"`) || strings.Contains(review, "Before doing anything, write a brief plan") {
+		t.Fatalf("评估时只应带评估那一节:\n%s", review)
+	}
+	// 一节一直去到下一个同级标题；下一级标题（###）不算。
+	text := "# T\nintro\n## A\na\n### A1\na1\n## B\nb"
+	if got := dropSections(text, "## A"); got != "# T\nintro\n## B\nb" {
+		t.Fatalf("应去掉 A 整节，含它的子标题: %q", got)
+	}
+	// 用户改写时没有这个标题：整段照给。
+	if got := dropSections("# Mine\nkeep all", headVoice); got != "# Mine\nkeep all" {
+		t.Fatalf("找不到标题时不应删任何内容: %q", got)
+	}
+}
+
+func TestActuator_检索记忆用模型自己给的词(t *testing.T) {
+	now := time.Now().UTC()
+	st := memstore.New()
+	target := memory.New(memory.KindFact, "客户张总", "饮食", "不吃辣",
+		memory.Source{Kind: memory.SourceUser, Trust: core.TrustUser}, now)
+	target.Temporality = memory.TemporalDurable
+	putMemory(t, st, target)
+	mem := memory.NewRetriever(st, nil)
+
+	withMem := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{}).WithMemory(mem)
+	without := NewPlanner(&fakeModel{}, catalogWith(core.SideEffectReadOnly), PlannerOptions{})
+	if !strings.Contains(withMem.toolList(), ToolSearchMemory) || strings.Contains(without.toolList(), ToolSearchMemory) {
+		t.Fatal("检索记忆的工具只在接入记忆后开放")
+	}
+
+	tools := &fakeTools{}
+	a := NewActuator(tools, &fakeModel{replies: []string{"{}"}}).WithMemory(mem)
+	run := func(query string) kernel.Result {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]string{"query": query})
+		step := core.NewStep("task-1", 1, core.StepTool, raw)
+		step.ToolName, step.SideEffect = ToolSearchMemory, core.SideEffectNone
+		res, err := a.Execute(context.Background(), core.NewTask("t", "g", core.TrustUser), step)
+		if err != nil {
+			t.Fatalf("检索失败: %v", err)
+		}
+		return res
+	}
+	res := run("张总")
+	if len(tools.calls) != 0 || !strings.Contains(string(res.Output), "不吃辣") || !strings.Contains(string(res.Output), target.ID) {
+		t.Fatalf("应不经 MCP 网关返回记忆原文和编号: %s", res.Output)
+	}
+	// 记忆是事实材料不是指令。
+	if res.Trust.CanInstruct() {
+		t.Fatalf("记忆内容不应具备指令资格，实际 %s", res.Trust)
+	}
+	if res = run("股票"); !strings.Contains(string(res.Output), "没有找到") {
+		t.Fatalf("查不到时应明说: %s", res.Output)
 	}
 }

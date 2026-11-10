@@ -30,10 +30,18 @@ func memoryCmd(ctx context.Context, st *pg.Store, args []string) error {
 	switch args[0] {
 	case "list":
 		// list all 连已经归档、过期的也列出来，多一栏状态。
+		// list full 不截断内容，用来通读全部记忆。
+		full := len(args) > 1 && args[1] == "full"
 		all := len(args) > 1 && args[1] == "all"
 		list, err := store.List(ctx, memory.Query{IncludeInactive: all})
 		if err != nil {
 			return err
+		}
+		if full {
+			for _, m := range list {
+				fmt.Printf("%s [%s/%s] %s\n", m.ID, m.Kind, dash(m.Domain), memoryText(m))
+			}
+			return nil
 		}
 		if len(list) == 0 {
 			fmt.Println("（暂无记忆）")
@@ -118,9 +126,56 @@ func memoryCmd(ctx context.Context, st *pg.Store, args []string) error {
 			fmt.Printf("%s %s\n", o.Resolution, dash(o.MemoryID+o.PendingID))
 		}
 		return nil
+	case "import":
+		return memoryImport(ctx, store, args[1:])
 	default:
 		return fmt.Errorf("未知的 memory 子命令 %q", args[0])
 	}
+}
+
+// memoryImport 把其他助手导出的记忆文件合并导入。只报条数，不回显内容。
+// 带 --dry-run 只切分、核对账目，不写库。
+func memoryImport(ctx context.Context, store memory.Store, args []string) error {
+	dry := false
+	var texts []string
+	for _, a := range args {
+		if a == "--dry-run" {
+			dry = true
+			continue
+		}
+		b, err := os.ReadFile(a)
+		if err != nil {
+			return err
+		}
+		text := strings.TrimPrefix(string(b), "ï»¿")
+		one := memory.ParseExports(text)
+		fmt.Printf("%s: 找到 %d 条，留下 %d，占位跳过 %d\n", a, one.Found, len(one.Candidates), one.Skipped)
+		texts = append(texts, text)
+	}
+	if len(texts) == 0 {
+		return fmt.Errorf("import 需要至少一个文件: memory import [--dry-run] <文件>...")
+	}
+	r := memory.ParseExports(texts...)
+	fmt.Printf("合并后: 留下 %d 条，文件之间或文件内重复 %d，占位跳过 %d（共找到 %d 条）\n",
+		len(r.Candidates), r.Duplicates, r.Skipped, r.Found)
+	if dry {
+		fmt.Println("（--dry-run，未写入）")
+		return nil
+	}
+	out, err := memory.NewPipeline(store, nil).Ingest(ctx, r.Candidates)
+	if err != nil {
+		return err
+	}
+	written, pending := 0, 0
+	for _, o := range out {
+		if o.PendingID != "" {
+			pending++
+		} else {
+			written++
+		}
+	}
+	fmt.Printf("已写入 %d 条，待确认 %d 条\n", written, pending)
+	return nil
 }
 
 func memoryText(m *memory.Memory) string {

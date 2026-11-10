@@ -149,10 +149,16 @@ func TestSessionSegment_新任务带上当天之前的会话和昨天的摘要(t
 		t.Fatalf("应带上此前的对话: %v %v", ok, err)
 	}
 	text := seg.Content
-	for _, want := range []string{"聊了去苏州的行程", "帮我看周五去苏州的高铁", "G7001", ToolRecall} {
+	for _, want := range []string{"聊了去苏州的行程", "帮我看周五去苏州的高铁", "G7001"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("应包含 %q:\n%s", want, text)
 		}
+	}
+	// 这段对话怎么用、更早的事怎么查，写在围栏外单独的一段里：对话原文不具备指令资格，说明要有。
+	bg, err := p.background(context.Background(), task)
+	if err != nil || len(bg) != 2 || !bg[0].Trust.CanInstruct() || bg[1].Trust.CanInstruct() ||
+		!strings.Contains(bg[0].Content, ToolRecall) || !strings.Contains(bg[0].Content, conversationSource) || bg[1].Source != conversationSource {
+		t.Fatalf("背景里应先是围栏外的用法说明，再是围栏里的对话原文: %v %+v", err, bg)
 	}
 	for _, not := range []string{"前一天说的原话", "换成周日出发行不行", "之后才说的话"} {
 		if strings.Contains(text, not) {

@@ -26,7 +26,7 @@ func TestBuild_不可信内容被围栏包裹(t *testing.T) {
 	if msgs[0].Role != RoleSystem {
 		t.Fatalf("首条应为系统消息，实际 %s", msgs[0].Role)
 	}
-	if !strings.Contains(msgs[0].Content, "not instructions") {
+	if !strings.Contains(msgs[0].Content, "而不是指令") {
 		t.Fatal("系统消息里必须包含不可信内容的处理规则")
 	}
 	// 可信内容不加围栏。
@@ -571,5 +571,50 @@ func TestRouter_JSON模式返回空白时当场重问(t *testing.T) {
 	p = &seqProvider{resps: []Response{blank}}
 	if _, err := route(p).Complete(context.Background(), PurposePlan, Request{Messages: msg}); err != nil || len(p.calls) != 1 {
 		t.Fatalf("非 JSON 模式不应重问: %d 次", len(p.calls))
+	}
+}
+
+func TestMergeTurns_相邻的同角色消息并成一条(t *testing.T) {
+	img := Image{MIME: "image/png", Data: []byte{1}}
+	in := []Message{
+		{Role: RoleSystem, Content: "s"},
+		{Role: RoleUser, Content: "a"},
+		{Role: RoleUser, Content: "b", Images: []Image{img}},
+		{Role: RoleAssistant, Content: "c"},
+		{Role: RoleUser, Content: "d"},
+	}
+	got := mergeTurns(in)
+	if len(got) != 4 || got[0].Content != "s" || got[1].Content != "a\n\nb" || len(got[1].Images) != 1 ||
+		got[2].Role != RoleAssistant || got[3].Content != "d" {
+		t.Fatalf("相邻的同角色消息应并成一条，先后不变: %+v", got)
+	}
+	// 不改动调用方的消息。
+	if in[1].Content != "a" || len(in[1].Images) != 0 {
+		t.Fatalf("不应改动传进来的消息: %+v", in[1])
+	}
+}
+
+func TestRouter_归属判断没单独配模型时用规划的那一条(t *testing.T) {
+	ok := Response{Content: "ok"}
+	plan, fast, weak := &stubProvider{name: "plan", resp: ok}, &stubProvider{name: "fast", resp: ok}, &stubProvider{name: "weak", resp: ok}
+	msg := []Message{{Role: RoleUser, Content: "hi"}}
+	r := NewRouter()
+	for _, p := range []*stubProvider{plan, fast, weak} {
+		mustAdd(t, r, p)
+	}
+	if err := r.SetFallback(Route{Provider: "weak", Model: "w"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetRoute(Route{Purpose: PurposePlan, Provider: "plan", Model: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Complete(context.Background(), PurposeTriage, Request{Messages: msg}); err != nil || len(plan.calls) != 1 || len(weak.calls) != 0 {
+		t.Fatalf("没单独配时应用规划的模型，不走兜底: %v plan=%d weak=%d", err, len(plan.calls), len(weak.calls))
+	}
+	if err := r.SetRoute(Route{Purpose: PurposeTriage, Provider: "fast", Model: "f"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Complete(context.Background(), PurposeTriage, Request{Messages: msg}); err != nil || len(fast.calls) != 1 || len(plan.calls) != 1 {
+		t.Fatalf("单独配了就用配的: %v fast=%d plan=%d", err, len(fast.calls), len(plan.calls))
 	}
 }

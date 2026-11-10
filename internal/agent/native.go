@@ -73,7 +73,7 @@ func (p *Planner) toolDirectory() string {
 		return ""
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return "\n\nMCP tools (call " + ToolLoad + " first to get their parameters; after that they can be called directly):\n" + mcpDirectory(tools)
+	return "\n\nMCP 服务的工具（先调用 " + ToolLoad + " 取来参数，之后可以直接调用）：\n" + mcpDirectory(tools)
 }
 
 // maxCallReason 是工具调用旁边那段说明的长度上限，它作为这一步的理由显示给用户。

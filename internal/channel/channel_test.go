@@ -508,8 +508,9 @@ func TestHandle_图片原样交给任务与用户的话分开送(t *testing.T) {
 		tasks.log[1] != fmt.Sprintf("attach:处理图片|%d 张|qq", maxPictures) {
 		t.Fatalf("只发图片也应处理: %v", tasks.log)
 	}
-	if last := qq.sent[len(qq.sent)-1].Text; !strings.Contains(last, "只收下了前 4 张") {
-		t.Fatalf("超出张数上限应告知用户: %s", last)
+	// 最后一条是交给任务之后的回执，提示在它前面。
+	if n := len(qq.sent); n < 2 || !strings.Contains(qq.sent[n-2].Text, "只收下了前 4 张") || qq.sent[n-1].Text != defaultAck {
+		t.Fatalf("超出张数上限应告知用户，交给任务后回一句回执: %+v", qq.sent)
 	}
 
 	// 有任务在等回话：图片是给它的。先送图片，再送用户的话。
@@ -596,7 +597,9 @@ type fakeTriage struct {
 	seen  []Candidate
 	// reply 非空时回答"不用办事，直接回这句"。
 	reply string
-	last  TriageInput
+	// ack 是交给任务时模型写的回执，空着就不写。
+	ack  string
+	last TriageInput
 }
 
 func (f *fakeTriage) Triage(_ context.Context, in TriageInput) (Verdict, error) {
@@ -608,11 +611,11 @@ func (f *fakeTriage) Triage(_ context.Context, in TriageInput) (Verdict, error) 
 	case f.reply != "":
 		return Verdict{Reply: f.reply}, nil
 	case f.id != "":
-		return Verdict{TaskID: f.id}, nil
+		return Verdict{TaskID: f.id, Ack: f.ack}, nil
 	case f.pick == 0:
-		return Verdict{New: true}, nil
+		return Verdict{New: true, Ack: f.ack}, nil
 	case f.pick > 0 && f.pick <= len(cands):
-		return Verdict{TaskID: cands[f.pick-1].ID}, nil
+		return Verdict{TaskID: cands[f.pick-1].ID, Ack: f.ack}, nil
 	}
 	return Verdict{}, nil
 }
@@ -637,15 +640,29 @@ func TestRoute_一句话归给哪件事由主模型判断拿不准就问用户(t
 	if last() != "create:帮我订周五去苏州的高铁|帮我订周五去苏州的高铁" || len(tri.asked) != 2 {
 		t.Fatalf("没有进行中的任务时应新建: %s（问了模型 %d 次）", last(), len(tri.asked))
 	}
+	// 交给任务之后先回一句回执；模型没写的话用固定的那一句。
+	if got := qq.sent[len(qq.sent)-1].Text; got != defaultAck {
+		t.Fatalf("新建任务后应回一句回执: %q", got)
+	}
 	trip := tasks.tasks[0]
 	trip.State = core.StateRunning
 
 	// 任务还在办的时候补了一句：模型判断是说它的，就作为补充送过去，不另开任务。
-	tri.pick = 1
+	tri.pick, tri.ack = 1, "好，我记上。"
 	say("要靠窗的")
 	if last() != "reply:帮我订周五去苏州的高铁|要靠窗的|qq" {
 		t.Fatalf("补充的话应送给正在办的任务: %s", last())
 	}
+	if got := qq.sent[len(qq.sent)-1].Text; got != "好，我记上。" {
+		t.Fatalf("回执应用模型写的那一句: %q", got)
+	}
+	// 模型把答复写进了回执（太长）：不发它，发固定的那一句。
+	tri.ack = strings.Repeat("长", maxAckRunes+1)
+	say("最好是上午的车")
+	if got := qq.sent[len(qq.sent)-1].Text; got != defaultAck {
+		t.Fatalf("过长的回执应换成固定的那一句: %q", got)
+	}
+	tri.ack = ""
 	if len(tri.seen) != 1 || tri.seen[0].Status != "正在办" {
 		t.Fatalf("交给模型的候选不对: %+v", tri.seen)
 	}

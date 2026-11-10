@@ -12,6 +12,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Role 是消息角色。
@@ -131,6 +132,10 @@ const (
 	// PurposeSearch 联网搜索，要用自带搜索能力的模型。它不走兜底路由：
 	// 兜底的模型不一定能联网，拿它顶上只会得到一段看起来像查过的回答。
 	PurposeSearch Purpose = "search"
+	// PurposeTriage 判断聊天里的一句话归给哪件事。用户等的第一句回执就卡在这一次调用上，
+	// 所以可以单独给它配一个快的模型（或者同一个模型关掉思考）。没配时用规划的那一条，不走兜底：
+	// 兜底的模型可能弱得多，话归错了比慢几秒代价大。
+	PurposeTriage Purpose = "triage"
 )
 
 // Route 把一个用途绑定到具体的 provider 与模型。
@@ -226,6 +231,9 @@ func (r *Router) SetFallback(route Route) error {
 // Complete 按用途路由并执行一次补全。
 func (r *Router) Complete(ctx context.Context, purpose Purpose, req Request) (Response, error) {
 	route, ok := r.routes[purpose]
+	if !ok && purpose == PurposeTriage {
+		route, ok = r.routes[PurposePlan]
+	}
 	if !ok {
 		if r.fallback == nil {
 			return Response{}, fmt.Errorf("%w: 用途 %s 未配置路由且无兜底", ErrNoProvider, purpose)
@@ -259,6 +267,7 @@ func (r *Router) run(ctx context.Context, what string, route Route, req Request)
 	}
 
 	req.Model = route.Model
+	req.Messages = mergeTurns(req.Messages)
 	if req.MaxTokens == 0 {
 		req.MaxTokens = route.MaxTokens
 	}
@@ -308,7 +317,7 @@ func (r *Router) logCall(what string, route Route, req Request, resp Response, t
 	}
 	chars := 0
 	for _, m := range req.Messages {
-		chars += len([]rune(m.Content))
+		chars += utf8.RuneCountInString(m.Content)
 	}
 	args := []any{
 		"用途", what, "provider", route.Provider, "模型", route.Model,

@@ -1,0 +1,9 @@
+本目录是后台「文件」页在浏览器里查看和修改文件用的第三方库，原样随程序分发。
+
+jszip-3.10.2.min.js          JSZip 3.10.2        MIT OR GPL-3.0-or-later（按 MIT 使用）   https://github.com/Stuk/jszip
+docx-preview-0.4.1.min.js    docx-preview 0.4.1  Apache-2.0                              https://github.com/VolodymyrBaydalka/docxjs
+pptx-preview-1.0.7.umd.js    pptx-preview 1.0.7  ISC（内含 echarts、lodash、uuid 等，各按其许可）  https://www.npmjs.com/package/pptx-preview
+pdfjs-6.4.299.min.mjs        pdfjs-dist 6.4.299  Apache-2.0                              https://github.com/mozilla/pdf.js
+pdfjs-worker-6.4.299.min.mjs 同上
+
+Apache-2.0 全文：https://www.apache.org/licenses/LICENSE-2.0

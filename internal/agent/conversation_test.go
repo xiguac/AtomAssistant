@@ -93,22 +93,26 @@ func TestTriager_按模型的回答定出归属(t *testing.T) {
 		{ID: "C", Title: "查天气", Goal: "苏州周五天气", Status: "刚办完：周五多云", Idle: 2 * time.Hour, Finished: true},
 	}
 	for reply, want := range map[string]channel.Verdict{
-		`{"target": "2"}`:                     {TaskID: "B"},
-		`{"target": 1}`:                       {TaskID: "A"},
-		`{"target": "new"}`:                   {New: true},
-		`{"target": "unsure"}`:                {},
-		`{"target": "7"}`:                     {},
-		`{"target": "reply", "reply": "不客气"}`: {Reply: "不客气"},
-		`{"target": "reply"}`:                 {},
+		`{"target": "2"}`:   {TaskID: "B"},
+		`{"target": 1}`:     {TaskID: "A"},
+		`{"target": "new"}`: {New: true},
+		// 交给任务去办的，模型顺带写一句回执，先发给用户。
+		`{"target": "new", "ack": " 收到，我查一下。"}`: {New: true, Ack: "收到，我查一下。"},
+		`{"target": "2", "ack": "好，我记上。"}`:      {TaskID: "B", Ack: "好，我记上。"},
+		`{"target": "unsure"}`:                  {},
+		`{"target": "7"}`:                       {},
+		`{"target": "reply", "reply": "不客气"}`:   {Reply: "不客气"},
+		`{"target": "reply"}`:                   {},
 	} {
 		m := &fakeModel{replies: []string{reply}}
 		got, err := NewTriager(m).Triage(context.Background(), channel.TriageInput{Text: "住观前街附近", Candidates: cands})
 		if err != nil || got != want {
 			t.Fatalf("回答 %s 应得到 %+v: %+v %v", reply, want, got, err)
 		}
-		// 候选和这句话都交给了主模型，要求只输出 JSON。
+		// 候选和这句话都交给了主模型，用函数调用作答，不开 JSON 模式；正文里直接写了 JSON 的也照收，不再问第二次。
 		user := m.lastReq.Messages[len(m.lastReq.Messages)-1].Content
-		if m.lastPurp != llm.PurposePlan || !m.lastReq.JSONMode || !strings.Contains(user, "订酒店") || !strings.Contains(user, "住观前街附近") {
+		if m.lastPurp != llm.PurposeTriage || m.lastReq.JSONMode || len(m.lastReq.Tools) != 1 || m.lastReq.Tools[0].Name != triageForm.Name || m.calls != 1 ||
+			!strings.Contains(user, "订酒店") || !strings.Contains(user, "住观前街附近") {
 			t.Fatalf("交给模型的内容不对: %s", user)
 		}
 		// 不自己限输出长度：开着思考时思考也算在输出里，限紧了正文会被挤掉。
@@ -116,8 +120,8 @@ func TestTriager_按模型的回答定出归属(t *testing.T) {
 			t.Fatalf("不该限输出长度: %d", m.lastReq.MaxTokens)
 		}
 		// 每件事带上用户上次说到它是多久以前，刚办完的标出来；系统提示讲明半小时之内默认算接着说。
-		if !strings.Contains(user, "3 minutes ago") || !strings.Contains(user, "2 hours ago") || !strings.Contains(user, "just finished") ||
-			!strings.Contains(m.lastReq.Messages[0].Content, "within the last 30 minutes") {
+		if !strings.Contains(user, "3 分钟前") || !strings.Contains(user, "2 小时前") || !strings.Contains(user, "刚办完") ||
+			!strings.Contains(m.lastReq.Messages[0].Content, "最近 30 分钟内") {
 			t.Fatalf("交给模型的内容里应有时间线索: %s", user)
 		}
 	}

@@ -357,7 +357,8 @@
     }
     var btn = ev.submitter || null;
     var action = (btn && btn.getAttribute("formaction")) || form.getAttribute("action") || "";
-    if (!action || form.hasAttribute("data-poll") || (form.enctype || "").indexOf("multipart") >= 0 ||
+    // data-plain：这个表单的应答是一整页（如添加设备后显示一次性的配对码），照普通提交处理。
+    if (!action || form.hasAttribute("data-poll") || form.hasAttribute("data-plain") || (form.enctype || "").indexOf("multipart") >= 0 ||
         /^\/(login|logout|restart)/.test(action)) {
       return;
     }

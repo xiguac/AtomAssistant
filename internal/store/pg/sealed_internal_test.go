@@ -80,6 +80,9 @@ var plainColumns = map[string][]string{
 	"session_messages":    {"id", "day", "role", "channel", "task_id"},
 	"session_summaries":   {"day"},
 	"share_links":         {"id", "token_hash", "task_id"},
+	"devices":             {"id", "pair_hash", "token_hash", "model", "os"},
+	"device_data":         {"device_id", "kind", "item_key", "request_id"},
+	"device_requests":     {"id", "device_id", "kind", "task_id", "status"},
 	"seal_state":          {"key_id"},
 	"schema_migrations":   {"version"},
 }

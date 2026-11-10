@@ -16,7 +16,26 @@ import (
 type MemoryProvider interface {
 	Assemble(ctx context.Context, subject string, scene memory.Scene, budget memory.Budget) (memory.Assembly, error)
 	Expand(ctx context.Context, id string) (*memory.Memory, error)
+	Search(ctx context.Context, subject, query string, limit int) ([]memory.Item, error)
 }
+
+// ToolSearchMemory 是内置工具：让模型用自己的检索词查长期记忆。
+//
+// 上下文里的记忆是任务开始时按用户那句话找的，之后不再变。办到一半才出现的人、地点、话题，
+// 当初那次检索想不到；有了这个工具，模型可以自己再查，不必去问用户已经说过的事。
+const ToolSearchMemory = "memory.search"
+
+// searchMemoryLimit 是一次检索返回的条数上限。
+const searchMemoryLimit = 8
+
+var searchMemoryTool = builtin(ToolSearchMemory,
+	`按你给的词查关于用户的长期记忆，返回最相关的几条原文。`+
+		`上下文里已有的记忆是按任务开头那句话找的：办到一半出现了新的人、地点、话题，`+
+		`或者要确认用户有没有说过某个偏好、习惯、约定时，先用它查，查不到再问用户。`+
+		`一次查一件事，用具体的词（人名、地名、事项），不要把整句话放进去。`,
+	`{"type":"object","properties":{"query":{"type":"string","description":"要查的词，如「张总 忌口」「常住城市」"}},"required":["query"]}`,
+	// 只读用户自己的记忆，没有任何外部副作用。
+	core.SideEffectNone)
 
 // ToolExpandMemory 是内置工具：让模型把索引行展开成原文。
 //
@@ -253,6 +272,41 @@ func sceneOf(t *core.Task) memory.Scene {
 		scene.Condition = cond
 	}
 	return scene
+}
+
+// runSearchMemory 执行内置的记忆检索。
+func (a *Actuator) runSearchMemory(ctx context.Context, t *core.Task, raw json.RawMessage) (json.RawMessage, error) {
+	if a.memory == nil {
+		return nil, fmt.Errorf("agent: 未启用记忆系统，无法检索")
+	}
+	var in struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, fmt.Errorf("agent: 解析检索参数失败: %w", err)
+	}
+	if strings.TrimSpace(in.Query) == "" {
+		return nil, fmt.Errorf("agent: 检索记忆需要 query")
+	}
+	items, err := a.memory.Search(ctx, memorySubject(t), in.Query, searchMemoryLimit)
+	if err != nil {
+		return nil, fmt.Errorf("agent: 检索记忆失败: %w", err)
+	}
+	type hit struct {
+		ID      string `json:"id"`
+		Content string `json:"content"`
+	}
+	out := struct {
+		Results []hit  `json:"results"`
+		Note    string `json:"note,omitempty"`
+	}{Results: make([]hit, 0, len(items))}
+	for _, it := range items {
+		out.Results = append(out.Results, hit{ID: it.Memory.ID, Content: memory.RenderFull(it.Memory)})
+	}
+	if len(items) == 0 {
+		out.Note = "记忆里没有找到与这个词相关的内容。可以换一个说法再查一次；仍然没有就是没记过。"
+	}
+	return json.Marshal(out)
 }
 
 // expandInput 是 memory.expand 的参数。

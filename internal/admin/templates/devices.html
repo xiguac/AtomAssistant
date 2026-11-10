@@ -1,0 +1,103 @@
+{{define "content"}}
+<h1>手机</h1>
+<div class="sub">手机上的原子助手 App 是一个数据源：它采集接口拿不到、只有手机本机才有的数据（运动、健康、系统状态等），上报到这里供助手查询。位置、详细健康记录这类最私人的数据不会自动上报，助手需要时向手机下发需求，由你在 App 里逐次同意。</div>
+
+{{with .Data.New}}
+<div class="banner ok"><svg class="ico" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><div>设备「{{.Name}}」已添加。在手机 App 里扫描下方二维码，或手动填写服务器地址和配对码。配对码仅此一次可见，{{when $.Data.Expires}} 前有效，只能用一次。</div></div>
+<div class="cols even">
+<h2>配对二维码</h2>
+<div class="card">
+  <div class="pad" style="display:flex;justify-content:center">
+    <div class="totp" style="grid-template-columns:240px"><div class="qr">{{$.Data.QR}}</div></div>
+  </div>
+</div>
+<h2>手动配对</h2>
+<div class="card">
+  <div class="pad">
+    <label>服务器地址</label>
+    <div class="mono" style="font-size:14px;color:var(--text);word-break:break-all">{{$.Data.Base}}</div>
+    <label style="margin-top:16px">配对码</label>
+    <div class="mono" style="font-size:28px;line-height:36px;letter-spacing:.12em;color:var(--primary);font-weight:600">{{$.Data.Code}}</div>
+  </div>
+</div>
+</div>
+{{end}}
+
+<div class="cols">
+<div>
+<h2>设备 <span class="count">{{len .Data.Devices}}</span></h2>
+<div class="card">
+  {{if .Data.Devices}}<table>
+    <thead><tr><th>名称</th><th>状态</th><th>已上报的数据</th><th class="r">操作</th></tr></thead>
+    <tbody>{{range .Data.Devices}}<tr>
+      <td><b style="color:var(--text)">{{.Name}}</b>{{if .Model}}<div class="note muted" style="margin-top:4px">{{.Model}}{{if .OS}} · {{.OS}}{{end}}</div>{{end}}</td>
+      <td>{{if eq .Status "online"}}<span class="dot"></span>已配对{{if .Admin}} <span class="count info">可管理后台</span>{{end}}<div class="note muted" style="margin-top:4px">最近在线 {{when .LastSeenAt}}</div>
+        {{else if eq .Status "waiting"}}<span class="dot warn"></span>等待配对<div class="note muted" style="margin-top:4px">配对码 {{when .PairExpiresAt}} 前有效</div>
+        {{else if eq .Status "expired"}}<span class="muted">配对码已过期</span>
+        {{else}}<span class="muted">已吊销</span>{{end}}</td>
+      <td>{{range .Stats}}<div style="margin:2px 0"><span class="chip">{{.Kind}}</span>{{.Count}} 条<span class="muted"> · 最新 {{when .Latest}}</span></div>{{else}}<span class="muted">暂无</span>{{end}}</td>
+      <td class="r"><div class="actions" style="justify-content:flex-end;flex-wrap:wrap">
+        {{if eq .Status "online"}}
+        <form method="post" action="/devices/interval" class="actions" style="gap:6px"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+          <select name="minutes" aria-label="上报间隔" style="width:auto">{{$cur := .SyncMinutes}}{{range $.Data.Choices}}<option value="{{.}}"{{if eq . $cur}} selected{{end}}>每 {{.}} 分钟</option>{{end}}</select>
+          <button class="btn sec sm">设置间隔</button></form>
+        <form method="post" action="/devices/admin"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="on" value="{{if .Admin}}0{{else}}1{{end}}"><button class="btn sec sm">{{if .Admin}}关闭管理权限{{else}}允许管理后台{{end}}</button></form>
+        <form method="post" action="/devices/clear"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sec sm">清空数据</button></form>
+        <form method="post" action="/devices/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn sec sm">吊销</button></form>
+        {{end}}
+        <form method="post" action="/devices/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="btn danger sm">删除</button></form>
+      </div></td>
+    </tr>{{end}}</tbody>
+  </table>{{else}}<div class="empty">还没有设备。在右侧填写名称添加，然后用手机配对。</div>{{end}}
+</div>
+
+{{if .Data.Pending}}
+<h2>等你在手机上授权的需求 <span class="count warn">{{len .Data.Pending}}</span></h2>
+<div class="card">
+  <table>
+    <thead><tr><th>数据</th><th>原因</th><th>设备</th><th>有效至</th></tr></thead>
+    <tbody>{{range .Data.Pending}}<tr>
+      <td><span class="chip">{{.Kind}}</span><div class="note muted" style="margin-top:4px">{{.KindLabel}}</div></td>
+      <td>{{.Reason}}</td><td>{{.DeviceName}}</td><td class="time">{{when .ExpiresAt}}</td>
+    </tr>{{end}}</tbody>
+  </table>
+  <div class="band foot"><span class="note muted">这些需求由助手在办任务时提出，要在手机 App 的「待授权」里同意后才会采集。原因由助手填写，请核对。</span></div>
+</div>{{end}}
+</div>
+
+<div>
+<h2>添加设备</h2>
+<form method="post" action="/devices" class="card" autocomplete="off" data-plain>
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="pad">
+    <label for="d-name">设备名称</label>
+    <input id="d-name" type="text" name="name" placeholder="如：我的 iPhone" required maxlength="40">
+    <label for="d-base" style="margin-top:16px">服务器地址</label>
+    <input id="d-base" type="text" name="base" value="{{.Data.Base}}" required>
+    <div class="help">手机访问这台服务器用的地址，必须是 https。配对码十分钟内有效，只能用一次。</div>
+  </div>
+  <div class="band foot"><span class="note muted">配对后手机拿到一个只属于它的令牌，丢了就在这里吊销。</span><button class="btn">生成配对码</button></div>
+</form>
+
+<h2>手机提问的答复</h2>
+<form method="post" action="/devices/reply-channel" class="card">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="pad">
+    <label for="d-reply">发到哪个消息源</label>
+    <select id="d-reply" name="channel">{{$cur := .Data.ReplyChannel}}{{range .Data.Channels}}<option value="{{.}}"{{if eq . $cur}} selected{{end}}>{{.}}</option>{{else}}<option value="{{.Data.ReplyChannel}}">{{.Data.ReplyChannel}}（尚未配置）</option>{{end}}</select>
+    <div class="help">手机上的快捷指令把你说的话（可带截屏）交给助手，助手想好后，答复通过这个消息源发给你。默认是 qq；要先在「消息源」页配置好并绑定主人。</div>
+  </div>
+  <div class="band foot"><span class="note muted">QQ 机器人对主动发消息有限制，很久没在 QQ 里和助手说过话时，答复可能发不出去。</span><button class="btn sec sm">保存</button></div>
+</form>
+
+<h2>数据种类</h2>
+<div class="card">
+  <table><tbody>{{range .Data.Kinds}}<tr>
+    <td><span class="chip">{{.ID}}</span></td><td>{{.Label}}</td>
+    <td>{{if eq .Role "decision"}}<span class="count info">辅助决策</span>{{else}}<span class="count">先存着</span>{{end}}</td>
+    <td class="r">{{if .Server}}<span class="count info">服务器推断</span>{{else if .PerUse}}<span class="count warn">按次授权</span>{{else}}<span class="count">可持续上报</span>{{end}}</td>
+  </tr>{{end}}</tbody></table>
+</div>
+</div>
+</div>
+{{end}}

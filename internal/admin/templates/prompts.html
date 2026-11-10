@@ -1,33 +1,32 @@
 {{define "content"}}
 <h1>系统提示词</h1>
-<div class="sub">系统提示词由若干段落按场合组合而成。可逐段查看与修改，并设置是否加载；保存后立即生效，无需重启服务。提示词以英文编写：模型以英文思考，面向用户的回复使用简体中文。回复风格、当前时间与工具目录由系统自动附加，不在此处编辑。</div>
+<div class="sub">系统提示词由若干段落按场合组合而成，可逐段查看、修改并设置是否加载，保存后立即生效。提示词以简体中文编写；回复风格、当前时间与工具目录由系统自动附加。</div>
 
 {{with .Data}}
+<h2>自定义段落 <span class="count">{{len .Extras}}</span>
+  <button type="button" class="btn sm" data-dialog="dlg-extra">添加段落</button></h2>
 <div class="card">
-  <div class="band"><span class="actions"><b>自定义段落</b><span class="count">{{len .Extras}}</span></span><button type="button" class="btn sm" data-dialog="dlg-extra">添加段落</button></div>
   {{range .Extras}}
   <div class="prompt">
     <div class="prompt-head">
-      <div class="body">
+      <div class="prompt-title">
         <b>{{.Title}}</b>
-        <span class="pill info plain">自定义</span>
         {{if .Off}}<span class="pill warn plain">已停用</span>{{end}}
-        <div class="note muted">每次决策均加载，位于基础约束之后，主模型与任务模型均适用。</div>
+        <form method="post" action="/prompts/extra/toggle">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
+          <button class="switch{{if not .Off}} on{{end}}" role="switch" aria-checked="{{if .Off}}false{{else}}true{{end}}" aria-label="加载「{{.Title}}」"{{if .Off}} name="on" value="1"{{end}}></button>
+        </form>
       </div>
-      <form method="post" action="/prompts/extra/toggle" class="actions" style="flex-wrap:nowrap">
-        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
-        <span class="note muted">加载</span>
-        <button class="switch{{if not .Off}} on{{end}}" role="switch" aria-checked="{{if .Off}}false{{else}}true{{end}}" aria-label="加载「{{.Title}}」"{{if .Off}} name="on" value="1"{{end}}></button>
-      </form>
+      <div class="note muted">每次决策均加载，位于基础约束之后，主模型与任务模型均适用。</div>
     </div>
     <details class="fold"><summary><span>查看与编辑</span></summary>
       <form method="post" action="/prompts/extra">
         <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}">
-        <label>标题</label>
-        <input name="title" value="{{.Title}}" aria-label="标题">
+        <div class="pad"><label for="ex-title-{{.ID}}">标题</label>
+          <input id="ex-title-{{.ID}}" type="text" name="title" value="{{.Title}}"></div>
         <textarea class="code" name="text" aria-label="{{.Title}}" spellcheck="false" style="white-space:pre-wrap;min-height:220px">{{.Text}}</textarea>
         <div class="band foot">
-          <span class="note muted">建议以英文编写，与内置段落保持一致。</span>
+          <span class="note muted">建议以简体中文编写，与内置段落保持一致。</span>
           <div class="actions">
             <button class="btn" style="order:9">保存</button>
             <button class="btn danger sec" formaction="/prompts/extra/delete">删除</button>
@@ -36,7 +35,7 @@
       </form>
     </details>
   </div>
-  {{else}}<div class="empty">暂无自定义段落。可点击右上角「添加段落」，补充内置段落未覆盖的规则。</div>{{end}}
+  {{else}}<div class="empty">暂无自定义段落。可添加段落，补充内置段落未覆盖的规则。</div>{{end}}
 </div>
 
 <dialog class="modal" id="dlg-extra">
@@ -45,8 +44,8 @@
   <div class="band"><b class="modal-title">添加段落</b><button type="button" class="x" data-close aria-label="关闭"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
   <div class="pad">
     <label for="ex-title">标题</label>
-    <input id="ex-title" name="title" placeholder="例如：Calendar conventions">
-    <label for="ex-text">内容</label>
+    <input id="ex-title" type="text" name="title" placeholder="例如：Calendar conventions">
+    <label for="ex-text" style="margin-top:14px">内容</label>
     <textarea id="ex-text" name="text" style="min-height:240px;font:12px/18px var(--mono)" spellcheck="false" placeholder="- Put course events in the 个人 calendar."></textarea>
     <div class="help">每次决策均加载，位于基础约束之后，主模型与任务模型均适用。规则不得与基础约束冲突；冲突时以基础约束为准。</div>
   </div>
@@ -54,22 +53,22 @@
 </form>
 </dialog>
 
+<h2>内置段落 <span class="count">{{len .Specs}}</span></h2>
 <div class="card">
-  <div class="band"><b>内置段落</b><span class="count">{{len .Specs}}</span></div>
   {{range .Specs}}
   <div class="prompt">
     <div class="prompt-head">
-      <div class="body">
+      <div class="prompt-title">
         <b>{{.Title}}</b>
-        {{if .Custom}}<span class="pill info plain">已修改</span>{{else}}<span class="pill plain">内置</span>{{end}}
-        {{if .Required}}<span class="pill plain">必需</span>{{else if not .On}}<span class="pill warn plain">已停用</span>{{end}}
-        <div class="note muted">{{.Usage}}</div>
+        {{if .Custom}}<span class="pill info plain">已修改</span>{{end}}
+        {{if .Required}}<span class="pill plain" title="该段落规定输出格式，不可停用">必需</span>
+        {{else}}{{if not .On}}<span class="pill warn plain">已停用</span>{{end}}
+        <form method="post" action="/prompts/toggle">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="key" value="{{.Key}}">
+          <button class="switch{{if .On}} on{{end}}" role="switch" aria-checked="{{if .On}}true{{else}}false{{end}}" aria-label="加载「{{.Title}}」"{{if not .On}} name="on" value="1"{{end}}></button>
+        </form>{{end}}
       </div>
-      <form method="post" action="/prompts/toggle" class="actions" style="flex-wrap:nowrap">
-        <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="key" value="{{.Key}}">
-        <span class="note muted">加载</span>
-        <button class="switch{{if .On}} on{{end}}" role="switch" aria-checked="{{if .On}}true{{else}}false{{end}}" aria-label="加载「{{.Title}}」"{{if not .On}} name="on" value="1"{{end}}{{if .Required}} disabled title="该段落规定输出格式，不可停用"{{end}}></button>
-      </form>
+      <div class="note muted">{{.Usage}}</div>
     </div>
     <details class="fold"><summary><span>查看与编辑</span></summary>
       <form method="post" action="/prompts">

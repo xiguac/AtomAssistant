@@ -5,7 +5,7 @@
 {{with .Data}}
 <div class="cols even">
 <div>
-<h2 style="margin-top:0">日历 <span class="count">{{len .Calendars}}</span>
+<h2>日历 <span class="count">{{len .Calendars}}</span>
   <button type="button" class="btn sm" data-dialog="dlg-cal" data-title="添加日历">添加日历</button></h2>
 <div class="card rows accounts">{{range .Calendars}}<div>
   <div class="acct">
@@ -41,7 +41,7 @@
 </div>
 
 <div>
-<h2 style="margin-top:0">邮箱 <span class="count">{{len .Mailboxes}}</span>
+<h2>邮箱 <span class="count">{{len .Mailboxes}}</span>
   <button type="button" class="btn sm" data-dialog="dlg-mail" data-title="添加邮箱">添加邮箱</button></h2>
 <div class="card rows accounts">{{range .Mailboxes}}<div>
   <div class="acct">

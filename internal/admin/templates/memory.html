@@ -3,9 +3,15 @@
 <div class="sub">用户明确陈述的信息直接保存。模型推断的信息以较低权重保存，经后续任务交叉验证后提高权重，也可在此确认或删除。待确认的推断达到一定数量后，主模型会定期合并内容相同或互补的条目；合并后的条目仍需确认。</div>
 
 {{with .Data}}
-<form method="post" action="/memory/ask" class="card quick" style="margin-bottom:16px">
+<h2>助手眼中的你{{if not .ProfileAt.IsZero}}<span class="note muted" style="font-weight:400">{{.ProfileAt.Local.Format "2006-01-02 15:04"}} 更新</span>{{end}}</h2>
+<div class="card">
+  <div class="pad">{{if .Profile}}<div style="white-space:pre-wrap;word-break:break-word;line-height:1.8">{{.Profile}}</div>{{else}}<div class="empty">{{if .Memories}}摘要还没有生成，点下面的按钮生成，之后每天自动更新。{{else}}暂无记忆。记忆将随任务的执行逐步积累。{{end}}</div>{{end}}</div>
+  <div class="band foot"><span class="note muted">这是根据下面保存的记忆整合出来的，每天更新一次。有不对的地方，用下面的「用对话修改记忆」说一声即可。</span>
+    <form method="post" action="/memory/profile"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="btn sec sm">立即重新生成</button></form></div>
+</div>
+<h2>用对话修改记忆</h2>
+<form method="post" action="/memory/ask" class="card quick">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
-  <div class="band"><b>用对话修改记忆</b></div>
   <div class="pad" style="padding-bottom:8px">
     <textarea class="bare" name="ask" maxlength="500" aria-label="修改说明" placeholder="例如：删除关于前公司的内容；我的生日改为 5 月 3 日">{{with .Proposal}}{{.Ask}}{{end}}</textarea>
   </div>
@@ -13,7 +19,7 @@
 </form>
 
 {{with .Proposal}}
-<h2 style="margin-top:0">待确认的修改 <span class="count">{{len .Changes}}</span></h2>
+<h2>待确认的修改 <span class="count">{{len .Changes}}</span></h2>
 {{if .Changes}}<form method="post" action="/memory/apply" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <div class="rows changes">
@@ -35,8 +41,9 @@
 
 <div class="cols">
 <div>
-<h2>已保存 <span class="count">{{len .Memories}}</span></h2>
+<h2>原始条目 <span class="count">{{len .Memories}}</span></h2>
 <div class="card">
+<details class="fold"><summary><span>展开全部条目</span></summary>
   {{if .Memories}}<table>
     <thead><tr><th style="width:96px">类型</th><th style="width:150px">主体</th><th>内容</th><th style="width:150px">来源与权重</th><th class="r" style="width:150px">操作</th></tr></thead>
     <tbody>{{range .Memories}}<tr>
@@ -51,10 +58,11 @@
       </div></td>
     </tr>{{end}}</tbody>
   </table>{{else}}<div class="empty">暂无记忆。记忆将随任务的执行逐步积累。</div>{{end}}
+</details>
 </div>
 </div>
 <div class="lead">
-<h2 style="margin-top:0">待核实 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
+<h2>待核实 <span class="count {{if .Pending}}warn{{end}}">{{len .Pending}}</span></h2>
 {{range .Pending}}
 <div class="attn" style="align-items:flex-start">
   <div class="body">

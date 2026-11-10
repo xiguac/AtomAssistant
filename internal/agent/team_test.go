@@ -80,7 +80,7 @@ func TestDispatch_主AI只有配了协作模型才能派活而且选不了模型
 	}
 	// 动手之前先问清楚、每问带上建议的答案：这是沉淀流程的前提，写在系统提示里，每个任务都带着。
 	system := m.lastReq.Messages[0].Content
-	if !strings.Contains(system, "Clarify before acting") || !strings.Contains(system, "your recommended answer") {
+	if !strings.Contains(system, "动手之前先对齐") || !strings.Contains(system, "你建议的答案") {
 		t.Fatal("系统提示里应有先问清楚再动手的要求")
 	}
 }

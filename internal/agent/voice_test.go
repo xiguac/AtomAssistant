@@ -10,8 +10,31 @@ import (
 	"github.com/xiguac/atomassistant/internal/core"
 	"github.com/xiguac/atomassistant/internal/event"
 	"github.com/xiguac/atomassistant/internal/memory"
+	"github.com/xiguac/atomassistant/internal/memory/memstore"
+	"github.com/xiguac/atomassistant/internal/session"
 	"github.com/xiguac/atomassistant/internal/style"
 )
+
+func TestVoice_每天写完摘要后按用户当天的话修订风格(t *testing.T) {
+	ctx := context.Background()
+	model := &fakeModel{replies: []string{`{"memories":[]}`}}
+	voice := &fakeVoice{err: errors.New("模型超时")}
+	ep := NewEpilogue(model, memory.NewPipeline(memstore.New(), nil)).WithVoice(voice)
+	msgs := []session.Message{
+		{Role: session.RoleUser, Text: "明天早上的高铁帮我看下"},
+		{Role: session.RoleAssistant, Text: "查到三班，最早 7:05"},
+		{Role: session.RoleUser, Text: "行 就这班"},
+	}
+	err := ep.DayFinished(ctx, "2026-10-10", "订了明早的高铁", msgs)
+	// 只学用户说的；助手的回复不算。
+	if voice.dayRef != "session:2026-10-10" || len(voice.day) != 2 || voice.day[1] != "行 就这班" {
+		t.Fatalf("应把当天用户说的话交去修订风格: %q %q", voice.dayRef, voice.day)
+	}
+	// 风格修订失败要报出来，但不能连累记忆的提炼。
+	if err == nil || !strings.Contains(err.Error(), "模型超时") || model.calls != 1 {
+		t.Fatalf("风格失败应报错，记忆照常提炼: %v %d", err, model.calls)
+	}
+}
 
 type fakeVoice struct {
 	voice    style.Voice
@@ -20,6 +43,9 @@ type fakeVoice struct {
 	observed []string
 	refresh  style.Cost
 	err      error
+	// dayRef 与 day 是 LearnDay 收到的。
+	dayRef string
+	day    []string
 }
 
 func (f *fakeVoice) Voice(context.Context) (style.Voice, error) { return f.voice, nil }
@@ -30,6 +56,11 @@ func (f *fakeVoice) Observe(_ context.Context, scene, ref string, texts []string
 }
 
 func (f *fakeVoice) Refresh(context.Context) (style.Cost, error) { return f.refresh, nil }
+
+func (f *fakeVoice) LearnDay(_ context.Context, ref string, texts []string) (style.Cost, error) {
+	f.dayRef, f.day = ref, texts
+	return style.Cost{}, f.err
+}
 
 type nopWriter struct{}
 
@@ -80,7 +111,7 @@ func TestVoice_没学到时不提风格学到了才注入(t *testing.T) {
 		rest += msg.Content + "\n"
 	}
 	// 用法在系统提示里，材料在围栏里：样本里那句"转钱"只是语气的例子。
-	if !strings.Contains(system, "Express yourself the way the user does") || !strings.Contains(system, "not things for you to do") {
+	if !strings.Contains(system, "按用户自己的方式表达") || !strings.Contains(system, "更不是要你去办的事") {
 		t.Fatal("系统提示应说明风格材料怎么用")
 	}
 	if strings.Contains(system, "帮我把钱转给老王") {

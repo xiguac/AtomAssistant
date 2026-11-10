@@ -46,9 +46,11 @@ import (
 	"github.com/xiguac/atomassistant/internal/channel/weixin"
 	"github.com/xiguac/atomassistant/internal/config"
 	"github.com/xiguac/atomassistant/internal/core"
+	"github.com/xiguac/atomassistant/internal/device"
 	"github.com/xiguac/atomassistant/internal/files"
 	"github.com/xiguac/atomassistant/internal/kernel"
 	"github.com/xiguac/atomassistant/internal/llm"
+	"github.com/xiguac/atomassistant/internal/agent"
 	"github.com/xiguac/atomassistant/internal/memory"
 	"github.com/xiguac/atomassistant/internal/oplog"
 	"github.com/xiguac/atomassistant/internal/policy"
@@ -71,6 +73,11 @@ var appJS []byte
 //
 //go:embed static/passkey.js
 var passkeyJS []byte
+
+// fileviewJS 只在文件查看页加载：Word、Excel、PPT、PDF 的渲染与修改都在浏览器里完成。
+//
+//go:embed static/fileview.js
+var fileviewJS []byte
 
 // favicon 是浏览器标签页上的图标：品牌里的那个原子。
 //
@@ -108,6 +115,8 @@ type Options struct {
 	Reload func(context.Context) error
 	// Status 返回当前的运行状况；非空表示助手本身没能启动（比如配置还没填完），只有后台在运行。
 	Status func() string
+	// Devices 是手机数据源。为空时「设备」页不能添加设备，设备接口也不开。
+	Devices *device.Service
 	// ShareEnv 是服务器上 ATOM_SHARE_ADDR 设的下载入口地址。为空时下载入口在「文件」页里开关。
 	ShareEnv string
 	Log      *slog.Logger
@@ -117,6 +126,8 @@ type Options struct {
 type Server struct {
 	opts Options
 	tmpl map[string]*template.Template
+	// appMux 是手机 App 用的内部路由表：和网页后台同一批处理函数，但不带登录会话那一层。见 appproxy.go。
+	appMux *http.ServeMux
 
 	mu       sync.Mutex
 	sessions map[string]session
@@ -251,6 +262,7 @@ func New(opts Options) (*Server, error) {
 			return m, nil
 		},
 		"base": path.Base,
+		"viewable": func(p string) bool { return viewKind(p) != "" },
 		"levelName": func(l slog.Level) string {
 			switch {
 			case l >= slog.LevelError:
@@ -394,9 +406,20 @@ func token() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// cspFor 是一个地址该用的内容安全策略。
+func cspFor(urlPath string) string {
+	if urlPath == "/files/view" {
+		// 文件里的图片和字体由浏览器端的库解出来后以 blob/data 地址显示；PDF 的解析在 blob 或自带的 worker 里跑。
+		// 脚本依旧只认自己，不放宽。
+		return "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' blob: data:; font-src blob: data:; script-src 'self'; worker-src 'self' blob:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+	}
+	return "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+}
+
 // Handler 返回后台的 HTTP 处理器。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	s.appMux = http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	// 脚本是固定的内容，里面没有任何数据，不登录也能取：登录页同样引用它。
 	mux.HandleFunc("GET /static/app.js", func(w http.ResponseWriter, _ *http.Request) {
@@ -413,6 +436,12 @@ func (s *Server) Handler() http.Handler {
 		_, _ = w.Write(favicon)
 	}
 	mux.HandleFunc("GET /static/favicon.svg", icon)
+	// 在线查看文件用的第三方库，随程序带着：后台的安全策略不许加载外面的脚本。
+	mux.HandleFunc("GET /static/vendor/{name}", s.vendorFile)
+	mux.HandleFunc("GET /static/fileview.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(fileviewJS)
+	})
 	// 浏览器不管页面怎么写都会来取这个地址一次，一并给它。
 	mux.HandleFunc("GET /favicon.ico", icon)
 	mux.HandleFunc("GET /login", s.loginPage)
@@ -422,101 +451,128 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /login/passkey/finish", s.passkeyLoginFinish)
 
 	auth := func(h func(http.ResponseWriter, *http.Request, *view)) http.HandlerFunc { return s.authed(h) }
-	mux.HandleFunc("POST /logout", auth(s.logout))
-	mux.HandleFunc("GET /{$}", auth(s.home))
-	mux.HandleFunc("POST /tasks", auth(s.createTask))
-	mux.HandleFunc("POST /tasks/batch", auth(s.batchTasks))
-	mux.HandleFunc("GET /tasks", auth(s.tasksPage))
-	mux.HandleFunc("GET /tasks/{id}", auth(s.taskPage))
-	mux.HandleFunc("POST /tasks/{id}/approve", auth(s.approve))
-	mux.HandleFunc("POST /tasks/{id}/reject", auth(s.reject))
-	mux.HandleFunc("POST /tasks/{id}/cancel", auth(s.cancel))
-	mux.HandleFunc("POST /tasks/{id}/budget", auth(s.raiseBudget))
-	mux.HandleFunc("POST /tasks/{id}/reply", auth(s.reply))
-	mux.HandleFunc("POST /models/budget", auth(s.budgetSave))
-	mux.HandleFunc("GET /vault", auth(s.vaultPage))
-	mux.HandleFunc("POST /vault", auth(s.vaultPut))
-	mux.HandleFunc("POST /vault/delete", auth(s.vaultDelete))
-	mux.HandleFunc("POST /vault/replace", auth(s.vaultReplace))
-	mux.HandleFunc("POST /vault/request", auth(s.vaultRequestFill))
-	mux.HandleFunc("POST /vault/request/dismiss", auth(s.vaultRequestDismiss))
-	mux.HandleFunc("GET /memory", auth(s.memoryPage))
-	mux.HandleFunc("POST /memory/confirm", auth(s.memoryConfirm))
-	mux.HandleFunc("POST /memory/dismiss", auth(s.memoryDismiss))
-	mux.HandleFunc("POST /memory/affirm", auth(s.memoryAffirm))
-	mux.HandleFunc("POST /memory/forget", auth(s.memoryForget))
-	mux.HandleFunc("POST /memory/ask", auth(s.memoryAsk))
-	mux.HandleFunc("POST /memory/apply", auth(s.memoryApply))
-	mux.HandleFunc("GET /channels", auth(s.channelsPage))
-	mux.HandleFunc("POST /channels", auth(s.channelSave))
-	mux.HandleFunc("POST /channels/delete", auth(s.channelDelete))
-	mux.HandleFunc("POST /channels/owner", auth(s.channelOwner))
-	mux.HandleFunc("POST /channels/weixin/start", auth(s.weixinStart))
-	mux.HandleFunc("GET /channels/weixin", auth(s.weixinPage))
-	mux.HandleFunc("POST /channels/weixin/poll", auth(s.weixinPoll))
-	mux.HandleFunc("GET /connectors", auth(s.connectorsPage))
-	mux.HandleFunc("POST /connectors/calendar", auth(s.calendarSave))
-	mux.HandleFunc("POST /connectors/mail", auth(s.mailSave))
-	mux.HandleFunc("POST /connectors/holidays", auth(s.holidaysSave))
-	mux.HandleFunc("POST /connectors/weather", auth(s.weatherSave))
-	mux.HandleFunc("POST /connectors/search", auth(s.searchSave))
-	mux.HandleFunc("POST /connectors/disable", auth(s.connectorDisable))
-	mux.HandleFunc("POST /connectors/test", auth(s.connectorTest))
-	mux.HandleFunc("GET /mcp", auth(s.mcpPage))
-	for i, p := range mcpPresets {
-		mux.HandleFunc("POST /mcp/"+p.ID, auth(s.mcpPresetSave(i)))
+	// reg 登记一个需要登录的路由：网页里走登录会话，同时登记到手机用的内部路由表。
+	reg := func(pattern string, h func(http.ResponseWriter, *http.Request, *view)) {
+		mux.HandleFunc(pattern, auth(h))
+		s.registerApp(pattern, h)
 	}
-	mux.HandleFunc("POST /mcp/server", auth(s.mcpSave))
-	mux.HandleFunc("POST /mcp/server/delete", auth(s.mcpDelete))
-	mux.HandleFunc("POST /mcp/key", auth(s.mcpKey))
-	mux.HandleFunc("POST /mcp/test", auth(s.mcpTest))
-	mux.HandleFunc("POST /mcp/sync", auth(s.mcpSync))
-	mux.HandleFunc("POST /mcp/tools", auth(s.mcpTools))
-	mux.HandleFunc("POST /mcp/installed/delete", auth(s.mcpInstalledDelete))
-	mux.HandleFunc("GET /skills", auth(s.skillsPage))
-	mux.HandleFunc("POST /skills", auth(s.skillInstall))
-	mux.HandleFunc("POST /skills/ask", auth(s.skillAsk))
-	mux.HandleFunc("POST /skills/delete", auth(s.skillDelete))
-	mux.HandleFunc("GET /prompts", auth(s.promptsPage))
-	mux.HandleFunc("POST /prompts", auth(s.promptSave))
-	mux.HandleFunc("POST /prompts/toggle", auth(s.promptToggle))
-	mux.HandleFunc("POST /prompts/extra", auth(s.extraSave))
-	mux.HandleFunc("POST /prompts/extra/toggle", auth(s.extraToggle))
-	mux.HandleFunc("POST /prompts/extra/delete", auth(s.extraDelete))
-	mux.HandleFunc("GET /security", auth(s.securityPage))
-	mux.HandleFunc("POST /security/methods", auth(s.methodsSave))
-	mux.HandleFunc("POST /security/totp/start", auth(s.totpStart))
-	mux.HandleFunc("POST /security/totp/confirm", auth(s.totpConfirm))
-	mux.HandleFunc("POST /security/totp/cancel", auth(s.totpCancel))
-	mux.HandleFunc("POST /security/totp/remove", auth(s.totpRemove))
-	mux.HandleFunc("POST /security/passkey/begin", auth(s.passkeyRegisterBegin))
-	mux.HandleFunc("POST /security/passkey/finish", auth(s.passkeyRegisterFinish))
-	mux.HandleFunc("POST /security/passkey/remove", auth(s.passkeyRemove))
-	mux.HandleFunc("GET /password", auth(s.passwordPage))
-	mux.HandleFunc("POST /password", auth(s.passwordChange))
-	mux.HandleFunc("GET /models", auth(s.modelsPage))
-	mux.HandleFunc("POST /models/provider", auth(s.providerSave))
-	mux.HandleFunc("POST /models/provider/delete", auth(s.providerDelete))
-	mux.HandleFunc("POST /models/main", auth(s.mainSave))
-	mux.HandleFunc("POST /models/agent", auth(s.agentSave))
-	mux.HandleFunc("POST /models/agent/delete", auth(s.agentDelete))
-	mux.HandleFunc("POST /models/test", auth(s.modelTest))
-	mux.HandleFunc("POST /tasks/{id}/rate", auth(s.rateWork))
-	mux.HandleFunc("GET /logs", auth(s.logsPage))
-	mux.HandleFunc("POST /logs/delete", auth(s.deleteLogs))
-	mux.HandleFunc("GET /files", auth(s.filesPage))
-	mux.HandleFunc("POST /files", auth(s.filesUpload))
-	mux.HandleFunc("GET /files/download", auth(s.filesDownload))
-	mux.HandleFunc("POST /files/delete", auth(s.filesDelete))
-	mux.HandleFunc("POST /files/share/base", auth(s.shareBaseSave))
-	mux.HandleFunc("POST /files/share/listen", auth(s.shareListenSave))
-	mux.HandleFunc("POST /files/share/revoke", auth(s.shareRevoke))
+	reg("POST /logout", s.logout)
+	reg("GET /{$}", s.home)
+	reg("POST /tasks", s.createTask)
+	reg("POST /tasks/batch", s.batchTasks)
+	reg("GET /tasks", s.tasksPage)
+	reg("GET /tasks/{id}", s.taskPage)
+	reg("POST /tasks/{id}/approve", s.approve)
+	reg("POST /tasks/{id}/reject", s.reject)
+	reg("POST /tasks/{id}/cancel", s.cancel)
+	reg("POST /tasks/{id}/budget", s.raiseBudget)
+	reg("POST /tasks/{id}/reply", s.reply)
+	reg("POST /models/budget", s.budgetSave)
+	reg("GET /vault", s.vaultPage)
+	reg("POST /vault", s.vaultPut)
+	reg("POST /vault/delete", s.vaultDelete)
+	reg("POST /vault/replace", s.vaultReplace)
+	reg("POST /vault/request", s.vaultRequestFill)
+	reg("POST /vault/request/dismiss", s.vaultRequestDismiss)
+	reg("GET /memory", s.memoryPage)
+	reg("POST /memory/confirm", s.memoryConfirm)
+	reg("POST /memory/dismiss", s.memoryDismiss)
+	reg("POST /memory/affirm", s.memoryAffirm)
+	reg("POST /memory/forget", s.memoryForget)
+	reg("POST /memory/ask", s.memoryAsk)
+	reg("POST /memory/apply", s.memoryApply)
+	reg("POST /memory/profile", s.memoryProfile)
+	reg("GET /channels", s.channelsPage)
+	reg("POST /channels", s.channelSave)
+	reg("POST /channels/delete", s.channelDelete)
+	reg("POST /channels/owner", s.channelOwner)
+	reg("POST /channels/weixin/start", s.weixinStart)
+	reg("GET /channels/weixin", s.weixinPage)
+	reg("POST /channels/weixin/poll", s.weixinPoll)
+	reg("GET /connectors", s.connectorsPage)
+	reg("POST /connectors/calendar", s.calendarSave)
+	reg("POST /connectors/mail", s.mailSave)
+	reg("POST /connectors/holidays", s.holidaysSave)
+	reg("POST /connectors/weather", s.weatherSave)
+	reg("POST /connectors/search", s.searchSave)
+	reg("POST /connectors/disable", s.connectorDisable)
+	reg("POST /connectors/test", s.connectorTest)
+	reg("GET /mcp", s.mcpPage)
+	for i, p := range mcpPresets {
+		reg("POST /mcp/"+p.ID, s.mcpPresetSave(i))
+	}
+	reg("POST /mcp/server", s.mcpSave)
+	reg("POST /mcp/server/delete", s.mcpDelete)
+	reg("POST /mcp/key", s.mcpKey)
+	reg("POST /mcp/test", s.mcpTest)
+	reg("POST /mcp/sync", s.mcpSync)
+	reg("POST /mcp/tools", s.mcpTools)
+	reg("POST /mcp/installed/delete", s.mcpInstalledDelete)
+	reg("GET /skills", s.skillsPage)
+	reg("POST /skills", s.skillInstall)
+	reg("POST /skills/ask", s.skillAsk)
+	reg("POST /skills/delete", s.skillDelete)
+	reg("GET /prompts", s.promptsPage)
+	reg("POST /prompts", s.promptSave)
+	reg("POST /prompts/toggle", s.promptToggle)
+	reg("POST /prompts/extra", s.extraSave)
+	reg("POST /prompts/extra/toggle", s.extraToggle)
+	reg("POST /prompts/extra/delete", s.extraDelete)
+	reg("GET /security", s.securityPage)
+	reg("POST /security/methods", s.methodsSave)
+	reg("POST /security/totp/start", s.totpStart)
+	reg("POST /security/totp/confirm", s.totpConfirm)
+	reg("POST /security/totp/cancel", s.totpCancel)
+	reg("POST /security/totp/remove", s.totpRemove)
+	reg("POST /security/passkey/begin", s.passkeyRegisterBegin)
+	reg("POST /security/passkey/finish", s.passkeyRegisterFinish)
+	reg("POST /security/passkey/remove", s.passkeyRemove)
+	reg("GET /password", s.passwordPage)
+	reg("POST /password", s.passwordChange)
+	reg("GET /models", s.modelsPage)
+	reg("POST /models/provider", s.providerSave)
+	reg("POST /models/provider/delete", s.providerDelete)
+	reg("POST /models/main", s.mainSave)
+	reg("POST /models/agent", s.agentSave)
+	reg("POST /models/agent/delete", s.agentDelete)
+	reg("POST /models/test", s.modelTest)
+	reg("POST /tasks/{id}/rate", s.rateWork)
+	reg("GET /logs", s.logsPage)
+	reg("POST /logs/delete", s.deleteLogs)
+	reg("GET /files", s.filesPage)
+	reg("POST /files", s.filesUpload)
+	reg("GET /files/download", s.filesDownload)
+	// 在线查看和修改只给网页后台用，手机 App 不开这些入口，所以不走 reg。
+	mux.HandleFunc("GET /files/view", auth(s.fileViewPage))
+	mux.HandleFunc("GET /files/raw", auth(s.fileRaw))
+	mux.HandleFunc("GET /files/sheet", auth(s.fileSheet))
+	mux.HandleFunc("POST /files/save", auth(s.fileSave))
+	mux.HandleFunc("POST /files/sheet/save", auth(s.fileSheetSave))
+	reg("POST /files/delete", s.filesDelete)
+	reg("POST /files/share/base", s.shareBaseSave)
+	reg("POST /files/share/listen", s.shareListenSave)
+	reg("POST /files/share/revoke", s.shareRevoke)
+	reg("GET /devices", s.devicesPage)
+	reg("POST /devices", s.deviceAdd)
+	reg("POST /devices/interval", s.deviceInterval)
+	reg("POST /devices/admin", s.deviceAdmin)
+	reg("POST /devices/reply-channel", s.deviceReplyChannel)
+	reg("POST /devices/revoke", s.deviceRevoke)
+	reg("POST /devices/delete", s.deviceDelete)
+	reg("POST /devices/clear", s.deviceClear)
+	// 手机上的 App 用设备令牌访问，不走后台的登录会话。
+	if s.opts.Devices != nil {
+		mux.Handle(device.Prefix, device.Handler(s.opts.Devices, s.opts.Log))
+		// 手机 App 的管理接口：同样用设备令牌，但还要这台设备被打开了管理权限。
+		mux.Handle(appPrefix, s.appHandler())
+	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		// 页面不引用任何外部资源，也不许被别的网页嵌进去。脚本只认自己这一个文件，不许内联：
 		// 就算哪里的转义出了纰漏，混进页面的脚本也不会被执行。脚本只能向后台自己发请求。
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		csp := cspFor(r.URL.Path)
+		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
@@ -574,6 +630,11 @@ func (s *Server) render(w http.ResponseWriter, name string, v *view) {
 }
 
 func (s *Server) renderCtx(ctx context.Context, w http.ResponseWriter, name string, v *view) {
+	// 手机 App 的内部调用只要数据，不要渲染好的网页。
+	if c, ok := w.(renderCapturer); ok {
+		c.capture(name, v)
+		return
+	}
 	t, ok := s.tmpl[name]
 	if !ok {
 		http.Error(w, "页面不存在", http.StatusNotFound)
@@ -637,7 +698,7 @@ func (s *Server) authed(h func(http.ResponseWriter, *http.Request, *view)) http.
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			// 上传文件的表单很大，其余的都很小。
 			limit := int64(1 << 20)
-			if r.URL.Path == "/files" {
+			if r.URL.Path == "/files" || r.URL.Path == "/files/save" {
 				limit = maxUpload + (1 << 20)
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
@@ -699,7 +760,7 @@ var opNames = []struct{ prefix, name string }{
 	{"/models/budget", "保存任务预算"},
 	{"/vault/delete", "删除环境变量"}, {"/vault/replace", "更换环境变量的值"}, {"/vault/request/dismiss", "忽略待填写的环境变量"},
 	{"/vault/request", "填写环境变量"}, {"/vault", "新增环境变量"},
-	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/memory/ask", "请助手修改记忆"}, {"/memory/apply", "确认修改记忆"}, {"/logs/delete", "删除日志"}, {"/files/share/listen", "开关下载入口"},
+	{"/memory/confirm", "确认记忆"}, {"/memory/dismiss", "否决记忆"}, {"/memory/affirm", "确认推断的记忆"}, {"/memory/forget", "删除记忆"}, {"/memory/ask", "请助手修改记忆"}, {"/memory/apply", "确认修改记忆"}, {"/memory/profile", "重新生成记忆摘要"}, {"/logs/delete", "删除日志"}, {"/files/share/listen", "开关下载入口"},
 	{"/channels/weixin", "微信扫码连接"}, {"/channels/delete", "删除消息源"}, {"/channels/owner", "修改消息源主人"}, {"/channels", "保存消息源"},
 	{"/connectors/disable", "停用数据源"}, {"/connectors/test", "测试数据源"}, {"/connectors/", "保存数据源"},
 	{"/mcp/server/delete", "移除 MCP server"}, {"/mcp/server", "保存 MCP server"}, {"/mcp/key", "保存 MCP 密钥"},
@@ -709,7 +770,7 @@ var opNames = []struct{ prefix, name string }{
 	{"/prompts/extra/delete", "删除自定义提示词"}, {"/prompts/extra/toggle", "切换自定义提示词"}, {"/prompts/extra", "保存自定义提示词"},
 	{"/prompts/toggle", "切换提示词段落"}, {"/prompts", "修改提示词"},
 	{"/security/", "修改登录方式"}, {"/password", "修改登录密码"}, {"/logout", "退出登录"},
-	{"/files/delete", "删除工作区文件"}, {"/files", "上传文件"},
+	{"/files/delete", "删除工作区文件"}, {"/files/sheet/save", "在线修改表格"}, {"/files/save", "在线修改文件"}, {"/files", "上传文件"},
 }
 
 func opName(path string) string {
@@ -950,7 +1011,7 @@ func (s *Server) taskList(ctx context.Context, q url.Values, now time.Time) (tas
 	if p, err := strconv.Atoi(q.Get("p")); err == nil && p > 1 {
 		l.Page = p
 	}
-	query := pg.TaskQuery{Status: pg.TaskStatusAll, Limit: tasksPerPage, Offset: (l.Page - 1) * tasksPerPage}
+	query := pg.TaskQuery{Status: pg.TaskStatusAll, Limit: tasksPerPage, Offset: (l.Page - 1) * tasksPerPage, Flat: q.Get("flat") == "1"}
 	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	switch l.Tab {
 	case "today":
@@ -1463,6 +1524,9 @@ type memoryData struct {
 	Memories []*memory.Memory
 	// Proposal 非空时是助手按用户的一句话提议的改动，等用户确认。
 	Proposal *memoryProposal
+	// Profile 是把全部记忆整合成的一段话，ProfileAt 是它的生成时间；还没生成过时为空。
+	Profile   string
+	ProfileAt time.Time
 }
 
 func (s *Server) memoryPage(w http.ResponseWriter, r *http.Request, v *view) {
@@ -1482,7 +1546,24 @@ func (s *Server) loadMemory(ctx context.Context) (memoryData, error) {
 	if err == nil {
 		err = err2
 	}
-	return memoryData{Pending: pending, Memories: list}, err
+	d := memoryData{Pending: pending, Memories: list}
+	if err == nil {
+		d.Profile, d.ProfileAt, err = s.loadProfile(ctx)
+	}
+	return d, err
+}
+
+// loadProfile 读出记忆的整合摘要与生成时间。
+func (s *Server) loadProfile(ctx context.Context) (string, time.Time, error) {
+	text, err := s.opts.Store.Setting(ctx, agent.SettingProfile)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	var at time.Time
+	if raw, err := s.opts.Store.Setting(ctx, agent.SettingProfileAt); err == nil && raw != "" {
+		at, _ = time.Parse(time.RFC3339, raw)
+	}
+	return text, at, nil
 }
 
 func (s *Server) memoryConfirm(w http.ResponseWriter, r *http.Request, _ *view) {

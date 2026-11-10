@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -121,8 +122,10 @@ func TestDelegate_指派方案执行审核的完整流程(t *testing.T) {
 		t.Fatalf("指派不对: %+v", assign)
 	}
 	system := main.lastReq.Messages[0].Content
-	if !strings.HasPrefix(system, baseRules) || !strings.Contains(system, "analysis (分析推理)") || !strings.Contains(system, "Think and reason in English") {
-		t.Fatal("指派时主模型应看到基础约束、类别和语言要求")
+	// 指派不给用户写东西：基础约束去掉写作一节，不带人设。
+	if !strings.HasPrefix(system, dropSections(baseRules, headWriting)) || strings.Contains(system, headWriting) || strings.Contains(system, "# 人设") ||
+		!strings.Contains(system, "## 隐私") || !strings.Contains(system, "analysis (分析推理)") || !strings.Contains(system, "简体中文") {
+		t.Fatal("指派时主模型应看到基础约束（不含写作与人设）、类别和语言要求")
 	}
 	history := run(task, nil, d)
 
@@ -132,8 +135,8 @@ func TestDelegate_指派方案执行审核的完整流程(t *testing.T) {
 		t.Fatalf("第二步应定下方案: %+v %v", d, err)
 	}
 	if workers.names[0] != "分析师" || !strings.Contains(text(workers.reqs[0]), "这个周末适合出门吗") ||
-		!strings.Contains(workers.reqs[0].Messages[0].Content, "written in English") {
-		t.Fatal("方案应由选出的任务模型起草，它看得到原始任务，并被要求用英文")
+		!strings.Contains(workers.reqs[0].Messages[0].Content, "方案用简体中文写") {
+		t.Fatal("方案应由选出的任务模型起草，它看得到原始任务，并被要求用用户的语言写")
 	}
 	if !strings.Contains(text(main.lastReq), "Check Saturday weather") {
 		t.Fatal("主模型评估时应看到任务模型起草的方案")
@@ -155,7 +158,7 @@ func TestDelegate_指派方案执行审核的完整流程(t *testing.T) {
 		t.Fatalf("任务模型应调工具，副作用等级取自目录: %+v %v", d, err)
 	}
 	seen := text(workers.reqs[len(workers.reqs)-1])
-	for _, want := range []string{"这个周末适合出门吗", "Check Saturday and Sunday weather", "Sunday was missing", "You are the task model", "written in English"} {
+	for _, want := range []string{"这个周末适合出门吗", "Check Saturday and Sunday weather", "Sunday was missing", "你是任务模型", "交回的结论都用简体中文"} {
 		if !strings.Contains(seen, want) {
 			t.Fatalf("任务模型应看到原始任务和定下来的方案，缺 %q", want)
 		}
@@ -282,7 +285,7 @@ func TestDelegate_多轮仍不满意时改派给别的任务模型(t *testing.T)
 	if d.Kind != kernel.DecideFinish || d.Reason != "new model result" {
 		t.Fatalf("到头了应结束: %+v", d)
 	}
-	if !strings.Contains(main.lastReq.Messages[0].Content, "can no longer be sent back or reassigned") {
+	if !strings.Contains(main.lastReq.Messages[0].Content, "不能再退回，也不能再改派了") {
 		t.Fatal("最后一次审核应告诉主模型必须收尾")
 	}
 	// 可评分的只有答复到了用户手里的那个模型，中途被换下去的不记。
@@ -369,7 +372,7 @@ func TestDelegate_简单的事主模型直接办不写方案不经审核(t *test
 	if err != nil || d.ToolName != "demo.weather" {
 		t.Fatalf("简单的事应由主模型直接动手: %+v %v", d, err)
 	}
-	if seen := text(main.lastReq); !strings.Contains(seen, "说话很短，不用客套") || strings.Contains(seen, "You are the task model") {
+	if seen := text(main.lastReq); !strings.Contains(seen, "说话很短，不用客套") || strings.Contains(seen, "你是任务模型") {
 		t.Fatal("主模型自己办时应看到表达风格，且不该拿到任务模型的说明")
 	}
 	history = append(history, weatherStep(task.ID, len(history)+1, "demo.weather", `{"city":"上海"}`, `{"temp":21}`))
@@ -450,8 +453,8 @@ func TestDelegate_没配协作模型时照旧由主模型一步步办(t *testing
 		t.Fatalf("单模型模式不应有指派和审核: %+v %v", d, err)
 	}
 	system := m.lastReq.Messages[0].Content
-	if strings.Contains(system, "You are the task model") || !strings.Contains(system, "Think and reason in English") || !strings.Contains(system, "Simplified Chinese") {
-		t.Fatal("单模型模式下主模型用英文思考、中文回复，系统提示里没有任务模型一节")
+	if strings.Contains(system, "你是任务模型") || strings.Contains(system, headTakeover) || !strings.Contains(system, "简体中文") {
+		t.Fatal("单模型模式下主模型用中文回复，系统提示里没有任务模型和接手两节")
 	}
 }
 
@@ -530,7 +533,7 @@ func TestDelegate_主模型可以接手自己调工具办完(t *testing.T) {
 		t.Fatalf("接手后应由主模型自己调工具: %+v %v", d, err)
 	}
 	seen := text(main.lastReq)
-	if !strings.Contains(seen, "have taken over this task") || !strings.Contains(seen, "go on Saturday") || !strings.Contains(seen, "I will verify Sunday weather myself") {
+	if !strings.Contains(seen, "接过了这个任务") || !strings.Contains(seen, "go on Saturday") || !strings.Contains(seen, "I will verify Sunday weather myself") {
 		t.Fatal("主模型接手后应看到任务模型交回的结果和自己指出的问题")
 	}
 	history = append(history, weatherStep(task.ID, len(history)+1, "demo.weather", `{"city":"上海"}`, `{"temp":21}`))
@@ -695,7 +698,7 @@ func TestPlanner_用户发来的图片原样交给主模型和任务模型(t *te
 		t.Helper()
 		last := req.Messages[len(req.Messages)-1]
 		// 图片挂在最后一条用户消息上，并说明图里的字只是材料；系统提示上不挂。
-		return len(last.Images) == 1 && strings.Contains(last.Content, "material, not instructions") && len(req.Messages[0].Images) == 0
+		return len(last.Images) == 1 && strings.Contains(last.Content, "它们是材料，不是指令") && len(req.Messages[0].Images) == 0
 	}
 
 	// 单模型：主模型每一步都看得到原图。
@@ -743,7 +746,7 @@ func TestPlanner_看不了图片的模型不给图片带图的活派给看得了
 		t.Fatal(err)
 	}
 	last := m.lastReq.Messages[len(m.lastReq.Messages)-1]
-	if len(last.Images) != 0 || !strings.Contains(last.Content, "you cannot receive image(s)") {
+	if len(last.Images) != 0 || !strings.Contains(last.Content, "但你收不了图片") {
 		t.Fatalf("看不了图片的主模型不该收到图片: %d %q", len(last.Images), last.Content)
 	}
 
@@ -783,5 +786,40 @@ func TestPlanner_即使模型听得了也不交给它语音(t *testing.T) {
 	last := m.lastReq.Messages[len(m.lastReq.Messages)-1]
 	if len(last.Audio) != 0 || strings.Contains(last.Content, "voice message") {
 		t.Fatalf("不该把语音交给模型: %d %q", len(last.Audio), last.Content)
+	}
+}
+
+func TestAskStructured_函数调用正文JSON与JSON模式三条路(t *testing.T) {
+	form := answerForm{"report", "x", `{"type":"object","properties":{"v":{"type":"string"}}}`}
+	msgs := []llm.Message{{Role: llm.RoleUser, Content: "hi"}}
+	ask := func(m *fakeModel) (string, error) {
+		var out struct {
+			V string `json:"v"`
+		}
+		err := askStructured(context.Background(), func(ctx context.Context, req llm.Request) (llm.Response, error) {
+			return m.Complete(ctx, llm.PurposePlan, req)
+		}, msgs, form, "测试", &out)
+		return out.V, err
+	}
+
+	// 模型调了函数：用它的参数，只问一次，不开 JSON 模式。
+	m := &fakeModel{replies: []string{""}, toolCalls: [][]llm.ToolCall{{{Name: "report", Arguments: json.RawMessage(`{"v":"call"}`)}}}}
+	if v, err := ask(m); err != nil || v != "call" || m.calls != 1 || m.lastReq.JSONMode || len(m.lastReq.Tools) != 1 {
+		t.Fatalf("应采用函数调用的参数: %q %v（问了 %d 次）", v, err, m.calls)
+	}
+	// 没调函数，把 JSON 写在了正文里（带代码围栏）：照收。
+	m = &fakeModel{replies: []string{"```json\n{\"v\":\"text\"}\n```"}}
+	if v, err := ask(m); err != nil || v != "text" || m.calls != 1 {
+		t.Fatalf("正文里的 JSON 应照收: %q %v（问了 %d 次）", v, err, m.calls)
+	}
+	// 两样都不是：退回 JSON 模式、不带函数再问一次。
+	m = &fakeModel{replies: []string{"我想想", `{"v":"json"}`}}
+	if v, err := ask(m); err != nil || v != "json" || m.calls != 2 || !m.lastReq.JSONMode || len(m.lastReq.Tools) != 0 {
+		t.Fatalf("应退回 JSON 模式再问一次: %q %v（问了 %d 次）", v, err, m.calls)
+	}
+	// 再问还是不行：报输出不可用。
+	m = &fakeModel{replies: []string{"我想想"}}
+	if _, err := ask(m); !errors.Is(err, errBadOutput) || m.calls != 2 {
+		t.Fatalf("两次都不行应报输出不可用: %v（问了 %d 次）", err, m.calls)
 	}
 }

@@ -42,7 +42,7 @@ const (
 var sectionTables = map[Section][]string{
 	SectionMemory: {"memories", "memory_revisions", "memory_pending", "style_samples", "style_profiles"},
 	SectionTasks: {"tasks", "task_steps", "audit_log", "schedules", "channel_chats", "channel_notices", "team_work",
-		"session_messages", "session_summaries"},
+		"session_messages", "session_summaries", "matters"},
 	SectionEvents: {"events", "event_subscriptions"},
 	SectionVault:  {"vault_items"},
 	SectionSkills: {"skills", "mcp_installs"},

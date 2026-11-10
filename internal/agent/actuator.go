@@ -65,6 +65,10 @@ type Actuator struct {
 	// secretRequests 非空时助手可以在后台登记待用户填写的环境变量。
 	secretRequests SecretRequests
 	library        SkillLibrary
+	// devices 非空时助手可以读手机端 App 上报的数据、向用户的手机下发授权需求。
+	devices DeviceService
+	// deviceNotice 非空时，下发授权需求的同时在聊天里提醒用户。
+	deviceNotice DeviceNotice
 	// audit 记录内建连接器的每一次调用。MCP 工具的审计由网关负责。
 	audit mcpgw.AuditSink
 	// sessions 非空时可以查以前的会话，见 session.go。
@@ -346,6 +350,44 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		// 回执是我们自己生成的：名字和下一步怎么办。
 		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
 	}
+	if s.ToolName == ToolDeviceQuery {
+		out, trust, err := a.runDeviceQuery(ctx, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		return kernel.Result{Output: out, Trust: trust}, nil
+	}
+	if s.ToolName == ToolDeviceWhere {
+		out, err := a.runDeviceWhere(ctx, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 坐标来自用户授权过的上报，城市名来自本机的归属地库，没有别人写的文字。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if s.ToolName == ToolDeviceBattery {
+		out, err := a.runDeviceBattery(ctx, s)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 全是服务器用统计算出来的数字和我们自己写的说明，没有别人写的文字。
+		return kernel.Result{Output: out, Trust: core.TrustToolOutput}, nil
+	}
+	if s.ToolName == ToolDeviceRequest {
+		out, err := a.runDeviceRequest(ctx, t, s)
+		if a.audit != nil {
+			detail := "成功: " + string(out)
+			if err != nil {
+				detail = "失败: " + truncate(err.Error(), 300)
+			}
+			_ = a.audit.ToolCall(ctx, t.ID, s.ToolName, core.TrustSystem, detail)
+		}
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 回执是我们自己生成的：需求编号和下一步怎么办。
+		return kernel.Result{Output: out, Trust: core.TrustSystem}, nil
+	}
 	if s.ToolName == ToolSandboxRun {
 		out, err := a.runSandbox(ctx, s)
 		if a.audit != nil {
@@ -422,6 +464,14 @@ func (a *Actuator) runTool(ctx context.Context, t *core.Task, s *core.Step) (ker
 		if err != nil {
 			return kernel.Result{}, err
 		}
+		return kernel.Result{Output: out, Trust: core.TrustConnector}, nil
+	}
+	if s.ToolName == ToolSearchMemory {
+		out, err := a.runSearchMemory(ctx, t, s.Input)
+		if err != nil {
+			return kernel.Result{}, err
+		}
+		// 和展开的记忆一样：是事实材料，不是指令。
 		return kernel.Result{Output: out, Trust: core.TrustConnector}, nil
 	}
 

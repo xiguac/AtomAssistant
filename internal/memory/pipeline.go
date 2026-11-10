@@ -532,3 +532,31 @@ func lastTouch(m *Memory) time.Time {
 
 // ErrNotFound 表示记忆不存在。
 var ErrNotFound = errors.New("memory: 记忆不存在")
+
+// ArchiveExpired 把过期超过 grace 的限时记忆归档，返回归档的条数。
+//
+// 限时记忆（下周在上海出差、本月预算余额）过了期就只剩回溯的用处；过期之后再留一阵，
+// 用来回答「上个月那件事是怎么定的」，之后就归档，不再占着条目。归档不删除原文。
+// 没有期限的记忆不动：长期的事实和偏好是用户亲口说的，不由时间清理。
+func (p *Pipeline) ArchiveExpired(ctx context.Context, grace time.Duration) (int, error) {
+	now := p.now()
+	all, err := p.store.List(ctx, Query{IncludeInactive: true})
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, m := range all {
+		if m.Status == StatusArchived || m.Temporality != TemporalLimited || m.ValidUntil == nil || m.SafetyCritical {
+			continue
+		}
+		if now.Sub(*m.ValidUntil) <= grace {
+			continue
+		}
+		m.Status, m.UpdatedAt = StatusArchived, now
+		if err := p.store.Put(ctx, m); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}

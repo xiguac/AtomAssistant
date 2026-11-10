@@ -6,7 +6,7 @@
 {{$more := false}}{{range .Presets}}{{if not .On}}{{$more = true}}{{end}}{{end}}
 <div class="cols{{if not $more}} one{{end}}">
 <div>
-<h2 style="margin-top:0">已接入的 MCP server <span class="count">{{len .Servers}}</span>
+<h2>已接入的 MCP server <span class="count">{{len .Servers}}</span>
   <button type="button" class="btn sm" data-dialog="dlg-mcp" data-title="添加 MCP server">添加</button></h2>
 {{range .Servers}}
 <div class="card">
@@ -23,6 +23,8 @@
         <button class="btn danger sm">移除</button></form>
     </div>
   </div>
+  {{/* 密钥表单和工具授权默认收起：每个 server 平时只占一行，要改的时候再展开。 */}}
+  <details class="fold"><summary><span>{{if not .NoKey}}密钥{{if .Keys}} <span class="count">{{len .Keys}}</span>{{end}} · {{end}}工具 <span class="count">{{len .Tools}}</span></span></summary>
   {{if not .NoKey}}{{$srv := .Name}}{{range .Keys}}<form method="post" action="/mcp/key" autocomplete="off" class="pad keyrow">
     <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{$srv}}"><input type="hidden" name="secret_name" value="{{.Param}}">
     <div class="keyname"><label>密钥参数名{{if .Header}}（请求头）{{end}}</label><div class="mono keyparam">{{.Param}}</div></div>
@@ -36,8 +38,7 @@
     <div class="grow"><label for="key-{{.Name}}">密钥</label><input id="key-{{.Name}}" type="password" name="key" autocomplete="new-password"></div>
     <button class="btn sec">{{if .Keys}}添加{{else}}保存密钥{{end}}</button>
   </form>{{end}}
-  {{if .Tools}}<details class="fold"><summary><span>工具 <span class="count">{{len .Tools}}</span></span></summary>
-  <form method="post" action="/mcp/tools">
+  {{if .Tools}}<form method="post" action="/mcp/tools">
     <input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="name" value="{{.Name}}">
     <table>
       <thead><tr><th>工具</th><th style="width:200px">副作用等级</th><th style="width:200px">参数隐私上限</th></tr></thead>
@@ -49,7 +50,8 @@
       </tr>{{end}}</tbody>
     </table>
     <div class="band foot"><span class="note muted">只读工具可直接调用，其余工具按审批规则处理，默认需经确认。参数中含有超出隐私上限的字段时调用将被拦截。</span><button class="btn">保存授权</button></div>
-  </form></details>{{else}}<div class="empty">尚未登记工具，未登记的工具无法调用。请点击「读取工具」。</div>{{end}}
+  </form>{{else}}<div class="empty">尚未登记工具，未登记的工具无法调用。请点击「读取工具」。</div>{{end}}
+  </details>
 </div>
 {{else}}<div class="card"><div class="empty">暂无 MCP server。可接入预置的服务，或添加其他 MCP server。</div></div>{{end}}
 

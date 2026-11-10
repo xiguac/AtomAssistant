@@ -1,0 +1,59 @@
+{{define "content"}}
+{{with .Data}}
+<style>
+.fv-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 16px; border-bottom:1px solid var(--line); }
+.fv-bar .grow { flex:1; min-width:120px; }
+.fv-msg { font-size:13px; color:var(--text-2); }
+.fv-msg.ok { color:var(--ok); }
+.fv-msg.bad { color:var(--bad); }
+.fv-body { display:grid; grid-template-columns:minmax(0,1fr); }
+.fv-body.split { grid-template-columns:minmax(0,1fr) 360px; }
+.fv-stage { background:var(--recess); padding:16px; overflow:auto; max-height:calc(100vh - 220px); min-height:320px; }
+.fv-side { border-left:1px solid var(--line); background:var(--card); padding:12px; overflow:auto; max-height:calc(100vh - 220px); }
+.fv-side h3 { margin:12px 0 6px; font-size:12px; color:var(--muted); font-weight:600; }
+.fv-side h3:first-child { margin-top:0; }
+.fv-side textarea { width:100%; min-height:38px; resize:vertical; margin:0 0 6px; font:13px/18px var(--sans); }
+.fv-side textarea.changed { border-color:var(--warn-bar); background:var(--warn-bg); }
+.fv-docx .docx-wrapper { background:transparent !important; padding:0 !important; }
+.fv-docx { display:flex; flex-direction:column; align-items:center; }
+.fv-pdf canvas { display:block; margin:0 auto 12px; background:#fff; box-shadow:0 0 0 1px var(--line); max-width:100%; }
+.fv-pptx { display:flex; flex-direction:column; align-items:center; gap:12px; }
+.fv-tabs { display:flex; gap:4px; padding:8px 16px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.fv-tabs button { border:1px solid var(--line); border-bottom:0; background:var(--recess); padding:5px 12px; border-radius:6px 6px 0 0; font:inherit; font-size:12px; cursor:pointer; color:var(--text-2); }
+.fv-tabs button.on { background:var(--card); color:var(--primary); font-weight:600; }
+table.fv-grid { border-collapse:collapse; background:#fff; table-layout:fixed; font-size:13px; color:#000; }
+table.fv-grid th { position:sticky; top:0; background:#f1f5f9; color:var(--text-2); font-weight:500; font-size:11px; border:1px solid var(--line); z-index:2; height:22px; padding:0 4px; }
+table.fv-grid th.rn { position:sticky; left:0; top:auto; z-index:1; width:42px; min-width:42px; }
+table.fv-grid th.corner { left:0; z-index:3; }
+table.fv-grid td { border:1px solid #e2e8f0; padding:1px 4px; overflow:hidden; white-space:nowrap; text-overflow:clip; vertical-align:bottom; height:20px; }
+table.fv-grid td.wrap { white-space:pre-wrap; }
+table.fv-grid td.num { text-align:right; }
+table.fv-grid td.dirty { outline:2px solid var(--warn-bar); outline-offset:-2px; background:var(--warn-bg) !important; }
+table.fv-grid td.sel { outline:2px solid var(--primary); outline-offset:-2px; }
+table.fv-grid td input { width:100%; border:0; margin:0; padding:0; font:inherit; background:transparent; outline:none; }
+.fv-formula { display:flex; gap:8px; align-items:center; padding:6px 16px; border-bottom:1px solid var(--line); font-size:12px; }
+.fv-formula code { min-width:40px; color:var(--text-2); }
+.fv-formula input { flex:1; margin:0; font-family:var(--mono); font-size:12px; }
+@media (max-width:900px) { .fv-body.split { grid-template-columns:1fr; } .fv-side { border-left:0; border-top:1px solid var(--line); } }
+</style>
+<div class="pagehead"><h1 style="word-break:break-all">{{.Name}}</h1><a class="btn sec" href="/files{{if .Dir}}?dir={{.Dir}}{{end}}">返回文件列表</a></div>
+<div class="sub">{{if eq .Kind "pdf"}}PDF 只能查看。{{else}}在浏览器里渲染，尽量还原原文件的样子；修改保存后，原来的版本会留在历史版本里。助手改过这份文件时，你的保存会被拒绝，不会覆盖助手的修改。{{end}}</div>
+<div class="card" id="fv" data-path="{{.Path}}" data-kind="{{.Kind}}" data-csrf="{{$.CSRF}}" data-name="{{.Name}}">
+  <div class="fv-bar">
+    <span class="fv-msg grow" id="fv-msg">正在打开…</span>
+    <a class="btn sec sm" href="/files/download?path={{.Path}}">下载</a>
+    {{if ne .Kind "pdf"}}
+    {{if ne .Kind "xlsx"}}<button type="button" class="btn sec sm" id="fv-edit" hidden>编辑文字</button>{{end}}
+    <button type="button" class="btn sec sm" id="fv-discard" hidden>放弃修改</button>
+    <button type="button" class="btn sm" id="fv-save" hidden>保存</button>
+    {{end}}
+  </div>
+  <div id="fv-tabs" class="fv-tabs" hidden></div>
+  <div id="fv-formula" class="fv-formula" hidden><code id="fv-cell">—</code><input type="text" id="fv-cellval" aria-label="单元格内容" disabled></div>
+  <div class="fv-body" id="fv-grid">
+    <div class="fv-stage" id="fv-stage"></div>
+    <div class="fv-side" id="fv-side" hidden></div>
+  </div>
+</div>
+{{end}}
+{{end}}

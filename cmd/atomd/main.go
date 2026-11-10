@@ -25,11 +25,13 @@ import (
 	"github.com/xiguac/atomassistant/internal/config"
 	"github.com/xiguac/atomassistant/internal/core"
 	"github.com/xiguac/atomassistant/internal/demo"
+	"github.com/xiguac/atomassistant/internal/device"
 	"github.com/xiguac/atomassistant/internal/event"
 	"github.com/xiguac/atomassistant/internal/files"
 	"github.com/xiguac/atomassistant/internal/kernel"
 	"github.com/xiguac/atomassistant/internal/llm"
 	"github.com/xiguac/atomassistant/internal/market"
+	"github.com/xiguac/atomassistant/internal/matter"
 	"github.com/xiguac/atomassistant/internal/mcpgw"
 	"github.com/xiguac/atomassistant/internal/media"
 	"github.com/xiguac/atomassistant/internal/memory"
@@ -302,11 +304,27 @@ func startGeneration(parent context.Context, cfg *config.Config, st *pg.Store, b
 		}
 		// 用户和助手说的话记进每天的会话；每天过完写成摘要。
 		hub = hub.WithSession(st.Sessions())
+		// 用户交代的事记在一张清单里：新来的一句话归给清单里的哪件事，放久了的事淡出、删掉。
+		hub = hub.WithMatters(st.Matters(), st)
 		if parts.digest != nil {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				parts.digest.Run(ctx)
+			}()
+		}
+		if parts.archive != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				archiveExpiredMemories(ctx, parts.archive, log)
+			}()
+		}
+		if parts.profile != nil {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				parts.profile.Run(ctx)
 			}()
 		}
 		// 启用了文件处理：用户在聊天里发来的文件收进工作区。
@@ -324,6 +342,7 @@ func startGeneration(parent context.Context, cfg *config.Config, st *pg.Store, b
 		if parts.outbox != nil {
 			parts.outbox.hub.Store(hub)
 		}
+		phoneHub.Store(hub)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -373,6 +392,10 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 	if err != nil {
 		return err
 	}
+	devices := &device.Service{Store: st, Bus: bus, Memory: memory.NewPipeline(st.Memories(), nil), Asker: phoneAsker{settings: st}}
+	if lookup := openIPRegion(cfg, log); lookup != nil {
+		devices.IPRegion = lookup
+	}
 	srv, err := admin.New(admin.Options{
 		Store: st, Vault: safe, Box: box,
 		Scanner:      skillscan.Scanner{Command: cfg.SkillScanner, ExtraArgs: cfg.SkillScannerArgs},
@@ -384,7 +407,9 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 		Reload:   reload,
 		Status:   status,
 		ShareEnv: cfg.ShareAddr,
-		Log:      log,
+		// 手机上的 App：上报数据时要发事件唤醒等它的任务，所以带上事件总线。
+		Devices: devices,
+		Log:     log,
 	})
 	if err != nil {
 		return err
@@ -401,6 +426,70 @@ func startAdmin(ctx context.Context, cfg *config.Config, st *pg.Store, box *seal
 		}
 	}()
 	return nil
+}
+
+// phoneHub 是手机提问要交给的渠道中枢。每次按配置重新装助手时会换成新的那个。
+var phoneHub atomic.Pointer[channel.Hub]
+
+// phoneAsker 把手机上的提问交给渠道中枢，以主人的身份在后台设置的消息渠道里发起一次对话。
+type phoneAsker struct {
+	settings interface {
+		Setting(ctx context.Context, key string) (string, error)
+	}
+}
+
+func (p phoneAsker) Ask(ctx context.Context, text string, images []device.AskImage) error {
+	hub := phoneHub.Load()
+	if hub == nil {
+		return fmt.Errorf("%w: 消息渠道还没有就绪", device.ErrUnavailable)
+	}
+	name, err := p.settings.Setting(ctx, device.ReplyChannelSetting)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		name = device.DefaultReplyChannel
+	}
+	atts := make([]channel.Attachment, 0, len(images))
+	for i, img := range images {
+		img := img
+		atts = append(atts, channel.Attachment{
+			ContentType: img.MIME, Name: fmt.Sprintf("screenshot-%d", i+1),
+			// 图片就在内存里，不用再去下载。
+			Fetch: func(context.Context) (channel.Picture, error) { return channel.Picture{MIME: img.MIME, Data: img.Data}, nil },
+		})
+	}
+	if err := hub.InjectOwner(ctx, name, text, atts); err != nil {
+		// 渠道没配、没绑主人这类是配置问题，原样告诉手机。
+		return fmt.Errorf("%w: %v", device.ErrInvalid, err)
+	}
+	return nil
+}
+
+// defaultIP2RegionDB 是 ip2region 库在服务器上的默认位置，deploy/deploy.sh ip2region 会把它放在这里。
+const defaultIP2RegionDB = "/opt/atomassistant/data/ip2region_v4.xdb"
+
+// openIPRegion 打开公网 IP 归属地库。没有这个文件就不开这个功能（不是错误）；文件在但打不开才报。
+func openIPRegion(cfg *config.Config, log *slog.Logger) device.RegionLookup {
+	path, explicit := cfg.IP2RegionDB, cfg.IP2RegionDB != ""
+	if path == "" {
+		path = defaultIP2RegionDB
+	}
+	if _, err := os.Stat(path); err != nil {
+		if explicit {
+			log.Warn("ATOM_IP2REGION_DB 指的文件打不开，公网 IP 归属地关闭", "路径", path, "err", err)
+		} else {
+			log.Info("没有 IP 归属地库，公网 IP 归属地关闭（deploy/deploy.sh ip2region 可以装上）", "路径", path)
+		}
+		return nil
+	}
+	r, err := device.OpenIP2Region(path)
+	if err != nil {
+		log.Error("IP 归属地库没能打开，公网 IP 归属地关闭", "路径", path, "err", err)
+		return nil
+	}
+	log.Info("公网 IP 归属地已开启", "库", path)
+	return r
 }
 
 // serveWebhook 启动 Webhook 入口，返回一个用于关停它的函数。
@@ -480,7 +569,7 @@ type parts struct {
 	approver kernel.Approver
 	epilogue kernel.Epilogue
 	channels []channel.Binding
-	// outbox 非空时助手可以往聊天窗口里发文件，渠道中枢建好后要填进去。
+	// outbox 非空时助手可以往聊天窗口里发文件和提醒，渠道中枢建好后要填进去。
 	outbox *chatOutbox
 	// team 为真表示配置了协作模型。
 	team bool
@@ -497,7 +586,11 @@ type parts struct {
 	asr *media.ASR
 	// digest 非空时每天过完把那天的会话写成摘要。
 	digest *agent.Digest
-	close  func()
+	// profile 非空时每天把已保存的记忆整合成一段话，放在后台「记忆」页最上面。
+	profile *agent.Profile
+	// archive 把过期很久的限时记忆归档，返回归档的条数。
+	archive func(context.Context) (int, error)
+	close   func()
 }
 
 // build 按配置装出各个部件。
@@ -684,10 +777,14 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 		// 聊天里一句接一句地说：新任务带上同一个会话里最近的对话。
 		WithConversation(st).
 		// 话记在每天的会话里：新任务带上当天之前的会话和昨天的摘要，任务可以回头查以前的摘要。
-		WithSessions(st.Sessions())
-	planner = planner.WithSecretRequests(true)
+		WithSessions(st.Sessions()).
+		// 用户说的"一件事"常常先后有好几个任务：新任务带上那件事此前的进展。
+		WithMatters(matter.Reader{Store: st.Matters()})
+	planner = planner.WithSecretRequests(true).WithDevices(true)
 	actuator := agent.NewActuator(gw, router).WithMemory(mem).WithCapabilities(installer, st.Skills()).
-		WithSecretRequests(requests).WithSessions(st.Sessions())
+		WithSecretRequests(requests).WithSessions(st.Sessions()).
+		// 助手只读数据、提授权需求；发事件的是后台那一份。
+		WithDevices(&device.Service{Store: st})
 
 	// 联网搜索：用模型服务自带的搜索能力，配置过的服务里有能搜的就自动接上。
 	if router.CanSearch() {
@@ -732,7 +829,7 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	epilogue := agent.NewEpilogue(router, pipeline).WithMemoryTidy(pipeline).WithSkills(st.Skills()).WithRecall(mem)
 	// 表达风格：从用户亲口说的话里学，替他写东西、对他说话时用。
 	if file.Reply.LearnVoice() {
-		voice := style.NewLearner(st.Style(), router)
+		voice := style.NewLearner(st.Style(), router).WithDir(style.Dir(cfg.ConfigPath))
 		planner = planner.WithVoice(voice)
 		epilogue = epilogue.WithVoice(voice)
 	}
@@ -854,18 +951,30 @@ func build(ctx context.Context, cfg *config.Config, file *config.File, st *pg.St
 	// 接了消息渠道又启用了文件处理：助手可以把文件直接发到聊天窗口里。
 	// 渠道中枢要等这些部件装好之后才建，所以先留一个位置，建好了再填进去。
 	var outbox *chatOutbox
-	if len(channels) > 0 && workspace != nil {
+	if len(channels) > 0 {
 		outbox = &chatOutbox{}
-		planner = planner.WithChatFiles(true)
-		actuator = actuator.WithChatFiles(outbox)
+		// 向用户的手机下发授权需求时，同时在聊天里提醒他。
+		actuator = actuator.WithDeviceNotice(outbox)
+		if workspace != nil {
+			planner = planner.WithChatFiles(true)
+			actuator = actuator.WithChatFiles(outbox)
+		}
 	}
 
 	return &parts{
-		team:      len(file.Workers()) > 0,
-		inputs:    &inputs,
-		asr:       file.SpeechRecognizer(),
-		triage:    agent.NewTriager(router),
-		digest:    agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)).WithMemory(epilogue),
+		team:   len(file.Workers()) > 0,
+		inputs: &inputs,
+		asr:    file.SpeechRecognizer(),
+		triage: agent.NewTriager(router),
+		// 每天的摘要取自事项清单：那天办了哪些事、各自办成了什么样。
+		digest: agent.NewDigest(router, st.Sessions(), log.With(oplog.Key, oplog.Message)).WithMemory(epilogue).
+			WithMatters(matter.Reader{Store: st.Matters()}),
+		archive: func(ctx context.Context) (int, error) {
+			return pipeline.ArchiveExpired(ctx, expiredMemoryGrace)
+		},
+		profile: agent.NewProfile(func(ctx context.Context, req llm.Request) (llm.Response, error) {
+			return router.Complete(ctx, llm.PurposeSummarize, req)
+		}, st.Memories(), st, log.With(oplog.Key, oplog.Message)),
 		workspace: workspace,
 		shares:    shares,
 		shareAddr: shareAddr,
@@ -921,6 +1030,14 @@ type chatOutbox struct {
 	hub atomic.Pointer[channel.Hub]
 }
 
+func (c *chatOutbox) SayToTask(ctx context.Context, tags []string, taskID, text string) error {
+	hub := c.hub.Load()
+	if hub == nil {
+		return fmt.Errorf("消息渠道还没有就绪")
+	}
+	return hub.SayToTask(ctx, tags, taskID, text)
+}
+
 func (c *chatOutbox) SendFile(ctx context.Context, tags []string, name string, data []byte) error {
 	hub := c.hub.Load()
 	if hub == nil {
@@ -974,4 +1091,25 @@ func newLogger(level string) (*slog.Logger, *oplog.Handler) {
 	l := slog.New(logs)
 	slog.SetDefault(l)
 	return l, logs
+}
+
+// expiredMemoryGrace 是限时记忆过期之后再留多久才归档：这段时间里还能回溯「上个月那件事是怎么定的」。
+const expiredMemoryGrace = 30 * 24 * time.Hour
+
+// archiveExpiredMemories 每隔几小时把过期很久的限时记忆归档，直到 ctx 结束。
+func archiveExpiredMemories(ctx context.Context, archive func(context.Context) (int, error), log *slog.Logger) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		if n, err := archive(ctx); err != nil && ctx.Err() == nil {
+			log.Error("归档过期的限时记忆失败，稍后再试", "err", err)
+		} else if n > 0 {
+			log.Info("已归档过期的限时记忆", "条数", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

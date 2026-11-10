@@ -188,7 +188,7 @@ func TestPlanner_系统提示带回复风格与当前时间(t *testing.T) {
 	}
 
 	def := system(PlannerOptions{})
-	if !strings.Contains(def, "Reply style: concise") {
+	if !strings.Contains(def, "回复风格：简洁") {
 		t.Fatal("默认风格应为简洁")
 	}
 	// 当前日期每次都变，不放在系统提示里（放了就命中不了缓存），放在最后一条消息里。
@@ -204,7 +204,7 @@ func TestPlanner_系统提示带回复风格与当前时间(t *testing.T) {
 		t.Fatalf("最后一条消息应带当前日期: %s", last)
 	}
 	custom := system(PlannerOptions{ReplyStyle: "detailed", ReplyCustom: "不要用表情"})
-	if !strings.Contains(custom, "Reply style: detailed") || !strings.Contains(custom, "不要用表情") {
+	if !strings.Contains(custom, "回复风格：详细") || !strings.Contains(custom, "不要用表情") {
 		t.Fatalf("应采用配置的风格与自定义要求:\n%s", custom)
 	}
 }

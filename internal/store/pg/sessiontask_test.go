@@ -71,6 +71,14 @@ func TestSessionTasks(t *testing.T) {
 	if kids, _ := s.ChildTasks(ctx, sess.ID, false); len(kids) != 2 {
 		t.Fatalf("会话下应有两件事: %d", len(kids))
 	}
+	// 手机 App 要直接看到聊天里交代的事：Flat 时连子任务一起列（会话 1 个 + 聊天里 2 件 + 后台建的 1 件）。
+	flat, total, err := s.QueryTasks(ctx, pg.TaskQuery{Status: pg.TaskStatusAll, Flat: true})
+	if err != nil || total != 4 || len(flat) != 4 {
+		t.Fatalf("Flat 时应列出全部 4 个: %d %v", total, err)
+	}
+	if _, total, _ := s.QueryTasks(ctx, pg.TaskQuery{Status: pg.TaskStatusActive, Flat: true}); total != 4 {
+		t.Fatalf("进行中的筛选在 Flat 时也要包含子任务: %d", total)
+	}
 
 	// 一件办完了，一件还在办。过了这一天：没办完的移到新一天的会话，旧的会话结束。
 	_ = s.Transition(ctx, b, core.StateReady, core.StateRunning, "测试")

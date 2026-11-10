@@ -6,8 +6,9 @@
 
 <div class="cols one">
 <div>
-{{if .Data.Requests}}<div class="card">
-  <div class="band"><b>待填写</b><span class="count warn">{{len .Data.Requests}}</span></div>
+{{if .Data.Requests}}
+<h2>待填写 <span class="count warn">{{len .Data.Requests}}</span></h2>
+<div class="card">
   <table>
     <thead><tr><th>名称</th><th>用途</th><th>授权对象</th><th style="width:34%">值</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Data.Requests}}<tr>
@@ -27,8 +28,8 @@
   <div class="band foot"><span class="note muted">以上条目由助手在任务中登记，名称、用途与授权对象均为助手填写，请核对后再填值。值仅由你在此填写，助手无法获取；仅所列授权对象可使用。</span></div>
 </div>
 {{end}}
+<h2>个人信息 <span class="count">{{len .Data.Items}}</span><button type="button" class="btn sm" data-dialog="dlg-vault">新增条目</button></h2>
 <div class="card">
-  <div class="band"><span class="actions"><b>个人信息</b><span class="count">{{len .Data.Items}}</span></span><button type="button" class="btn sm" data-dialog="dlg-vault">新增条目</button></div>
   {{if .Data.Items}}<table>
     <thead><tr><th>名称</th><th>用途</th><th>授权工具</th><th>创建时间</th><th style="width:24%">更换值</th><th class="r">操作</th></tr></thead>
     <tbody>{{range .Data.Items}}<tr>

@@ -40,8 +40,8 @@ import (
 // 与用户有关的事都归主模型：给用户的答复由它写，用户的表达风格只给它看，
 // 记忆、流程和表达风格的学习也都由它做（见 Epilogue 与 internal/style）。
 //
-// 语言：主模型用英文思考，写给用户看的用简体中文；任务模型的方案、理由、结论一律用英文，
-// 只有直接问用户的问题和替用户写的东西例外。
+// 语言：主模型和任务模型写的东西都用简体中文，包括两者之间传的方案、结论和审核意见；
+// 替用户写的东西用它本身该用的语言。
 
 // 规划器自己写进日志的三种步骤。它们不是给模型选的工具。
 const (
@@ -305,9 +305,9 @@ func spend(d *kernel.Decision, resp llm.Response) {
 	d.TokensCached += resp.Usage.CachedTokens
 }
 
-// askJSON 让一个模型按给定的系统提示看一遍上下文，把它的回答解析进 out。
+// askJSON 让一个模型按给定的系统提示看一遍上下文，用 form 这个函数作答，把回答解析进 out。
 // main 为真问主模型，否则问 p.worker 指定的任务模型。用量记在 spent 上，不管回答能不能用。
-func (p *Planner) askJSON(ctx context.Context, t *core.Task, main bool, system string, segs []llm.Segment, spent *kernel.Decision, what string, out any) error {
+func (p *Planner) askJSON(ctx context.Context, t *core.Task, main bool, system string, segs []llm.Segment, spent *kernel.Decision, form answerForm, what string, out any) error {
 	msgs, err := p.build(t, system, segs)
 	if err != nil {
 		return err
@@ -315,22 +315,90 @@ func (p *Planner) askJSON(ctx context.Context, t *core.Task, main bool, system s
 	if msgs, err = p.withImages(ctx, t, msgs, main || p.worker == ""); err != nil {
 		return err
 	}
-	req := llm.Request{Messages: msgs, JSONMode: true}
-	var resp llm.Response
-	if main {
-		resp, err = p.model.Complete(ctx, llm.PurposePlan, req)
-	} else {
-		resp, err = p.complete(ctx, req)
+	complete := func(ctx context.Context, req llm.Request) (llm.Response, error) {
+		var resp llm.Response
+		var err error
+		if main {
+			resp, err = p.model.Complete(ctx, llm.PurposePlan, req)
+		} else {
+			resp, err = p.complete(ctx, req)
+		}
+		if err == nil {
+			spend(spent, resp)
+		}
+		return resp, err
 	}
+	return askStructured(ctx, complete, msgs, form, what, out)
+}
+
+// answerForm 是一次要模型按固定格式作答的调用：作答用的函数名、它的说明和参数格式。
+type answerForm struct {
+	Name, Description, Schema string
+}
+
+// askStructured 让模型按固定的格式作答，把回答解析进 out。
+//
+// 格式做成一个函数交给模型调用，不用 JSON 模式：这一代模型的结构化输出是按函数调用训练的，
+// JSON 模式在 DeepSeek 上实测约每十几次有一次只吐出一串空白（见 llm/tools.go）。
+// 接口不许强制调用（DeepSeek 在思考模式下不接受 tool_choice），所以模型可能不调函数、直接把 JSON 写在正文里：
+// 正文是合法 JSON 就照收。两样都不是时，退回原来的办法再问一次：JSON 模式、不带函数。
+func askStructured(ctx context.Context, complete func(context.Context, llm.Request) (llm.Response, error),
+	msgs []llm.Message, form answerForm, what string, out any) error {
+	resp, err := complete(ctx, llm.Request{Messages: msgs, Tools: []llm.Tool{{
+		Name: form.Name, Description: form.Description, Parameters: json.RawMessage(form.Schema),
+	}}})
 	if err != nil {
 		return err
 	}
-	spend(spent, resp)
-	if err := json.NewDecoder(strings.NewReader(stripFence(resp.Content))).Decode(out); err != nil {
+	for _, c := range resp.ToolCalls {
+		if c.Name == form.Name && json.Unmarshal(c.Arguments, out) == nil {
+			return nil
+		}
+	}
+	if decodeObject(resp.Content, out) == nil {
+		return nil
+	}
+	resp, err = complete(ctx, llm.Request{Messages: msgs, JSONMode: true})
+	if err != nil {
+		return err
+	}
+	if err := decodeObject(resp.Content, out); err != nil {
 		return fmt.Errorf("%w: %s不是合法 JSON: %v (原文: %s)",
 			errBadOutput, what, err, truncate(strings.TrimSpace(resp.Content), 200))
 	}
 	return nil
+}
+
+// decodeObject 把正文里的一个 JSON 对象解析进 out。正文为空、或者不是对象都算错。
+func decodeObject(content string, out any) error {
+	body := stripFence(content)
+	if !strings.HasPrefix(body, "{") {
+		return fmt.Errorf("不是 JSON 对象")
+	}
+	return json.NewDecoder(strings.NewReader(body)).Decode(out)
+}
+
+// 各次作答用的函数。参数格式与对应那段系统提示里写的字段一致：改了字段名，两边要一起改。
+var (
+	assignForm = answerForm{"assign_task", "报告这个任务的类别、难度和标题。",
+		`{"type":"object","properties":{"category":{"type":"string"},"tier":{"type":"string","enum":["simple","complex"]},` +
+			`"title":{"type":"string"}},"required":["category","tier","title"]}`}
+	draftForm = answerForm{"submit_plan", "交出你为这个任务写的简要方案。",
+		`{"type":"object","properties":{"steps":{"type":"array","items":{"type":"string"}},"tools":{"type":"array","items":{"type":"string"}},` +
+			`"considerations":{"type":"array","items":{"type":"string"}},"done_when":{"type":"string"}},"required":["steps","done_when"]}`}
+	planReviewForm = answerForm{"evaluate_plan", "报告你对方案的评估：同意，或者修改。",
+		`{"type":"object","properties":{"verdict":{"type":"string","enum":["approve","amend"]},` +
+			`"steps":{"type":"array","items":{"type":"string"}},"tools":{"type":"array","items":{"type":"string"}},` +
+			`"considerations":{"type":"array","items":{"type":"string"}},"done_when":{"type":"string"},"note":{"type":"string"}},"required":["verdict"]}`}
+	guardForm = answerForm{"guard_action", "报告这个等待执行的动作能不能执行。",
+		`{"type":"object","properties":{"verdict":{"type":"string","enum":["approve","reject"]},"reason":{"type":"string"}},"required":["verdict","reason"]}`}
+)
+
+// reviewForm 是审核结果用的函数。verdicts 是这一轮还能选的结论，形如 `"accept" | "revise" | "takeover"`。
+func reviewForm(verdicts string) answerForm {
+	return answerForm{"review_result", "报告你对任务模型交回的结果的审核。",
+		`{"type":"object","properties":{"verdict":{"type":"string","enum":[` + strings.ReplaceAll(verdicts, " | ", ",") + `]},` +
+			`"answer":{"type":"string"},"feedback":{"type":"string"}},"required":["verdict"]}`}
 }
 
 // internalStep 把一条规划器自己写进日志的记录做成决策。
@@ -367,7 +435,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 	for _, c := range team.Categories {
 		cats = append(cats, fmt.Sprintf("- %s (%s): %s", c.ID, c.Name, c.Hint))
 	}
-	system := sections(ps.base(), ps.get(PromptAssign), "Categories:\n"+strings.Join(cats, "\n"))
+	system := sections(ps.lean(), ps.get(PromptAssign), "类别：\n"+strings.Join(cats, "\n"))
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
@@ -378,7 +446,7 @@ func (p *Planner) assign(ctx context.Context, t *core.Task, history []*core.Step
 		Tier     string `json:"tier"`
 		Title    string `json:"title"`
 	}
-	if err := p.askJSON(ctx, t, true, system, segs, &spent, "指派结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, system, segs, &spent, assignForm, "指派结果", &out); err != nil {
 		return spent, err
 	}
 	// 类别写错了不值得为它重来一次：归到"其他"，照样有人接。
@@ -427,15 +495,15 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 	if err != nil {
 		return kernel.Decision{}, err
 	}
-	tools := "\n\nAvailable tools:\n" + p.toolList()
+	tools := "\n\n可用工具：\n" + p.toolList()
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return kernel.Decision{}, err
 	}
 	var spent kernel.Decision
 	var plan briefRecord
-	if err := p.askJSON(ctx, t, false, sections(ps.base(), ps.get(PromptDraft))+tools,
-		segs, &spent, "方案", &plan); err != nil {
+	if err := p.askJSON(ctx, t, false, sections(ps.lean(), dropSections(ps.get(PromptPlan), headPlanReview))+tools,
+		segs, &spent, draftForm, "方案", &plan); err != nil {
 		return spent, err
 	}
 	if len(plan.Steps) == 0 {
@@ -450,8 +518,8 @@ func (p *Planner) draft(ctx context.Context, t *core.Task, history []*core.Step)
 		Role: llm.RoleUser, Content: "任务模型起草的方案：\n" + plan.render(),
 		Trust: core.TrustToolOutput, Source: "任务模型的方案", Pinned: true,
 	})
-	if err := p.askJSON(ctx, t, true, sections(ps.base(), ps.get(PromptPlanReview))+tools,
-		review, &spent, "方案评估结果", &verdict); err != nil {
+	if err := p.askJSON(ctx, t, true, sections(ps.lean(), dropSections(ps.get(PromptPlan), headDraft))+tools,
+		review, &spent, planReviewForm, "方案评估结果", &verdict); err != nil {
 		return spent, err
 	}
 	final, reason := plan, "方案已定：主模型同意任务模型的方案"
@@ -483,32 +551,33 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 	canRevise := round < maxReviewRounds
 	// 退回的次数用完了才谈得上换人。
 	canReassign := !canRevise && len(state.assigns) <= maxReassign
-	verdicts, extra := `"accept" | "takeover"`, "- This result can no longer be sent back or reassigned: either accept, writing the final reply yourself and telling the user honestly what remains unresolved, or takeover and finish it yourself."
+	verdicts, extra := `"accept" | "takeover"`, "- 这个结果不能再退回，也不能再改派了：要么 accept，自己写出最终答复，并如实告诉用户还有什么没解决；要么 takeover，自己把它办完。"
 	switch {
 	case canRevise:
 		verdicts = `"accept" | "revise" | "takeover"`
-		extra = "- Send it back (revise) only when content is missing, the conclusion does not hold up, or more lookups or work are needed. Make feedback specific so the task model knows what to do next."
+		extra = "- 只有内容缺失、结论站不住，或者还需要再查再办时才退回（revise）。feedback 要具体，让任务模型知道接下来做什么。"
 	case canReassign:
 		verdicts = `"accept" | "reassign" | "takeover"`
-		extra = fmt.Sprintf("- This result has already been sent back %d time(s) and cannot go back to the same task model again. "+
-			"If it is barely usable, accept: write the final reply yourself and tell the user honestly what remains unresolved. "+
-			"If it is still unusable, hand the task to another task model (reassign) and state in feedback what falls short; the model taking over will see it.", round)
+		extra = fmt.Sprintf("- 这个结果已经退回过 %d 次，不能再退给同一个任务模型。"+
+			"勉强能用就 accept：自己写出最终答复，并如实告诉用户还有什么没解决。"+
+			"仍然不能用，就交给另一个任务模型（reassign），在 feedback 里写明哪里没达到要求；接手的模型会看到。", round)
 	}
-	extra += "\n- You cannot call tools in this review step. When you need to verify a key fact yourself, or only a little is missing and it is faster to add it yourself, choose takeover: " +
-		"after taking over you can call every tool and reply to the user directly when done. Put in feedback what you intend to verify or complete."
-	style := p.opts.styleRule() + "\nThis requirement also governs answer."
+	extra += "\n- 审核这一步你不能调用工具。需要亲自核实某个关键事实，或者只差一点、自己补上更快时，选 takeover：" +
+		"接手之后你可以调用所有工具，办完直接答复用户。在 feedback 里写明你打算核实或补上什么。"
+	style := p.opts.styleRule() + "\n这个要求同样适用于 answer。"
 	segs, err := p.contextSegments(ctx, t, history)
 	if err != nil {
 		return spent, err
 	}
 	// 用户的表达风格只给主模型：给用户的答复是它写的。
+	voice := false
 	if p.voice != nil {
 		v, err := p.voice.Voice(ctx)
 		if err != nil {
 			return spent, fmt.Errorf("agent: 读取表达风格失败: %w", err)
 		}
-		if rule := ps.get(PromptVoice); !v.Empty() && rule != "" {
-			style += "\n\n" + rule
+		if !v.Empty() && ps.get(PromptPersona) != "" {
+			voice = true
 			segs = append(segs[:1], append([]llm.Segment{voiceSegment(v)}, segs[1:]...)...)
 		}
 	}
@@ -519,19 +588,19 @@ func (p *Planner) review(ctx context.Context, t *core.Task, history []*core.Step
 	body := ps.get(PromptReview)
 	// 用户改写这一段时可能去掉了占位符：选项和这一轮的规则仍然要让模型看到，接在后面。
 	if !strings.Contains(body, "{{verdicts}}") {
-		body += "\nverdict must be one of: {{verdicts}}"
+		body += "\nverdict 只能是其中之一：{{verdicts}}"
 	}
 	if !strings.Contains(body, "{{rules}}") {
 		body += "\n{{rules}}"
 	}
 	body = strings.NewReplacer("{{verdicts}}", verdicts, "{{rules}}", extra).Replace(body)
-	system := sections(ps.base(), body, style)
+	system := sections(ps.base(voice), body, style)
 	var out struct {
 		Verdict  string `json:"verdict"`
 		Answer   string `json:"answer"`
 		Feedback string `json:"feedback"`
 	}
-	if err := p.askJSON(ctx, t, true, system, segs, &spent, "审核结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, system, segs, &spent, reviewForm(verdicts), "审核结果", &out); err != nil {
 		return spent, err
 	}
 	feedback := strings.TrimSpace(out.Feedback)
@@ -631,7 +700,7 @@ func (p *Planner) guard(ctx context.Context, t *core.Task, history []*core.Step,
 		Verdict string `json:"verdict"`
 		Reason  string `json:"reason"`
 	}
-	if err := p.askJSON(ctx, t, true, sections(ps.base(), ps.get(PromptGuard)), segs, &spent, "把关结果", &out); err != nil {
+	if err := p.askJSON(ctx, t, true, sections(ps.lean(), ps.get(PromptGuard)), segs, &spent, guardForm, "把关结果", &out); err != nil {
 		return spent, err
 	}
 	switch out.Verdict {

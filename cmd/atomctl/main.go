@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -54,6 +55,8 @@ const usage = `用法:
   atomctl memory dismiss <ID>    否决一条
   atomctl memory forget <ID>     归档一条已生效的记忆（不物理删除）
   atomctl memory add <类型> <主体> <领域> <内容> [属性]
+  atomctl memory import [--dry-run] <文件>...
+  atomctl memory list full       不截断内容，列出全部生效的记忆
                                  以你本人的名义记一条：类型 fact / preference / entity，主体本人写 user
 
   atomctl skill install <路径> [--yes]
@@ -87,6 +90,12 @@ const usage = `用法:
                                  环境变量 ATOM_ADMIN_PASSWORD_HASH 的摘要
   atomctl admin reset-login      手机上的验证器和通行密钥都用不了时：清除后台的登录方式设置，
                                  恢复为只凭密码登录，登录后须重新设置
+
+  atomctl device list            列出手机设备和各种数据的上报情况
+  atomctl device battery [行程小时数] [目标电量%]
+                                 看服务器学到的充电、掉电速度，以及充电要多久、这趟行程撑不撑得住
+  atomctl device data <种类> [条数]
+                                 看手机最近上报的内容，如 probe.report；默认最新 1 条
 
   atomctl connector check        试连配置里的日历和邮件，确认账号、密码和服务器地址都对
 
@@ -140,6 +149,9 @@ func run(args []string) error {
 		return vaultCmd(ctx, nil, cfg.VaultKey, args[1:])
 	case args[0] == "key":
 		return keyCmd(cfg, args[1:])
+	case args[0] == "memory" && len(args) > 2 && args[1] == "import" && slices.Contains(args[2:], "--dry-run"):
+		// 只切分核对，不写库，也就用不着数据库和密钥。
+		return memoryImport(ctx, nil, args[2:])
 	}
 
 	// 密钥文件只由常驻服务生成：这里常常是以 root 身份运行的，由它生成的文件服务账号读不到。
@@ -221,6 +233,8 @@ func run(args []string) error {
 		return fileCmd(cfg, box, args[1:])
 	case "admin":
 		return adminCmd(ctx, st, args[1:])
+	case "device":
+		return deviceCmd(ctx, st, args[1:])
 	case "style":
 		return styleCmd(ctx, st, cfg, args[1:])
 	case "skill":

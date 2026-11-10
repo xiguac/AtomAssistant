@@ -668,3 +668,39 @@ func TestAssemble_相似度按场景准备一次(t *testing.T) {
 		t.Fatal("准备好的相似度应决定排序")
 	}
 }
+
+func TestSearch_按检索词找记忆不相关的不返回(t *testing.T) {
+	st := memstore.New()
+	now := time.Now().UTC()
+	put := func(subject, domain, value string) string {
+		m := memory.New(memory.KindFact, subject, domain, value, userSource(), now)
+		m.Temporality = memory.TemporalDurable
+		if err := st.Put(ctx(), m); err != nil {
+			t.Fatalf("写入失败: %v", err)
+		}
+		return m.ID
+	}
+	zhang := put("客户张总", "饮食", "不吃辣")
+	put("user", "出行", "高铁喜欢靠窗的位置")
+	city := put("user", "居住", "常住杭州")
+
+	r := memory.NewRetriever(st, nil)
+	// 主体不参与相似度比对，靠字面包含也要找得到。
+	got, err := r.Search(ctx(), "", "张总", 8)
+	if err != nil || len(got) != 1 || got[0].Memory.ID != zhang {
+		t.Fatalf("按人名应只找到关于他的那条: %+v %v", got, err)
+	}
+	got, err = r.Search(ctx(), "", "常住 城市", 8)
+	if err != nil || len(got) == 0 || got[0].Memory.ID != city {
+		t.Fatalf("按内容里的词应找到: %+v %v", got, err)
+	}
+	if got, err = r.Search(ctx(), "", "股票", 8); err != nil || len(got) != 0 {
+		t.Fatalf("一点都不相关的不应返回: %+v %v", got, err)
+	}
+	if got, err = r.Search(ctx(), "", "  ", 8); err != nil || got != nil {
+		t.Fatalf("空的检索词不查: %+v %v", got, err)
+	}
+	if got, err = r.Search(ctx(), "", "张总", 0); err != nil || got != nil {
+		t.Fatalf("条数上限为 0 时不查: %+v %v", got, err)
+	}
+}

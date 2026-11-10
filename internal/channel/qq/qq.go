@@ -89,6 +89,9 @@ var _ channel.Adapter = (*Bot)(nil)
 // Name 返回渠道名。
 func (b *Bot) Name() string { return b.Label }
 
+// OwnerChat 是主人的单聊会话标识：c2c: 加上他的 openid。
+func (b *Bot) OwnerChat(owner string) string { return chatPrefix + owner }
+
 func (b *Bot) client() *http.Client {
 	if b.HTTP != nil {
 		return b.HTTP

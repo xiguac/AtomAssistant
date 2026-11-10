@@ -19,6 +19,8 @@ type VoiceProvider interface {
 type VoiceLearner interface {
 	Observe(ctx context.Context, scene, ref string, texts []string) (int, error)
 	Refresh(ctx context.Context) (style.Cost, error)
+	// LearnDay 在一天的对话写成摘要之后，按那天用户说的话修订对助手说话的风格。
+	LearnDay(ctx context.Context, ref string, texts []string) (style.Cost, error)
 }
 
 // voiceSource 是风格材料在上下文里的来源名。系统提示里的用法说明靠这个名字指向它。

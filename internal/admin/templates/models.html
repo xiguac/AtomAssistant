@@ -5,7 +5,7 @@
 {{with .Data}}
 <div class="cols even">
 <div>
-<h2 style="margin-top:0">主 AI</h2>
+<h2>主 AI</h2>
 <div class="card">
   <div class="pad">
     <div class="note" style="margin-bottom:14px">负责接收任务、规划决策、调用工具并与用户交互的模型。建议选用能力最强的模型。</div>
@@ -33,7 +33,7 @@
 </div>
 </div>
 <div>
-<h2 style="margin-top:0">任务预算</h2>
+<h2>任务预算</h2>
 <form method="post" action="/models/budget" class="card">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <div class="pad grid2">
