@@ -285,7 +285,6 @@
   // 刷新内容区：重新取当前页，只换 .wrap 里的内容。
   // 换之前记下展开的折叠区、别处已改过但没提交的输入，换完放回去；滚动位置原样保留。
   function refresh() {
-    var wrap = document.querySelector(".wrap");
     var url = new URL(location.href);
     url.searchParams.delete("ok");
     url.searchParams.delete("e");
@@ -296,58 +295,63 @@
       }
       return resp.text();
     }).then(function (html) {
-      if (html === null) {
-        return;
-      }
-      var doc = new DOMParser().parseFromString(html, "text/html");
-      var fresh = doc.querySelector(".wrap");
-      if (!wrap || !fresh) {
+      if (html !== null && !swap(html)) {
         location.reload();
-        return;
       }
-      var y = window.scrollY;
-      var opened = [];
-      var details = wrap.querySelectorAll("details");
-      for (var i = 0; i < details.length; i++) {
-        if (details[i].open) {
-          opened.push(i);
-        }
-      }
-      var typed = {};
-      var fields = wrap.querySelectorAll("input[id],textarea[id],select[id]");
-      for (i = 0; i < fields.length; i++) {
-        var f = fields[i];
-        if (f.type === "hidden" || f.type === "file") {
-          continue;
-        }
-        if (f.type === "checkbox" || f.type === "radio") {
-          if (f.checked !== f.defaultChecked) {
-            typed[f.id] = f.checked;
-          }
-        } else if (f.value !== f.defaultValue) {
-          typed[f.id] = f.value;
-        }
-      }
-      wrap.innerHTML = fresh.innerHTML;
-      details = wrap.querySelectorAll("details");
-      for (i = 0; i < opened.length; i++) {
-        if (details[opened[i]]) {
-          details[opened[i]].open = true;
-        }
-      }
-      for (var id in typed) {
-        var el = document.getElementById(id);
-        if (el) {
-          if (el.type === "checkbox" || el.type === "radio") {
-            el.checked = typed[id];
-          } else {
-            el.value = typed[id];
-          }
-        }
-      }
-      init(wrap);
-      window.scrollTo(0, y);
     });
+  }
+
+  // 把一整页 HTML 里的内容区换到当前页上，换不了（哪一边没有 .wrap）返回 false。
+  function swap(html) {
+    var wrap = document.querySelector(".wrap");
+    var doc = new DOMParser().parseFromString(html, "text/html");
+    var fresh = doc.querySelector(".wrap");
+    if (!wrap || !fresh) {
+      return false;
+    }
+    var y = window.scrollY;
+    var opened = [];
+    var details = wrap.querySelectorAll("details");
+    for (var i = 0; i < details.length; i++) {
+      if (details[i].open) {
+        opened.push(i);
+      }
+    }
+    var typed = {};
+    var fields = wrap.querySelectorAll("input[id],textarea[id],select[id]");
+    for (i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (f.type === "hidden" || f.type === "file") {
+        continue;
+      }
+      if (f.type === "checkbox" || f.type === "radio") {
+        if (f.checked !== f.defaultChecked) {
+          typed[f.id] = f.checked;
+        }
+      } else if (f.value !== f.defaultValue) {
+        typed[f.id] = f.value;
+      }
+    }
+    wrap.innerHTML = fresh.innerHTML;
+    details = wrap.querySelectorAll("details");
+    for (i = 0; i < opened.length; i++) {
+      if (details[opened[i]]) {
+        details[opened[i]].open = true;
+      }
+    }
+    for (var id in typed) {
+      var el = document.getElementById(id);
+      if (el) {
+        if (el.type === "checkbox" || el.type === "radio") {
+          el.checked = typed[id];
+        } else {
+          el.value = typed[id];
+        }
+      }
+    }
+    init(wrap);
+    window.scrollTo(0, y);
+    return true;
   }
 
   document.addEventListener("submit", function (ev) {
@@ -387,9 +391,22 @@
         throw new Error("会话已失效，请刷新页面后重试。");
       }
       if ((resp.headers.get("Content-Type") || "").indexOf("json") < 0) {
-        // 不是后台应答（登录失效、跳转到别的页面等）：照普通提交处理。
-        location.href = resp.url;
-        return null;
+        if (resp.redirected) {
+          // 跳转到了别的页面（登录失效、创建任务后去任务页等）：照普通提交处理。
+          location.href = resp.url;
+          return null;
+        }
+        // 没有跳转：应答就是结果本身。提交的地址只收 POST，不能再用 GET 去打开它。
+        return resp.text().then(function (text) {
+          if (!resp.ok) {
+            throw new Error(text.trim() || "HTTP " + resp.status);
+          }
+          // 一整页结果（如「用对话修改记忆」列出的待确认修改）：直接换进内容区。
+          if (!swap(text)) {
+            throw new Error("应答无法显示，请刷新页面后重试。");
+          }
+          return null;
+        });
       }
       return resp.json();
     }).then(function (data) {
